@@ -1,0 +1,295 @@
+import { mapWithConcurrency } from "@ctdio/gepa";
+import type {
+  Adapter,
+  Candidate,
+  EvaluationBatch,
+  ReflectiveRecord,
+  ScoreResult,
+} from "@ctdio/gepa";
+
+/**
+ * Structural types matching the AI SDK's `generateText` / `generateObject`
+ * results. Declaring them structurally rather than importing from `ai` keeps
+ * this package free of a hard dependency and tolerant of SDK version drift.
+ */
+export interface AiSdkToolCallLike {
+  toolName: string;
+  input?: unknown;
+  /** AI SDK v4 name for `input`. */
+  args?: unknown;
+}
+
+export interface AiSdkToolResultLike {
+  toolName: string;
+  output?: unknown;
+  /** AI SDK v4 name for `output`. */
+  result?: unknown;
+}
+
+export interface AiSdkStepLike {
+  text?: string;
+  finishReason?: string;
+  toolCalls?: readonly AiSdkToolCallLike[];
+  toolResults?: readonly AiSdkToolResultLike[];
+  usage?: AiSdkUsageLike;
+}
+
+export interface AiSdkUsageLike {
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  totalTokens?: number | undefined;
+}
+
+export interface AiSdkResultLike {
+  text?: string;
+  finishReason?: string;
+  steps?: readonly AiSdkStepLike[];
+  usage?: AiSdkUsageLike;
+}
+
+export interface AiSdkTraceStep {
+  index: number;
+  text: string;
+  finishReason?: string;
+  toolCalls?: { toolName: string; input: unknown }[];
+  toolResults?: { toolName: string; output: unknown }[];
+}
+
+export interface AiSdkTrace {
+  steps: AiSdkTraceStep[];
+  usage?: AiSdkUsageLike;
+  durationMs: number;
+  error?: string;
+}
+
+export interface AiSdkAdapterOptions<Datum, Out> {
+  /**
+   * Execute the system for one dataset row. Return the AI SDK result directly:
+   * `run: ({ candidate, datum }) => generateText({ model, system: candidate.system, prompt: datum.q })`
+   */
+  run: (args: {
+    candidate: Candidate;
+    datum: Datum;
+    signal?: AbortSignal;
+  }) => Promise<AiSdkResultLike>;
+  /** Defaults to `result.text`. Required when optimizing structured output. */
+  toOutput?: (result: AiSdkResultLike) => Out;
+  score: (args: {
+    datum: Datum;
+    output: Out | null;
+    result: AiSdkResultLike | null;
+    trace: AiSdkTrace;
+  }) => ScoreResult | Promise<ScoreResult>;
+  concurrency?: number;
+  /**
+   * Classify a thrown error as infrastructure (rate limit, 5xx, network) so
+   * its zero is not cached against the candidate. Defaults to treating every
+   * failure as the candidate's, which is the safe assumption.
+   */
+  isTransient?: (err: unknown) => boolean;
+  buildRecord?: (args: {
+    datum: Datum;
+    output: Out | null;
+    trace: AiSdkTrace;
+    score: number;
+    feedback: string;
+    component: string;
+  }) => ReflectiveRecord;
+}
+
+const DEFAULT_CONCURRENCY = 8;
+
+/**
+ * Optimizes the text components of a Vercel AI SDK call — system prompts, tool
+ * descriptions, output instructions — by re-running `run` with each candidate.
+ */
+export function createAiSdkAdapter<Datum, Out = string>(
+  options: AiSdkAdapterOptions<Datum, Out>,
+): Adapter<Datum, AiSdkTrace, Out | null> {
+  const {
+    run,
+    toOutput,
+    score,
+    concurrency = DEFAULT_CONCURRENCY,
+    isTransient = () => false,
+    buildRecord,
+  } = options;
+
+  const extractOutput =
+    toOutput ?? ((result: AiSdkResultLike) => (result.text ?? "") as Out);
+
+  return {
+    evaluate: async ({ batch, candidate, captureTraces, signal }) => {
+      const results = await mapWithConcurrency({
+        items: batch,
+        limit: concurrency,
+        task: async (datum) => {
+          const startedAt = Date.now();
+          let result: AiSdkResultLike;
+          let trace: AiSdkTrace;
+
+          try {
+            result = await run({ candidate, datum, signal });
+            trace = {
+              ...summarizeRun(result),
+              durationMs: Date.now() - startedAt,
+            };
+          } catch (err) {
+            // A cancelled run is not a failed rollout: scoring it zero would
+            // poison the candidate's record and the evaluation cache.
+            signal?.throwIfAborted();
+            const message = err instanceof Error ? err.message : String(err);
+            const scored: ScoreResult = {
+              score: 0,
+              feedback: `Run failed: ${message}`,
+              transient: isTransient(err),
+            };
+            return {
+              output: null,
+              result: null,
+              trace: {
+                steps: [],
+                durationMs: Date.now() - startedAt,
+                error: message,
+              },
+              scored,
+            };
+          }
+
+          const output = extractOutput(result);
+
+          try {
+            return {
+              output,
+              result,
+              trace,
+              scored: await score({ datum, output, result, trace }),
+            };
+          } catch (err) {
+            signal?.throwIfAborted();
+            const message = err instanceof Error ? err.message : String(err);
+            const scored: ScoreResult = {
+              score: 0,
+              feedback: `Scoring failed: ${message}`,
+              transient: isTransient(err),
+            };
+            return { output, result, trace, scored };
+          }
+        },
+        signal,
+      });
+
+      const evaluation: EvaluationBatch<AiSdkTrace, Out | null> = {
+        outputs: results.map((result) => result.output),
+        scores: results.map((result) => result.scored.score),
+        feedback: results.map((result) => result.scored.feedback ?? ""),
+      };
+
+      if (captureTraces) {
+        evaluation.trajectories = results.map((result) => result.trace);
+      }
+      if (
+        results.some((result) => result.scored.objectiveScores !== undefined)
+      ) {
+        evaluation.objectiveScores = results.map(
+          (result) => result.scored.objectiveScores ?? {},
+        );
+      }
+      if (results.some((result) => result.scored.transient === true)) {
+        evaluation.transient = results.map(
+          (result) => result.scored.transient === true,
+        );
+      }
+
+      return evaluation;
+    },
+
+    makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) => {
+      const dataset: Record<string, ReflectiveRecord[]> = {};
+
+      for (const component of componentsToUpdate) {
+        dataset[component] = batch.map((datum, index) => {
+          const trace = evaluation.trajectories?.[index] ?? {
+            steps: [],
+            durationMs: 0,
+          };
+          const output = evaluation.outputs[index] ?? null;
+          const scoreValue = evaluation.scores[index] ?? 0;
+          const feedback = evaluation.feedback?.[index] ?? "";
+
+          if (buildRecord !== undefined) {
+            return buildRecord({
+              datum,
+              output,
+              trace,
+              score: scoreValue,
+              feedback,
+              component,
+            });
+          }
+
+          return {
+            inputs: datum,
+            generatedOutputs: output,
+            feedback,
+            score: scoreValue,
+            ...(trace.steps.length > 1 || trace.error !== undefined
+              ? { trace: trace.steps, error: trace.error }
+              : {}),
+          };
+        });
+      }
+
+      return dataset;
+    },
+  };
+}
+
+/**
+ * Flattens an AI SDK result into a compact trace. Multi-step agent runs are
+ * where the reflection model earns its keep, so tool calls and their results
+ * are preserved rather than collapsed into the final text.
+ */
+export function summarizeRun(result: AiSdkResultLike): AiSdkTrace {
+  // An empty `steps` array is as much "no step detail" as an absent one, and
+  // dropping the fallback there would discard the generated text entirely.
+  const steps =
+    result.steps === undefined || result.steps.length === 0
+      ? [
+          {
+            text: result.text ?? "",
+            ...(result.finishReason === undefined
+              ? {}
+              : { finishReason: result.finishReason }),
+          },
+        ]
+      : result.steps;
+
+  return {
+    steps: steps.map((step, index) => ({
+      index,
+      text: step.text ?? "",
+      ...(step.finishReason === undefined
+        ? {}
+        : { finishReason: step.finishReason }),
+      ...(step.toolCalls === undefined || step.toolCalls.length === 0
+        ? {}
+        : {
+            toolCalls: step.toolCalls.map((call) => ({
+              toolName: call.toolName,
+              input: call.input ?? call.args,
+            })),
+          }),
+      ...(step.toolResults === undefined || step.toolResults.length === 0
+        ? {}
+        : {
+            toolResults: step.toolResults.map((toolResult) => ({
+              toolName: toolResult.toolName,
+              output: toolResult.output ?? toolResult.result,
+            })),
+          }),
+    })),
+    ...(result.usage === undefined ? {} : { usage: result.usage }),
+    durationMs: 0,
+  };
+}

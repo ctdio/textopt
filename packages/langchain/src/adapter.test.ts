@@ -1,0 +1,423 @@
+import type { CallbackManager } from "@langchain/core/callbacks/manager";
+import { StringOutputParser } from "@langchain/core/output_parsers";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { RunnableLambda } from "@langchain/core/runnables";
+import { FakeListChatModel } from "@langchain/core/utils/testing";
+import { describe, expect, test } from "vitest";
+import { createLangChainAdapter } from "./adapter.js";
+
+interface Ticket {
+  text: string;
+  expected: string;
+}
+
+const TICKETS: Ticket[] = [
+  { text: "my printer is on fire", expected: "hardware" },
+  { text: "charged twice this month", expected: "billing" },
+];
+
+function echoRunnable(instruction: string) {
+  return RunnableLambda.from((input: { text: string }) =>
+    `${instruction}|${input.text}`.trim(),
+  );
+}
+
+/**
+ * Opens two tool spans through LangChain's own callback manager and only closes
+ * one, reproducing a chain torn down mid-tool.
+ */
+function buildRunnableWithOrphanedToolSpan() {
+  return RunnableLambda.from(
+    async (input: { text: string }, config?: { callbacks?: unknown }) => {
+      const manager = config?.callbacks as CallbackManager;
+
+      await manager.handleToolStart(
+        { lc: 1, type: "not_implemented", id: ["abandoned"] },
+        input.text,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "abandoned",
+      );
+
+      const finished = await manager.handleToolStart(
+        { lc: 1, type: "not_implemented", id: ["finished"] },
+        input.text,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "finished",
+      );
+      await finished.handleToolEnd("ok");
+
+      return "done";
+    },
+  );
+}
+
+describe("createLangChainAdapter", () => {
+  test("scores every item in the batch in order", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: (candidate) => echoRunnable(candidate.instruction ?? ""),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum, output }) => ({
+        score: output?.includes(datum.text) === true ? 1 : 0,
+      }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "classify" },
+      captureTraces: false,
+    });
+
+    expect(result.scores).toEqual([1, 1]);
+    expect(result.outputs).toEqual([
+      "classify|my printer is on fire",
+      "classify|charged twice this month",
+    ]);
+  });
+
+  test("passes the candidate text into the runnable", async () => {
+    const seen: string[] = [];
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: (candidate) => {
+        seen.push(candidate.instruction as string);
+        return echoRunnable(candidate.instruction as string);
+      },
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "version-two" },
+      captureTraces: false,
+    });
+
+    expect(seen).toContain("version-two");
+  });
+
+  test("records feedback returned by the scorer", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => echoRunnable("x"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum }) => ({
+        score: 0,
+        feedback: `Expected ${datum.expected}`,
+      }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.feedback).toEqual(["Expected hardware", "Expected billing"]);
+  });
+
+  test("omits trajectories when traces are not requested", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => echoRunnable("x"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.trajectories).toBeUndefined();
+  });
+
+  test("captures model calls in the trajectory when traces are requested", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: (candidate) =>
+        ChatPromptTemplate.fromMessages([
+          ["system", candidate.instruction as string],
+          ["human", "{text}"],
+        ])
+          .pipe(new FakeListChatModel({ responses: ["hardware", "billing"] }))
+          .pipe(new StringOutputParser()),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "Classify the ticket." },
+      captureTraces: true,
+    });
+
+    const steps = result.trajectories?.[0]?.steps ?? [];
+
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.some((step) => step.type === "llm")).toBe(true);
+    expect(JSON.stringify(steps)).toContain("Classify the ticket.");
+  });
+
+  test("scores a failing run as zero instead of throwing", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(() => {
+          throw new Error("chain blew up");
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: true,
+    });
+
+    expect(result.scores).toEqual([0, 0]);
+    expect(result.feedback?.[0]).toContain("chain blew up");
+    expect(result.outputs).toEqual([null, null]);
+  });
+
+  test("builds one reflective record per batch item for each component", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => echoRunnable("x"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum }) => ({
+        score: 0,
+        feedback: `Expected ${datum.expected}`,
+      }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: true,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { instruction: "x" },
+      batch: TICKETS,
+      evaluation,
+      componentsToUpdate: ["instruction"],
+    });
+
+    expect(dataset.instruction).toHaveLength(2);
+    expect(dataset.instruction?.[0]?.feedback).toBe("Expected hardware");
+    expect(dataset.instruction?.[0]?.inputs).toEqual({
+      text: "my printer is on fire",
+    });
+  });
+
+  test("respects the concurrency limit", async () => {
+    let active = 0;
+    let peak = 0;
+
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(async () => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active -= 1;
+          return "done";
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+      concurrency: 2,
+    });
+
+    await adapter.evaluate({
+      batch: Array.from({ length: 8 }, () => TICKETS[0] as Ticket),
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  test("keeps results aligned with the batch when items finish out of order", async () => {
+    // Every item is distinct and the first one finishes last, so a result
+    // array assembled in completion order would be visibly wrong.
+    const batch: Ticket[] = [
+      { text: "slow", expected: "slow" },
+      { text: "medium", expected: "medium" },
+      { text: "fast", expected: "fast" },
+    ];
+    const delays: Record<string, number> = { slow: 30, medium: 15, fast: 1 };
+
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(async (input: { text: string }) => {
+          await new Promise((resolve) =>
+            setTimeout(resolve, delays[input.text]),
+          );
+          return input.text;
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum, output }) => ({
+        score: output === datum.expected ? 1 : 0,
+      }),
+      concurrency: 3,
+    });
+
+    const result = await adapter.evaluate({
+      batch,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.outputs).toEqual(["slow", "medium", "fast"]);
+    expect(result.scores).toEqual([1, 1, 1]);
+  });
+
+  test("scores a failing scorer as zero instead of aborting the run", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => echoRunnable(""),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum }) => {
+        if (datum.expected === "hardware") {
+          throw new Error("judge rate limited");
+        }
+        return { score: 1 };
+      },
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.scores).toEqual([0, 1]);
+    expect(result.feedback?.[0]).toContain("Scoring failed");
+    expect(result.feedback?.[0]).toContain("judge rate limited");
+  });
+
+  test("marks a run failure transient when isTransient says so", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(() => {
+          throw new Error("429 rate limit exceeded");
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+      isTransient: (err) => (err as Error).message.includes("429"),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.transient).toEqual([true, true]);
+    expect(result.scores).toEqual([0, 0]);
+  });
+
+  test("leaves a run failure non-transient by default", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(() => {
+          throw new Error("429 rate limit exceeded");
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.transient).toBeUndefined();
+  });
+
+  test("marks a step that never completed rather than leaving it look empty", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => buildRunnableWithOrphanedToolSpan(),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { instruction: "x" },
+      captureTraces: true,
+    });
+
+    const orphan = result.trajectories?.[0]?.steps.find(
+      (step) => step.name === "abandoned",
+    );
+
+    expect(orphan?.error).toMatch(/did not complete/i);
+  });
+
+  test("leaves a step that completed unmarked", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => buildRunnableWithOrphanedToolSpan(),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { instruction: "x" },
+      captureTraces: true,
+    });
+
+    const completed = result.trajectories?.[0]?.steps.find(
+      (step) => step.name === "finished",
+    );
+
+    expect(completed?.error).toBeUndefined();
+  });
+
+  test("propagates an abort instead of scoring it as a failed run", async () => {
+    const controller = new AbortController();
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(() => {
+          controller.abort();
+          controller.signal.throwIfAborted();
+          return "unreachable";
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    await expect(
+      adapter.evaluate({
+        batch: TICKETS,
+        candidate: { instruction: "x" },
+        captureTraces: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/abort/i);
+  });
+
+  test("surfaces objective scores from the scorer", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => echoRunnable("x"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({
+        score: 0.5,
+        objectiveScores: { accuracy: 0.5, latencyMs: 120 },
+      }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+    });
+
+    expect(result.objectiveScores?.[0]).toEqual({
+      accuracy: 0.5,
+      latencyMs: 120,
+    });
+  });
+});

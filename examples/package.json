@@ -1,0 +1,36 @@
+{
+  "name": "@ctdio/gepa-examples",
+  "version": "0.0.0",
+  "description": "Runnable examples for @ctdio/gepa",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "keyword": "tsx --env-file-if-exists=../.env src/01-keyword-quickstart.ts",
+    "pareto": "tsx --env-file-if-exists=../.env src/02-pareto-inspection.ts",
+    "ai-sdk": "tsx --env-file-if-exists=../.env src/03-ai-sdk-classifier.ts",
+    "langchain": "tsx --env-file-if-exists=../.env src/04-langchain-chain.ts",
+    "braintrust": "tsx --env-file-if-exists=../.env src/05-braintrust-scoring.ts",
+    "merge": "tsx --env-file-if-exists=../.env src/06-multi-component-merge.ts",
+    "custom": "tsx --env-file-if-exists=../.env src/07-custom-adapter.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.39",
+    "@ai-sdk/openai": "^4.0.42",
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@ctdio/gepa": "workspace:*",
+    "@ctdio/gepa-ai-sdk": "workspace:*",
+    "@ctdio/gepa-braintrust": "workspace:*",
+    "@ctdio/gepa-langchain": "workspace:*",
+    "@langchain/anthropic": "^1.5.6",
+    "@langchain/core": "^1.2.8",
+    "@langchain/openai": "^1.5.8",
+    "ai": "^7.0.66",
+    "autoevals": "^0.3.0",
+    "braintrust": "^3.27.0",
+    "openai": "^7.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12"
+  }
+}
