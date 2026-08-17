@@ -2,7 +2,12 @@ export { optimize } from "./optimize.js";
 export type { OptimizeOptions } from "./optimize.js";
 
 export { createBudget } from "./budget.js";
-export { createMemoryCache, evaluationCacheKey } from "./cache.js";
+export {
+  candidateHash,
+  createMemoryCache,
+  evaluationCacheKey,
+  stableHash,
+} from "./cache.js";
 export { mapWithConcurrency } from "./concurrency.js";
 export { proposeMerge, selectMergeSubsample } from "./merge.js";
 export type { MergeProposal, ProposeMergeArgs } from "./merge.js";
@@ -20,9 +25,14 @@ export {
 export {
   buildReflectionPrompt,
   createDefaultProposer,
+  limitReflectiveRecords,
   parseProposedText,
 } from "./reflection.js";
-export type { ReflectionPromptArgs } from "./reflection.js";
+export type {
+  ReflectionLimits,
+  ReflectionPromptArgs,
+  ReflectionPromptBuilder,
+} from "./reflection.js";
 export { createSeededRng } from "./rng.js";
 export type { Rng } from "./rng.js";
 export {
@@ -67,5 +77,6 @@ export type {
   RejectedProposal,
   ScoreResult,
   SelectionState,
+  StopReason,
   ValEvaluationPolicy,
 } from "./types.js";

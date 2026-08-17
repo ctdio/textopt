@@ -14,6 +14,7 @@ import {
 import type {
   Adapter,
   EvaluationContext,
+  OptimizationResult,
   OptimizerEvent,
   OptimizerSnapshot,
 } from "./types.js";
@@ -1216,6 +1217,433 @@ describe("optimize", () => {
     expect(new Set(contexts.map((context) => context.iteration))).toContain(1);
   });
 });
+
+describe("optimize proposals", () => {
+  const options = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 2000,
+    maxIterations: 4,
+    minibatchSize: 2,
+    seed: 1,
+  };
+
+  test("makes one proposal per iteration by default", async () => {
+    const events: OptimizerEvent[] = [];
+
+    await optimize({ ...options, onEvent: (event) => events.push(event) });
+
+    expect(countProposals(events, 0)).toBe(1);
+  });
+
+  test("makes several proposals in one iteration when asked", async () => {
+    const events: OptimizerEvent[] = [];
+
+    await optimize({
+      ...options,
+      proposals: { perIteration: 3 },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(countProposals(events, 0)).toBe(3);
+  });
+
+  test("draws a different minibatch for each proposal in an iteration", async () => {
+    const batches: string[] = [];
+
+    await optimize({
+      ...options,
+      maxIterations: 1,
+      adapter: {
+        ...options.adapter,
+        evaluate: (args) => {
+          if (args.captureTraces) {
+            batches.push(
+              args.batch.map((example) => example.question).join("|"),
+            );
+          }
+          return options.adapter.evaluate(args);
+        },
+      },
+      proposals: { perIteration: 2 },
+    });
+
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).not.toBe(batches[1]);
+  });
+
+  test("accepts at most one candidate per iteration under best selection", async () => {
+    const events: OptimizerEvent[] = [];
+
+    await optimize({
+      ...options,
+      proposals: { perIteration: 3, selection: "best" },
+      onEvent: (event) => events.push(event),
+    });
+
+    const accepted = events.filter(
+      (event) => event.type === "candidateAccepted",
+    );
+    const iterations = accepted.map((event) => event.iteration);
+
+    expect(accepted.length).toBeGreaterThan(0);
+    expect(new Set(iterations).size).toBe(iterations.length);
+  });
+
+  test("accepts several candidates in one iteration under all selection", async () => {
+    const events: OptimizerEvent[] = [];
+
+    await optimize({
+      ...options,
+      proposals: { perIteration: 3, selection: "all" },
+      onEvent: (event) => events.push(event),
+    });
+
+    const perIteration = new Map<number, number>();
+    for (const event of events) {
+      if (event.type === "candidateAccepted") {
+        perIteration.set(
+          event.iteration,
+          (perIteration.get(event.iteration) ?? 0) + 1,
+        );
+      }
+    }
+
+    expect(Math.max(...perIteration.values())).toBeGreaterThan(1);
+  });
+
+  test("keeps the strongest of several proposals under best selection", async () => {
+    const events: OptimizerEvent[] = [];
+
+    await optimize({
+      ...options,
+      maxIterations: 1,
+      proposals: { perIteration: 3, selection: "best" },
+      onEvent: (event) => events.push(event),
+    });
+
+    const accepted = events.filter(
+      (event) => event.type === "candidateAccepted",
+    );
+    const passedOver = events.filter(
+      (event) =>
+        event.type === "candidateRejected" && event.reason === "notSelected",
+    );
+
+    // A sibling that improved but lost is reported as passed over, not as a
+    // proposal that failed — it is never fed back to reflection as a dead end.
+    expect(accepted).toHaveLength(1);
+    expect(passedOver.length).toBeGreaterThan(0);
+  });
+
+  test("evaluates concurrent proposals at the same time", async () => {
+    const tracked = withOverlapTracking(createKeywordAdapter());
+
+    await optimize({
+      ...options,
+      adapter: tracked.adapter,
+      proposals: { perIteration: 3, concurrency: 3 },
+    });
+
+    expect(tracked.maxInFlight()).toBeGreaterThan(1);
+  });
+
+  test("runs proposals one at a time by default", async () => {
+    const tracked = withOverlapTracking(createKeywordAdapter());
+
+    await optimize({
+      ...options,
+      adapter: tracked.adapter,
+      proposals: { perIteration: 3 },
+    });
+
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("reaches the same candidates whether or not proposals overlap", async () => {
+    const serial = await optimize({
+      ...options,
+      adapter: createKeywordAdapter(),
+      proposals: { perIteration: 3, concurrency: 1 },
+    });
+    const concurrent = await optimize({
+      ...options,
+      adapter: createKeywordAdapter(),
+      proposals: { perIteration: 3, concurrency: 3 },
+    });
+
+    expect(concurrent.candidates.map((record) => record.candidate)).toEqual(
+      serial.candidates.map((record) => record.candidate),
+    );
+    expect(concurrent.bestScore).toBe(serial.bestScore);
+  });
+
+  test("never spends past the budget when proposals overlap", async () => {
+    const result = await optimize({
+      ...options,
+      maxMetricCalls: 43,
+      maxIterations: 50,
+      proposals: { perIteration: 4, concurrency: 4 },
+    });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(43);
+  });
+
+  test("rejects a proposal count below one", async () => {
+    await expect(
+      optimize({ ...options, proposals: { perIteration: 0 } }),
+    ).rejects.toThrow(/perIteration/);
+  });
+});
+
+describe("optimize reflection budget", () => {
+  const options = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 2000,
+    maxIterations: 20,
+    minibatchSize: 2,
+    seed: 1,
+  };
+
+  test("counts the reflection calls a run made", async () => {
+    const result = await optimize({ ...options, maxIterations: 3 });
+
+    expect(result.reflectionCalls).toBeGreaterThan(0);
+  });
+
+  test("stops once the reflection call budget is spent", async () => {
+    const result = await optimize({
+      ...options,
+      reflection: { maxCalls: 2 },
+    });
+
+    expect(result.reflectionCalls).toBe(2);
+    expect(result.stopReason).toBe("reflectionBudgetExhausted");
+  });
+
+  test("never exceeds the reflection budget with overlapping proposals", async () => {
+    const result = await optimize({
+      ...options,
+      proposals: { perIteration: 4, concurrency: 4 },
+      reflection: { maxCalls: 3 },
+    });
+
+    expect(result.reflectionCalls).toBe(3);
+  });
+
+  test("carries reflection spend across a resumed run", async () => {
+    // A reflector that never improves anything keeps every iteration
+    // reflecting, so the count is a clean measure of what each run spent.
+    const persistent = { ...options, reflect: createDegradingReflector() };
+    const interrupted = await optimize({ ...persistent, maxIterations: 2 });
+
+    const resumed = await optimize({
+      ...persistent,
+      maxIterations: 4,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(resumed.reflectionCalls).toBeGreaterThan(
+      interrupted.reflectionCalls,
+    );
+    expect(interrupted.snapshot.reflectionCalls).toBe(
+      interrupted.reflectionCalls,
+    );
+  });
+
+  test("shows the reflection model at most maxRecords examples", async () => {
+    const prompts: string[] = [];
+
+    await optimize({
+      ...options,
+      maxIterations: 2,
+      minibatchSize: 4,
+      reflection: { maxRecords: 1 },
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return createKeywordReflector()({ prompt });
+      },
+    });
+
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const prompt of prompts) {
+      expect(prompt.match(/"feedback"/g) ?? []).toHaveLength(1);
+    }
+  });
+
+  test("uses a supplied reflection prompt template", async () => {
+    const prompts: string[] = [];
+
+    await optimize({
+      ...options,
+      maxIterations: 1,
+      reflection: {
+        buildPrompt: ({ componentName, currentText }) =>
+          `improve ${componentName}: ${currentText}`,
+      },
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nhold ten seconds\n```";
+      },
+    });
+
+    expect(prompts[0]).toBe("improve instruction: Answer the user question.");
+  });
+});
+
+describe("optimize outputs", () => {
+  const options = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 400,
+    maxIterations: 4,
+    minibatchSize: 2,
+    seed: 1,
+  };
+
+  test("omits validation outputs unless tracking is on", async () => {
+    const result = await optimize(options);
+
+    expect(result.bestOutputs).toBeUndefined();
+  });
+
+  test("returns the best candidate's output for every validation instance", async () => {
+    const result = await optimize({ ...options, trackBestOutputs: true });
+
+    expect(result.bestOutputs).toHaveLength(KEYWORD_EXAMPLES.length);
+    for (const output of result.bestOutputs ?? []) {
+      expect(output).toContain(result.bestCandidate.instruction);
+    }
+  });
+});
+
+describe("optimize checkpoint fidelity", () => {
+  const options = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 400,
+    minibatchSize: 2,
+    seed: 1,
+  };
+
+  test("keeps the run fingerprint small however large the dataset is", async () => {
+    const large = Array.from({ length: 200 }, (_, index) => ({
+      question: `question ${index} ${"padding ".repeat(20)}`,
+      required: ["hold"],
+    }));
+
+    const result = await optimize({
+      ...options,
+      trainset: large,
+      maxIterations: 1,
+      maxMetricCalls: 1000,
+    });
+
+    // The fingerprint is written into every checkpoint, so it must not grow
+    // with the data it identifies.
+    expect(result.snapshot.fingerprint.length).toBeLessThan(200);
+  });
+
+  test("omits the cache from checkpoints when asked", async () => {
+    const result = await optimize({
+      ...options,
+      maxIterations: 2,
+      checkpointCache: false,
+    });
+
+    expect(result.snapshot.cache).toBeUndefined();
+  });
+
+  test("resumes the minibatch sequence exactly where it stopped", async () => {
+    const uninterrupted = await recordMinibatches({ maxIterations: 4 });
+
+    const first = await recordMinibatches({ maxIterations: 2 });
+    const second = await recordMinibatches({
+      maxIterations: 4,
+      resumeFrom: first.result.snapshot,
+    });
+
+    expect([...first.batches, ...second.batches]).toEqual(
+      uninterrupted.batches,
+    );
+  });
+});
+
+/** Runs the keyword task and records every traced minibatch in order. */
+async function recordMinibatches(args: {
+  maxIterations: number;
+  resumeFrom?: OptimizerSnapshot;
+}): Promise<{ batches: string[]; result: OptimizationResult }> {
+  const adapter = createKeywordAdapter();
+  const batches: string[] = [];
+
+  const result = await optimize({
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: {
+      ...adapter,
+      evaluate: (evaluateArgs) => {
+        if (evaluateArgs.captureTraces) {
+          batches.push(
+            evaluateArgs.batch.map((example) => example.question).join("|"),
+          );
+        }
+        return adapter.evaluate(evaluateArgs);
+      },
+    },
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 400,
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+    ...(args.resumeFrom === undefined ? {} : { resumeFrom: args.resumeFrom }),
+  });
+
+  return { batches, result };
+}
+
+function countProposals(
+  events: readonly OptimizerEvent[],
+  iteration: number,
+): number {
+  return events.filter(
+    (event) => event.type === "proposal" && event.iteration === iteration,
+  ).length;
+}
+
+/** Wraps an adapter to observe how many evaluations are ever in flight at once. */
+function withOverlapTracking<Datum, Traj, Out>(
+  adapter: Adapter<Datum, Traj, Out>,
+): { adapter: Adapter<Datum, Traj, Out>; maxInFlight: () => number } {
+  let inFlight = 0;
+  let peak = 0;
+
+  return {
+    maxInFlight: () => peak,
+    adapter: {
+      ...adapter,
+      evaluate: async (args) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          await Promise.resolve();
+          return await adapter.evaluate(args);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    },
+  };
+}
 
 /** Runs the keyword task and collects the run context of every evaluation. */
 async function recordRunContexts(args: {

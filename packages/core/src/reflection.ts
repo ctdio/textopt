@@ -13,7 +13,24 @@ export interface ReflectionPromptArgs {
   rejected?: readonly RejectedProposal[];
 }
 
+export type ReflectionPromptBuilder = (args: ReflectionPromptArgs) => string;
+
+/**
+ * Ceilings on what one reflection call is allowed to carry. Traces are the one
+ * input GEPA cannot bound in advance — a single failing rollout can serialize
+ * to hundreds of kilobytes — and an over-long prompt fails the whole call
+ * rather than degrading.
+ */
+export interface ReflectionLimits {
+  /** Records shown per component. The worst scoring ones are kept. */
+  maxRecords?: number;
+  /** Rough ceiling on the characters the records serialize to. */
+  maxCharacters?: number;
+}
+
 const LANGUAGE_TAG = /^[a-zA-Z0-9_+.-]*\n/;
+const TRUNCATION_MARKER = "… [truncated]";
+const MIN_STRING_BUDGET = 40;
 const DANGLING_OPEN_FENCE = /^\s*```\S*\n?/;
 const DANGLING_CLOSE_FENCE = /\n?```\s*$/;
 
@@ -36,7 +53,7 @@ export function buildReflectionPrompt(args: ReflectionPromptArgs): string {
     "Below are task inputs the assistant received, the outputs it produced, and feedback on how each output could be better:",
     "",
     "<examples>",
-    JSON.stringify(records, jsonSafeReplacer, 2),
+    serializeRecords(records),
     "</examples>",
     ...(rejected.length === 0
       ? []
@@ -86,13 +103,69 @@ export function parseProposedText(response: string): string {
 }
 
 /**
+ * Trims a reflective dataset down to what one prompt should carry: the worst
+ * scoring records first, since reflection is about diagnosing failures, and
+ * long strings cut to a share of the character budget.
+ */
+export function limitReflectiveRecords(args: {
+  records: readonly ReflectiveRecord[];
+  maxRecords?: number;
+  maxCharacters?: number;
+}): ReflectiveRecord[] {
+  const { records, maxRecords, maxCharacters } = args;
+
+  let kept = [...records];
+
+  if (maxRecords !== undefined && kept.length > maxRecords) {
+    // Rank by score, then restore the original order: the model reads the
+    // records as a sequence, and reordering them by score would imply one.
+    const ranked = kept
+      .map((record, position) => ({ record, position }))
+      .sort(
+        (a, b) =>
+          (a.record.score ?? Number.POSITIVE_INFINITY) -
+          (b.record.score ?? Number.POSITIVE_INFINITY),
+      )
+      .slice(0, maxRecords)
+      .sort((a, b) => a.position - b.position);
+    kept = ranked.map((entry) => entry.record);
+  }
+
+  if (maxCharacters === undefined || kept.length === 0) {
+    return kept;
+  }
+
+  const perRecord = Math.max(
+    MIN_STRING_BUDGET,
+    Math.floor(maxCharacters / kept.length),
+  );
+  kept = kept.map(
+    (record) => truncateStrings(record, perRecord) as ReflectiveRecord,
+  );
+
+  // Truncating strings bounds one huge trace; dropping records bounds a long
+  // tail of small ones. Both are needed, and at least one record survives —
+  // an empty dataset would silently skip the component entirely.
+  while (kept.length > 1 && serializeRecords(kept).length > maxCharacters) {
+    kept.pop();
+  }
+  return kept;
+}
+
+/**
  * Default instruction proposer: one reflection call per component being
  * updated. Adapters override this via `proposeNewTexts` when components need
- * coupled updates or a structured proposal format.
+ * coupled updates or a structured proposal format; `buildPrompt` is the
+ * lighter seam for changing only the wording.
  */
-export function createDefaultProposer(): (
-  args: ProposeArgs,
-) => Promise<ComponentPatch> {
+export function createDefaultProposer(
+  options: {
+    buildPrompt?: ReflectionPromptBuilder;
+    limits?: ReflectionLimits;
+  } = {},
+): (args: ProposeArgs) => Promise<ComponentPatch> {
+  const { buildPrompt = buildReflectionPrompt, limits = {} } = options;
+
   return async (args) => {
     const {
       candidate,
@@ -113,10 +186,10 @@ export function createDefaultProposer(): (
 
       const currentText = candidate[componentName] ?? "";
       const response = await reflect({
-        prompt: buildReflectionPrompt({
+        prompt: buildPrompt({
           componentName,
           currentText,
-          records,
+          records: limitReflectiveRecords({ records, ...limits }),
           rejected: rejectedProposals?.[componentName],
         }),
         signal,
@@ -130,6 +203,31 @@ export function createDefaultProposer(): (
 
     return proposed;
   };
+}
+
+function serializeRecords(records: readonly ReflectiveRecord[]): string {
+  return JSON.stringify(records, jsonSafeReplacer, 2);
+}
+
+/** Recursive so a long trace buried in a nested output is cut too. */
+function truncateStrings(value: unknown, budget: number): unknown {
+  if (typeof value === "string") {
+    return value.length <= budget
+      ? value
+      : `${value.slice(0, budget)}${TRUNCATION_MARKER}`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => truncateStrings(item, budget));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        truncateStrings(item, budget),
+      ]),
+    );
+  }
+  return value;
 }
 
 function jsonSafeReplacer(_key: string, value: unknown): unknown {

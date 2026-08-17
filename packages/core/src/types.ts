@@ -190,11 +190,19 @@ export type ComponentSelector = (args: {
   rng: Rng;
 }) => string[];
 
-export type BatchSampler<Datum> = (args: {
+export type BatchSampler<Datum> = ((args: {
   trainset: readonly Datum[];
   iteration: number;
   rng: Rng;
-}) => number[];
+}) => number[]) & {
+  /**
+   * Position within the sampler's own schedule, checkpointed alongside the
+   * random stream. Without it a resumed run restarts its epoch and re-walks
+   * minibatches the interrupted run had already spent.
+   */
+  state?: () => unknown;
+  restore?: (state: unknown) => void;
+};
 
 export type AcceptancePolicy = (args: {
   parentScores: readonly number[];
@@ -226,7 +234,10 @@ export interface Budget {
   spent(): number;
   remaining(): number;
   canAfford(calls: number): boolean;
-  charge(calls: number): void;
+  /** Debits `calls` atomically. False when the allowance cannot cover them. */
+  reserve(calls: number): boolean;
+  /** Credits back calls a reservation did not end up spending. */
+  refund(calls: number): void;
 }
 
 /**
@@ -258,7 +269,7 @@ export type EvaluationPhase = "seed" | "minibatch" | "validation";
 
 export type OptimizerEvent =
   | { type: "start"; components: string[]; valsetSize: number }
-  | { type: "iterationStart"; iteration: number; parentId: number }
+  | { type: "iterationStart"; iteration: number; parentIds: number[] }
   | {
       type: "evaluation";
       iteration: number;
@@ -290,14 +301,23 @@ export type OptimizerEvent =
       parentScore: number;
       childScore: number;
       source: CandidateSource;
+      /**
+       * "worse" lost to its parent on the minibatch. "notSelected" beat its
+       * parent but lost to a stronger proposal from the same iteration — it is
+       * not a dead end, and is never fed back to reflection as one.
+       */
+      reason: "worse" | "notSelected";
     }
   | { type: "error"; iteration: number; err: unknown }
   | {
       type: "finish";
-      reason: "budgetExhausted" | "aborted" | "maxIterations";
+      reason: StopReason;
       bestCandidateId: number;
       metricCalls: number;
     };
+
+export type StopReason =
+  "budgetExhausted" | "reflectionBudgetExhausted" | "aborted" | "maxIterations";
 
 /**
  * Everything needed to continue a run: the candidate pool with its scores, the
@@ -305,9 +325,10 @@ export type OptimizerEvent =
  * that stops merges and proposals from being relitigated. Plain JSON — write it
  * wherever you like and hand it back as `resumeFrom`.
  *
- * A resumed run is deterministic from the checkpoint, but not bit-identical to
- * an uninterrupted one: minibatch sampling restarts its epoch from the restored
- * random stream rather than mid-shuffle.
+ * A resumed run follows the same trajectory an uninterrupted one would, as long
+ * as the batch sampler reports its state and the evaluation cache is either
+ * checkpointed or disabled — a cache that is neither leaves the resumed run
+ * paying again for rollouts the first one had already bought.
  */
 export interface OptimizerSnapshot {
   version: 1;
@@ -320,8 +341,11 @@ export interface OptimizerSnapshot {
   records: CandidateRecord[];
   iteration: number;
   metricCalls: number;
+  reflectionCalls: number;
   cacheHits: number;
   rngState: number;
+  /** Whatever the batch sampler reports from `state()`, when it has one. */
+  sampler?: unknown;
   rejectedProposals: Record<string, RejectedProposal[]>;
   merge: {
     attempts: string[];
@@ -334,10 +358,16 @@ export interface OptimizerSnapshot {
   cache?: [string, CachedScore][];
 }
 
-export interface OptimizationResult {
+export interface OptimizationResult<Out = unknown> {
   bestCandidate: Candidate;
   bestScore: number;
   bestCandidateId: number;
+  /**
+   * What the best candidate actually produced on each validation instance,
+   * when `trackBestOutputs` is on. `undefined` where the score came from the
+   * cache rather than from a rollout of this candidate.
+   */
+  bestOutputs?: (Out | undefined)[];
   candidates: CandidateRecord[];
   paretoFrontier: CandidateRecord[];
   /**
@@ -347,9 +377,11 @@ export interface OptimizationResult {
   perObjectiveBest?: Record<string, { score: number; candidateIds: number[] }>;
   scoreMatrix: (number | undefined)[][];
   metricCalls: number;
+  /** Calls made to the reflection model, which no metric budget covers. */
+  reflectionCalls: number;
   cacheHits: number;
   iterations: number;
-  stopReason: "budgetExhausted" | "aborted" | "maxIterations";
+  stopReason: StopReason;
   /** State as of the last iteration, ready to hand back as `resumeFrom`. */
   snapshot: OptimizerSnapshot;
 }

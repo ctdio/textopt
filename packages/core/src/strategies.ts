@@ -188,7 +188,7 @@ export function createEpochShuffledSampler<Datum>(args: {
   let epoch = -1;
   let lastTrainsetSize = -1;
 
-  return ({ trainset, iteration, rng }) => {
+  const sampler: BatchSampler<Datum> = ({ trainset, iteration, rng }) => {
     if (trainset.length === 0) {
       throw new Error("Cannot sample a minibatch from an empty trainset");
     }
@@ -214,6 +214,21 @@ export function createEpochShuffledSampler<Datum>(args: {
     const start = baseIndex % shuffled.length;
     return shuffled.slice(start, start + minibatchSize);
   };
+
+  // The shuffle is drawn once per epoch, so it cannot be replayed from the
+  // random stream alone: a resumed run that reshuffled would walk a different
+  // epoch and re-spend minibatches the interrupted run had already seen.
+  sampler.state = () => ({ shuffled: [...shuffled], epoch, lastTrainsetSize });
+  sampler.restore = (state: unknown) => {
+    if (!isSamplerState(state)) {
+      return;
+    }
+    shuffled = [...state.shuffled];
+    epoch = state.epoch;
+    lastTrainsetSize = state.lastTrainsetSize;
+  };
+
+  return sampler;
 }
 
 /**
@@ -254,6 +269,22 @@ function bestByMeanThenCoverage(records: readonly CandidateRecord[]): number {
     }
   }
   return bestId;
+}
+
+function isSamplerState(state: unknown): state is {
+  shuffled: number[];
+  epoch: number;
+  lastTrainsetSize: number;
+} {
+  if (state === null || typeof state !== "object") {
+    return false;
+  }
+  const candidate = state as Record<string, unknown>;
+  return (
+    Array.isArray(candidate.shuffled) &&
+    typeof candidate.epoch === "number" &&
+    typeof candidate.lastTrainsetSize === "number"
+  );
 }
 
 function buildPaddedShuffle(args: {

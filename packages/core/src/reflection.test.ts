@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import {
   buildReflectionPrompt,
   createDefaultProposer,
+  limitReflectiveRecords,
   parseProposedText,
 } from "./reflection.js";
+import type { ReflectiveRecord } from "./types.js";
 
 describe("buildReflectionPrompt", () => {
   test("includes the component name and its current text", () => {
@@ -189,5 +191,142 @@ describe("createDefaultProposer", () => {
     });
 
     expect(prompts[0]).toContain("tried alpha");
+  });
+
+  test("uses a supplied prompt builder instead of the default template", async () => {
+    const propose = createDefaultProposer({
+      buildPrompt: ({ componentName, currentText }) =>
+        `rewrite ${componentName}: ${currentText}`,
+    });
+    const prompts: string[] = [];
+
+    await propose({
+      candidate: { alpha: "old alpha" },
+      reflectiveDataset: {
+        alpha: [{ inputs: {}, generatedOutputs: "", feedback: "be specific" }],
+      },
+      componentsToUpdate: ["alpha"],
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nnew alpha\n```";
+      },
+    });
+
+    expect(prompts).toEqual(["rewrite alpha: old alpha"]);
+  });
+
+  test("applies record limits before the prompt builder sees them", async () => {
+    const propose = createDefaultProposer({ limits: { maxRecords: 1 } });
+    const seen: number[] = [];
+
+    await propose({
+      candidate: { alpha: "old alpha" },
+      reflectiveDataset: {
+        alpha: [
+          { inputs: {}, generatedOutputs: "", feedback: "a", score: 1 },
+          { inputs: {}, generatedOutputs: "", feedback: "b", score: 0 },
+        ],
+      },
+      componentsToUpdate: ["alpha"],
+      reflect: async ({ prompt }) => {
+        seen.push((prompt.match(/"feedback"/g) ?? []).length);
+        return "```\nnew alpha\n```";
+      },
+    });
+
+    expect(seen).toEqual([1]);
+  });
+});
+
+describe("limitReflectiveRecords", () => {
+  const records: ReflectiveRecord[] = [
+    { inputs: "one", generatedOutputs: "", feedback: "perfect", score: 1 },
+    { inputs: "two", generatedOutputs: "", feedback: "wrong", score: 0 },
+    { inputs: "three", generatedOutputs: "", feedback: "partial", score: 0.5 },
+  ];
+
+  test("returns every record when no limit is set", () => {
+    expect(limitReflectiveRecords({ records })).toEqual(records);
+  });
+
+  test("keeps the worst scoring records", () => {
+    const limited = limitReflectiveRecords({ records, maxRecords: 2 });
+
+    expect(limited.map((record) => record.inputs)).toEqual(["two", "three"]);
+  });
+
+  test("keeps the records in their original order", () => {
+    const limited = limitReflectiveRecords({
+      records: [records[1] as ReflectiveRecord, records[0] as ReflectiveRecord],
+      maxRecords: 2,
+    });
+
+    expect(limited.map((record) => record.inputs)).toEqual(["two", "one"]);
+  });
+
+  test("prefers scored failures over records with no score at all", () => {
+    const limited = limitReflectiveRecords({
+      records: [
+        { inputs: "unscored", generatedOutputs: "", feedback: "" },
+        { inputs: "failure", generatedOutputs: "", feedback: "", score: 0 },
+      ],
+      maxRecords: 1,
+    });
+
+    expect(limited.map((record) => record.inputs)).toEqual(["failure"]);
+  });
+
+  test("truncates a string longer than the per-record character share", () => {
+    const limited = limitReflectiveRecords({
+      records: [
+        { inputs: "x".repeat(5000), generatedOutputs: "", feedback: "" },
+        { inputs: "short", generatedOutputs: "", feedback: "" },
+      ],
+      maxCharacters: 600,
+    });
+
+    expect(String(limited[0]?.inputs).length).toBeLessThan(400);
+    expect(String(limited[0]?.inputs)).toContain("truncated");
+    expect(limited[1]?.inputs).toBe("short");
+  });
+
+  test("truncates strings nested inside a record", () => {
+    const limited = limitReflectiveRecords({
+      records: [
+        {
+          inputs: { trace: [{ output: "y".repeat(500) }] },
+          generatedOutputs: "",
+          feedback: "",
+        },
+      ],
+      maxCharacters: 100,
+    });
+
+    const trace = (limited[0]?.inputs as { trace: { output: string }[] }).trace;
+    expect(trace[0]?.output.length).toBeLessThan(120);
+  });
+
+  test("drops trailing records when many small ones still overflow", () => {
+    const limited = limitReflectiveRecords({
+      records: Array.from({ length: 40 }, (_, index) => ({
+        inputs: `record ${index}`,
+        generatedOutputs: "",
+        feedback: "",
+      })),
+      maxCharacters: 400,
+    });
+
+    expect(limited.length).toBeLessThan(40);
+    expect(limited.length).toBeGreaterThan(0);
+    expect(limited[0]?.inputs).toBe("record 0");
+  });
+
+  test("keeps one record even when it cannot fit", () => {
+    const limited = limitReflectiveRecords({
+      records: [{ inputs: "z".repeat(50), generatedOutputs: "", feedback: "" }],
+      maxCharacters: 10,
+    });
+
+    expect(limited).toHaveLength(1);
   });
 });

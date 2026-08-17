@@ -1,45 +1,45 @@
 import { describe, expect, test } from "vitest";
-import { createMemoryCache, evaluationCacheKey } from "./cache.js";
+import {
+  candidateHash,
+  createMemoryCache,
+  evaluationCacheKey,
+} from "./cache.js";
 
-describe("evaluationCacheKey", () => {
+describe("candidateHash", () => {
   test("is stable across component key ordering", () => {
-    const first = evaluationCacheKey({
-      candidate: { a: "one", b: "two" },
-      instanceId: "0",
-      split: "val",
-    });
-    const second = evaluationCacheKey({
-      candidate: { b: "two", a: "one" },
-      instanceId: "0",
-      split: "val",
-    });
-
-    expect(first).toBe(second);
-  });
-
-  test("separates train and val instances that share an id", () => {
-    const train = evaluationCacheKey({
-      candidate: { a: "one" },
-      instanceId: "0",
-      split: "train",
-    });
-    const val = evaluationCacheKey({
-      candidate: { a: "one" },
-      instanceId: "0",
-      split: "val",
-    });
-
-    expect(train).not.toBe(val);
+    expect(candidateHash({ a: "one", b: "two" })).toBe(
+      candidateHash({ b: "two", a: "one" }),
+    );
   });
 
   test("changes when component text changes", () => {
+    expect(candidateHash({ a: "one" })).not.toBe(candidateHash({ a: "onE" }));
+  });
+
+  test("separates text moved between components", () => {
+    expect(candidateHash({ a: "one", b: "" })).not.toBe(
+      candidateHash({ a: "", b: "one" }),
+    );
+  });
+});
+
+describe("evaluationCacheKey", () => {
+  test("separates train and val instances that share an id", () => {
+    const hash = candidateHash({ a: "one" });
+
+    expect(
+      evaluationCacheKey({ hash, instanceId: "0", split: "train" }),
+    ).not.toBe(evaluationCacheKey({ hash, instanceId: "0", split: "val" }));
+  });
+
+  test("changes when the candidate changes", () => {
     const first = evaluationCacheKey({
-      candidate: { a: "one" },
+      hash: candidateHash({ a: "one" }),
       instanceId: "0",
       split: "val",
     });
     const second = evaluationCacheKey({
-      candidate: { a: "onE" },
+      hash: candidateHash({ a: "onE" }),
       instanceId: "0",
       split: "val",
     });
@@ -48,18 +48,11 @@ describe("evaluationCacheKey", () => {
   });
 
   test("changes when the instance changes", () => {
-    const first = evaluationCacheKey({
-      candidate: { a: "one" },
-      instanceId: "0",
-      split: "val",
-    });
-    const second = evaluationCacheKey({
-      candidate: { a: "one" },
-      instanceId: "1",
-      split: "val",
-    });
+    const hash = candidateHash({ a: "one" });
 
-    expect(first).not.toBe(second);
+    expect(
+      evaluationCacheKey({ hash, instanceId: "0", split: "val" }),
+    ).not.toBe(evaluationCacheKey({ hash, instanceId: "1", split: "val" }));
   });
 });
 

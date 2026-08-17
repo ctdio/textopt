@@ -30,8 +30,9 @@ export function logEvent(event: OptimizerEvent): void {
       break;
     case "candidateRejected":
       console.log(
-        `  ✗ rejected ${event.source} of #${event.parentId}:` +
-          ` ${event.childScore.toFixed(3)} <= ${event.parentScore.toFixed(3)}`,
+        `  ✗ ${event.reason === "worse" ? "rejected" : "passed over"}` +
+          ` ${event.source} of #${event.parentId}:` +
+          ` ${event.childScore.toFixed(3)} vs ${event.parentScore.toFixed(3)}`,
       );
       break;
     case "error":
@@ -43,7 +44,10 @@ export function logEvent(event: OptimizerEvent): void {
       );
       break;
     case "iterationStart":
-      console.log(`\niteration ${event.iteration} (parent #${event.parentId})`);
+      console.log(
+        `\niteration ${event.iteration}` +
+          ` (parents ${event.parentIds.map((id) => `#${id}`).join(", ")})`,
+      );
       break;
   }
 }

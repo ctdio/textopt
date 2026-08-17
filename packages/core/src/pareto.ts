@@ -124,34 +124,32 @@ export function buildObjectiveFronts(args: ObjectiveFrontArgs): Set<number>[] {
 export function pruneDominatedFronts(args: PruneFrontsArgs): Set<number>[] {
   const { fronts, aggregateScores } = args;
 
-  const candidates = collectCandidates(fronts).sort(
+  const frontsByCandidate = indexFrontsByCandidate(fronts);
+  const ordered = [...frontsByCandidate.keys()].sort(
     (a, b) => (aggregateScores[a] ?? 0) - (aggregateScores[b] ?? 0),
   );
-  const dominated = new Set<number>();
 
-  let removedOne = true;
-  while (removedOne) {
-    removedOne = false;
-    for (const candidate of candidates) {
-      if (dominated.has(candidate)) {
-        continue;
-      }
-      const others = new Set(
-        candidates.filter(
-          (other) => other !== candidate && !dominated.has(other),
-        ),
-      );
-      if (isDominated({ candidate, others, fronts })) {
-        dominated.add(candidate);
-        removedOne = true;
-        break;
-      }
+  // One pass suffices: removing a candidate only shrinks the pool of possible
+  // substitutes, and a candidate that already had no substitute on some front
+  // cannot acquire one. Only the fronts a candidate actually appears on are
+  // consulted, which keeps this linear in total front membership rather than
+  // candidates times instances.
+  const survivors = new Set(ordered);
+  for (const candidate of ordered) {
+    survivors.delete(candidate);
+
+    const substituted = (frontsByCandidate.get(candidate) as number[]).every(
+      (index) =>
+        hasSurvivor({ front: fronts[index] as ReadonlySet<number>, survivors }),
+    );
+    if (!substituted) {
+      survivors.add(candidate);
     }
   }
 
   return fronts.map(
     (front) =>
-      new Set([...front].filter((candidate) => !dominated.has(candidate))),
+      new Set([...front].filter((candidate) => survivors.has(candidate))),
   );
 }
 
@@ -211,31 +209,34 @@ export function sum(values: readonly number[]): number {
   return total;
 }
 
-function collectCandidates(fronts: readonly ReadonlySet<number>[]): number[] {
-  const seen = new Set<number>();
-  for (const front of fronts) {
+function indexFrontsByCandidate(
+  fronts: readonly ReadonlySet<number>[],
+): Map<number, number[]> {
+  const index = new Map<number, number[]>();
+
+  fronts.forEach((front, position) => {
     for (const candidate of front) {
-      seen.add(candidate);
+      const owned = index.get(candidate);
+      if (owned === undefined) {
+        index.set(candidate, [position]);
+      } else {
+        owned.push(position);
+      }
     }
-  }
-  return [...seen];
+  });
+  return index;
 }
 
-function isDominated(args: {
-  candidate: number;
-  others: ReadonlySet<number>;
-  fronts: readonly ReadonlySet<number>[];
+function hasSurvivor(args: {
+  front: ReadonlySet<number>;
+  survivors: ReadonlySet<number>;
 }): boolean {
-  const { candidate, others, fronts } = args;
+  const { front, survivors } = args;
 
-  for (const front of fronts) {
-    if (!front.has(candidate)) {
-      continue;
-    }
-    const hasSubstitute = [...front].some((other) => others.has(other));
-    if (!hasSubstitute) {
-      return false;
+  for (const candidate of front) {
+    if (survivors.has(candidate)) {
+      return true;
     }
   }
-  return true;
+  return false;
 }

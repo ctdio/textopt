@@ -161,6 +161,44 @@ describe("pruneDominatedFronts", () => {
 
     expect(pruned[0]).toEqual(new Set([1]));
   });
+
+  test("removes a chain of candidates each covered by the next", () => {
+    // 0 wins only where 1 wins, 1 only where 2 wins, and 2 wins everywhere.
+    const fronts = [new Set([0, 1, 2]), new Set([1, 2]), new Set([2])];
+
+    const pruned = pruneDominatedFronts({
+      fronts,
+      aggregateScores: [0.1, 0.2, 0.3],
+    });
+
+    expect(pruned).toEqual([new Set([2]), new Set([2]), new Set([2])]);
+  });
+
+  test("prunes a large pool without rescanning it once per removal", () => {
+    // The adversarial shape: survivors sort first, so every later removal
+    // re-checks the whole surviving prefix. 400 candidates that each uniquely
+    // win one instance, then 400 tied on shared instances of which only the
+    // strongest survives.
+    const unique = 400;
+    const tied = 400;
+    const tiedIds = Array.from({ length: tied }, (_, i) => unique + i);
+    const fronts = [
+      ...Array.from({ length: unique }, (_, id) => new Set([id])),
+      ...Array.from({ length: tied }, () => new Set(tiedIds)),
+    ];
+    const aggregateScores = Array.from({ length: unique + tied }, (_, id) =>
+      id < unique ? 0.1 : 0.5 + id / 10_000,
+    );
+
+    const pruned = pruneDominatedFronts({ fronts, aggregateScores });
+
+    expect(pruned.slice(0, unique)).toEqual(
+      Array.from({ length: unique }, (_, id) => new Set([id])),
+    );
+    for (const front of pruned.slice(unique)) {
+      expect(front).toEqual(new Set([unique + tied - 1]));
+    }
+  });
 });
 
 describe("selectParetoCandidate", () => {
