@@ -50,13 +50,15 @@ describe("createBudget", () => {
     expect(budget.remaining()).toBe(8);
   });
 
-  test("never refunds below zero", () => {
+  test("refuses to refund more than is reserved", () => {
+    // Refunding calls nobody reserved is a double release, and clamping it at
+    // zero would quietly hand the run an allowance it never had.
     const budget = createBudget({ maxMetricCalls: 10 });
 
     budget.reserve(2);
-    budget.refund(5);
 
-    expect(budget.spent()).toBe(0);
+    expect(() => budget.refund(5)).toThrow(/refund/i);
+    expect(budget.spent()).toBe(2);
   });
 
   test("only one of two concurrent reservations for the same calls succeeds", () => {

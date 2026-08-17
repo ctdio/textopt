@@ -24,17 +24,32 @@ export async function mapWithConcurrency<Item, Result>(args: {
   const workerCount = Math.max(1, Math.min(Math.floor(limit), items.length));
   const results = new Array<Result>(items.length);
   let cursor = 0;
+  /**
+   * The first failure, kept rather than thrown so the workers that are already
+   * running settle before the caller gets control back. A rejection that left
+   * tasks running in the background would go on spending an optimizer's budget
+   * and writing its caches after the run it belonged to had ended.
+   */
+  let failure: { err: unknown } | undefined;
 
   async function worker(): Promise<void> {
-    while (cursor < items.length) {
-      signal?.throwIfAborted();
+    while (cursor < items.length && failure === undefined) {
       const index = cursor;
       cursor += 1;
-      results[index] = await task(items[index] as Item, index);
+      try {
+        signal?.throwIfAborted();
+        results[index] = await task(items[index] as Item, index);
+      } catch (err) {
+        failure ??= { err };
+        return;
+      }
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+  if (failure !== undefined) {
+    throw failure.err;
+  }
   return results;
 }

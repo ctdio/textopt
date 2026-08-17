@@ -158,6 +158,8 @@ interface ScoredBatch<Out> {
   objectiveScores: (Record<string, number> | undefined)[];
   /** Populated only under `trackBestOutputs`, and only for fresh rollouts. */
   outputs: (Out | undefined)[];
+  /** Per instance: the score came from an infrastructure failure, not the candidate. */
+  transient: boolean[];
 }
 
 /** A scored batch spread over the whole valset, with gaps where it was not. */
@@ -262,6 +264,33 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     );
   }
 
+  // An empty minibatch is vacuously perfect, which skips the iteration body
+  // and charges nothing: uncaught, the default iteration ceiling turns that
+  // into a run that neither spends nor terminates.
+  if (!Number.isInteger(minibatchSize) || minibatchSize < 1) {
+    throw new Error(
+      `minibatchSize must be a positive integer, received ${minibatchSize}`,
+    );
+  }
+  if (!Number.isFinite(perfectScore)) {
+    throw new Error(
+      `perfectScore must be a finite number, received ${perfectScore}`,
+    );
+  }
+  if (!Number.isInteger(rejectedProposalMemory) || rejectedProposalMemory < 0) {
+    throw new Error(
+      `rejectedProposalMemory must be a non-negative integer, received ${rejectedProposalMemory}`,
+    );
+  }
+  if (
+    maxIterations !== Number.POSITIVE_INFINITY &&
+    (!Number.isInteger(maxIterations) || maxIterations < 0)
+  ) {
+    throw new Error(
+      `maxIterations must be a non-negative integer or Infinity, received ${maxIterations}`,
+    );
+  }
+
   if (trainset.length === 0) {
     throw new Error("optimize requires a non-empty trainset");
   }
@@ -336,20 +365,17 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     return reflect(args);
   };
 
-  const records: CandidateRecord[] = [...(resumeFrom?.records ?? [])];
+  // Copied on the way in as well as on the way out: the caller owns the object
+  // it persisted, and the run writes component cursors and rejections back into
+  // exactly these structures.
+  const records: CandidateRecord[] = copyRecords(resumeFrom?.records ?? []);
   const seenCandidates = new Set(
     records.map((record) => candidateFingerprint(record.candidate)),
   );
-  /**
-   * Children claimed by a proposal that has not been committed yet. Two
-   * proposals in the same iteration routinely converge on the same text, and
-   * without a claim both would pay to screen it.
-   */
-  const claimedCandidates = new Set<string>();
   const outputsByCandidate = new Map<number, (Out | undefined)[]>();
-  const rejectedProposals: Record<string, RejectedProposal[]> = {
-    ...resumeFrom?.rejectedProposals,
-  };
+  const rejectedProposals: Record<string, RejectedProposal[]> = copyRejections(
+    resumeFrom?.rejectedProposals ?? {},
+  );
   let cacheHits = resumeFrom?.cacheHits ?? 0;
   let iteration = resumeFrom?.iteration ?? 0;
 
@@ -378,26 +404,13 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     return {
       version: 1,
       fingerprint,
-      records: records.map((record) => ({
-        ...record,
-        parentIds: [...record.parentIds],
-        instanceScores: [...record.instanceScores],
-        updatedComponents: [...record.updatedComponents],
-        ...(record.objectiveScores === undefined
-          ? {}
-          : { objectiveScores: { ...record.objectiveScores } }),
-      })),
+      records: copyRecords(records),
       iteration,
       metricCalls: budget.spent(),
       reflectionCalls,
       cacheHits,
       ...(samplerState === undefined ? {} : { sampler: samplerState }),
-      rejectedProposals: Object.fromEntries(
-        Object.entries(rejectedProposals).map(([component, history]) => [
-          component,
-          history.map((entry) => ({ ...entry })),
-        ]),
-      ),
+      rejectedProposals: copyRejections(rejectedProposals),
       rngState: rng.state(),
       merge: {
         attempts: [...mergeAttempts],
@@ -437,6 +450,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       batch.length,
     );
     const outputs = new Array<Out | undefined>(batch.length).fill(undefined);
+    const transient = new Array<boolean>(batch.length).fill(false);
     const pendingIndices: number[] = [];
 
     for (let index = 0; index < batch.length; index += 1) {
@@ -471,8 +485,8 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
           run: { iteration, phase, split, candidateId },
           signal,
         });
-        assertScores({
-          scores: evaluation.scores,
+        assertEvaluation({
+          evaluation,
           expected: pendingIndices.length,
         });
       } catch (err) {
@@ -493,6 +507,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         // A transient score says nothing about the candidate, so caching it
         // would pin this instance to an infrastructure failure forever.
         if (evaluation.transient?.[resultIndex] === true) {
+          transient[batchIndex] = true;
           return;
         }
         evaluationCache?.set(
@@ -518,7 +533,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       meanScore: mean(scores),
     });
 
-    return { scores, objectiveScores, outputs };
+    return { scores, objectiveScores, outputs, transient };
   }
 
   /**
@@ -551,6 +566,13 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     const outputs = new Array<Out | undefined>(valset.length).fill(undefined);
 
     instances.forEach((instance, position) => {
+      // A transient row measured the infrastructure, not the candidate, and
+      // nothing ever re-measures a promoted candidate. Left unknown it costs
+      // one instance of coverage; recorded it is a permanent zero on the
+      // frontier.
+      if (dense.transient[position] === true) {
+        return;
+      }
       scores[instance] = dense.scores[position];
       objectiveScores[instance] = dense.objectiveScores[position];
       outputs[instance] = dense.outputs[position];
@@ -603,7 +625,10 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     source: CandidateRecord["source"];
     updatedComponents: string[];
   }): CandidateRecord {
-    const objectiveScores = meanObjectives(args.evaluation.objectiveScores);
+    const objectiveScores = meanObjectives({
+      rows: args.evaluation.objectiveScores,
+      scores: args.evaluation.scores,
+    });
     const record: CandidateRecord = {
       id: records.length,
       candidate: args.candidate,
@@ -648,21 +673,6 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       history.unshift({ text, parentScore, childScore });
       rejectedProposals[component] = history.slice(0, rejectedProposalMemory);
     }
-  }
-
-  /**
-   * Claims a child for the proposal holding it. False when the same text has
-   * already been recorded or claimed, which is the signal to abandon the
-   * proposal rather than pay to screen a duplicate.
-   */
-  function claimCandidate(child: Candidate): boolean {
-    const fingerprint = candidateFingerprint(child);
-
-    if (seenCandidates.has(fingerprint) || claimedCandidates.has(fingerprint)) {
-      return false;
-    }
-    claimedCandidates.add(fingerprint);
-    return true;
   }
 
   function inheritedCursor(parentIds: readonly number[]): number {
@@ -758,6 +768,16 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     ) {
       return "none";
     }
+
+    // Past this point the merge is being tested, so the iteration belongs to
+    // it rather than to the mutation branch, and is announced here for the
+    // same reason a mutation iteration is: the evaluations that follow have to
+    // be attributable to something.
+    emit({
+      type: "iterationStart",
+      iteration,
+      parentIds: [...proposal.parentIds],
+    });
 
     // Recorded before scoring: a triplet that was tested and lost must not be
     // proposed again, or the run relitigates the same merge forever.
@@ -877,6 +897,11 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         iteration,
         rng,
       });
+      assertComponents({
+        names: componentsToUpdate,
+        candidate: parent.candidate,
+        source: "componentSelector",
+      });
       parent.componentCursor =
         (parent.componentCursor + 1) %
         Math.max(1, Object.keys(parent.candidate).length);
@@ -921,7 +946,10 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         },
         signal,
       });
-      assertScores({ scores: parentEvaluation.scores, expected: batch.length });
+      assertEvaluation({
+        evaluation: parentEvaluation,
+        expected: batch.length,
+      });
     } catch (err) {
       budget.refund(batch.length);
       throw err;
@@ -968,8 +996,20 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       throw err;
     }
 
+    assertComponents({
+      names: Object.keys(proposed),
+      candidate: parent.candidate,
+      source: "proposeNewTexts",
+    });
+
     const child: Candidate = { ...parent.candidate, ...proposed };
-    const changed = Object.keys(proposed).length > 0 && claimCandidate(child);
+    // Only the already-recorded pool is consulted here: it does not change
+    // while proposals are in flight, whereas deduplicating siblings against
+    // each other would hand the run to whichever reflection returned first.
+    // That is settled in plan order when the outcomes are committed.
+    const changed =
+      Object.keys(proposed).length > 0 &&
+      !seenCandidates.has(candidateFingerprint(child));
 
     emit({
       type: "proposal",
@@ -1025,6 +1065,12 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   ): Promise<StopReason | undefined> {
     let stop: StopReason | undefined;
     const improved: ScreenedProposal<Datum>[] = [];
+    /**
+     * Children two siblings converged on. Resolved here rather than while the
+     * proposals were in flight: the first one in plan order keeps the child,
+     * whichever of them finished first.
+     */
+    const claimed = new Set<string>();
 
     for (const outcome of outcomes) {
       if (outcome.status === "skipped") {
@@ -1038,6 +1084,12 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         stop ??= "reflectionBudgetExhausted";
         continue;
       }
+      const fingerprint = candidateFingerprint(outcome.child);
+      if (claimed.has(fingerprint)) {
+        continue;
+      }
+      claimed.add(fingerprint);
+
       if (!outcome.accepted) {
         rememberRejection({
           proposed: outcome.proposed,
@@ -1080,11 +1132,36 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     // Ids are assigned before the sweeps so concurrent validations can report
     // the id their candidate will be recorded under.
     const baseId = records.length;
-    const scheduled = survivors.map((outcome, index) => ({
-      outcome,
-      candidateId: baseId + index,
-      instances: selectValInstances(outcome.child),
-    }));
+    const scheduled: {
+      outcome: ScreenedProposal<Datum>;
+      candidateId: number;
+      instances: number[];
+    }[] = [];
+    let owed = 0;
+
+    for (const outcome of survivors) {
+      const instances = selectValInstances(outcome.child);
+      const uncached = countUncached({
+        candidate: outcome.child,
+        ids: instances.map((index) => valIds[index] as string),
+        split: "val",
+      });
+
+      // Every sweep is priced against the whole schedule before any of them
+      // runs. Discovering the shortfall mid-fan-out instead would either waste
+      // a sweep that was paid for, or record a candidate under an id the
+      // adapter was never told.
+      if (!budget.canAfford(owed + uncached)) {
+        stop ??= "budgetExhausted";
+        break;
+      }
+      owed += uncached;
+      scheduled.push({
+        outcome,
+        candidateId: baseId + scheduled.length,
+        instances,
+      });
+    }
 
     const scored = await mapWithConcurrency({
       items: scheduled,
@@ -1111,8 +1188,9 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     });
 
     for (const { item, evaluation } of scored) {
-      // Stopping at the first shortfall keeps the ids handed to the adapter
-      // aligned with the ids the records actually get.
+      // Unreachable while the schedule is priced up front, and left in place
+      // because recording a candidate under an id that shifted would be worse
+      // than stopping.
       if (evaluation === undefined) {
         stop ??= "budgetExhausted";
         break;
@@ -1165,7 +1243,16 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       stopReason = "maxIterations";
       break;
     }
-    if (!budget.canAfford(minibatchSize * 2)) {
+    // What it takes to finish an iteration rather than to start one: every
+    // proposal screens its parent and its child on a minibatch, and a child
+    // that passes still needs a validation sweep to be promoted. Reserving
+    // less means paying for reflection on proposals that can never be
+    // screened, and discarding a child that already earned its place.
+    if (
+      !budget.canAfford(
+        proposalsPerIteration * minibatchSize * 2 + valset.length,
+      )
+    ) {
       stopReason = "budgetExhausted";
       break;
     }
@@ -1179,11 +1266,16 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
 
     const spentBeforeIteration = budget.spent();
     let pendingStop: StopReason | undefined;
-    claimedCandidates.clear();
 
     try {
+      // The cap is checked here as well as where merges are scheduled: a run
+      // that keeps improving builds a backlog of due merges, and the backlog
+      // outlives the acceptances that created it.
       const mergeScheduled =
-        mergeConfig.enabled && mergesDue > 0 && lastIterationAccepted;
+        mergeConfig.enabled &&
+        mergesDue > 0 &&
+        lastIterationAccepted &&
+        totalMergesTested < mergeConfig.maxInvocations;
       lastIterationAccepted = false;
 
       const merged = mergeScheduled && (await tryMerge()) === "attempted";
@@ -1227,13 +1319,16 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       emit({ type: "error", iteration, err });
     }
 
+    // Checkpointed before the stop is honoured: an iteration that ran out of
+    // budget partway still consumed its plans, and a snapshot that stopped
+    // short of it would replay work this run already paid for.
+    iteration += 1;
+    await checkpoint();
+
     if (pendingStop !== undefined) {
       stopReason = pendingStop;
       break;
     }
-
-    iteration += 1;
-    await checkpoint();
   }
 
   const bestCandidateId = valEvaluationPolicy.bestCandidate(records);
@@ -1269,6 +1364,51 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   };
 }
 
+/**
+ * Patches are merged over the parent, so a name the candidate does not have is
+ * added rather than refused: the run would go on optimizing text the system
+ * under optimization never reads, and every descendant would carry it.
+ */
+function assertComponents(args: {
+  names: readonly string[];
+  candidate: Candidate;
+  source: string;
+}): void {
+  const { names, candidate, source } = args;
+
+  for (const name of names) {
+    if (!Object.hasOwn(candidate, name)) {
+      throw new Error(
+        `${source} named "${name}", which is not a component of the candidate (${Object.keys(candidate).join(", ")})`,
+      );
+    }
+  }
+}
+
+/** Copies everything a run mutates in place, so a snapshot never aliases one. */
+function copyRecords(records: readonly CandidateRecord[]): CandidateRecord[] {
+  return records.map((record) => ({
+    ...record,
+    parentIds: [...record.parentIds],
+    instanceScores: [...record.instanceScores],
+    updatedComponents: [...record.updatedComponents],
+    ...(record.objectiveScores === undefined
+      ? {}
+      : { objectiveScores: { ...record.objectiveScores } }),
+  }));
+}
+
+function copyRejections(
+  rejections: Readonly<Record<string, RejectedProposal[]>>,
+): Record<string, RejectedProposal[]> {
+  return Object.fromEntries(
+    Object.entries(rejections).map(([component, history]) => [
+      component,
+      history.map((entry) => ({ ...entry })),
+    ]),
+  );
+}
+
 /** How many improving proposals an iteration is allowed to keep. */
 function keepCount(selection: "all" | "best" | { keep: number }): number {
   if (selection === "all") {
@@ -1285,13 +1425,24 @@ function keepCount(selection: "all" | "best" | { keep: number }): number {
   return selection.keep;
 }
 
-/** Mean of each objective over the instances that reported it. */
-function meanObjectives(
-  rows: readonly (Record<string, number> | undefined)[],
-): Record<string, number> | undefined {
+/**
+ * Mean of each objective over the instances this candidate was scored on.
+ *
+ * An objective only some of those instances reported is left out rather than
+ * averaged over the ones that did: candidates are compared objective by
+ * objective on the frontier, and a mean over one instance is not the same
+ * measurement as a mean over forty.
+ */
+function meanObjectives(args: {
+  rows: readonly (Record<string, number> | undefined)[];
+  scores: readonly (number | undefined)[];
+}): Record<string, number> | undefined {
+  const { rows, scores } = args;
+
+  const measured = rows.filter((_, index) => scores[index] !== undefined);
   const totals = new Map<string, { total: number; count: number }>();
 
-  for (const row of rows) {
+  for (const row of measured) {
     for (const [objective, value] of Object.entries(row ?? {})) {
       const running = totals.get(objective) ?? { total: 0, count: 0 };
       running.total += value;
@@ -1300,14 +1451,14 @@ function meanObjectives(
     }
   }
 
-  if (totals.size === 0) {
+  const complete = [...totals].filter(
+    ([, { count }]) => count === measured.length,
+  );
+  if (complete.length === 0) {
     return undefined;
   }
   return Object.fromEntries(
-    [...totals].map(([objective, { total, count }]) => [
-      objective,
-      total / count,
-    ]),
+    complete.map(([objective, { total, count }]) => [objective, total / count]),
   );
 }
 
@@ -1400,18 +1551,31 @@ function defaultInstanceId(args: { datum: unknown; index: number }): string {
 /**
  * A NaN score never raises on its own: every comparison that decides fronts or
  * the best candidate is false for NaN, so the candidate silently becomes an
- * unselectable phantom that still consumed budget. Catch it at the boundary.
+ * unselectable phantom that still consumed budget. Every other array is read
+ * positionally against the batch, so a short one misattributes a diagnosis, an
+ * objective or an infrastructure failure to the wrong instance. Catch both at
+ * the boundary.
  */
-function assertScores(args: {
-  scores: readonly number[];
+function assertEvaluation(args: {
+  evaluation: EvaluationBatch<unknown, unknown>;
   expected: number;
 }): void {
-  const { scores, expected } = args;
+  const { evaluation, expected } = args;
+  const { scores } = evaluation;
 
-  if (scores.length !== expected) {
-    throw new Error(
-      `Adapter returned ${scores.length} scores for a batch of ${expected}; scores must align one-to-one with the batch`,
-    );
+  const aligned: [string, { length: number } | undefined][] = [
+    ["scores", scores],
+    ["outputs", evaluation.outputs],
+    ["feedback", evaluation.feedback],
+    ["objectiveScores", evaluation.objectiveScores],
+    ["transient", evaluation.transient],
+  ];
+  for (const [name, values] of aligned) {
+    if (values !== undefined && values.length !== expected) {
+      throw new Error(
+        `Adapter returned ${values.length} ${name} for a batch of ${expected}; ${name} must align one-to-one with the batch`,
+      );
+    }
   }
 
   for (let index = 0; index < scores.length; index += 1) {

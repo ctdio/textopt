@@ -3,6 +3,7 @@ import type {
   Adapter,
   Candidate,
   EvaluationBatch,
+  EvaluationContext,
   ReflectiveRecord,
   ScoreResult,
 } from "@ctdio/gepa";
@@ -66,10 +67,15 @@ export interface AiSdkAdapterOptions<Datum, Out> {
   /**
    * Execute the system for one dataset row. Return the AI SDK result directly:
    * `run: ({ candidate, datum }) => generateText({ model, system: candidate.system, prompt: datum.q })`
+   *
+   * `run` (the context, not this option) says where in the optimization this
+   * rollout sits. Forward it to whatever tracing the system already has, or a
+   * run is thousands of indistinguishable calls.
    */
   run: (args: {
     candidate: Candidate;
     datum: Datum;
+    run: EvaluationContext;
     signal?: AbortSignal;
   }) => Promise<AiSdkResultLike>;
   /** Defaults to `result.text`. Required when optimizing structured output. */
@@ -119,7 +125,13 @@ export function createAiSdkAdapter<Datum, Out = string>(
     toOutput ?? ((result: AiSdkResultLike) => (result.text ?? "") as Out);
 
   return {
-    evaluate: async ({ batch, candidate, captureTraces, signal }) => {
+    evaluate: async ({
+      batch,
+      candidate,
+      captureTraces,
+      run: context,
+      signal,
+    }) => {
       const results = await mapWithConcurrency({
         items: batch,
         limit: concurrency,
@@ -129,7 +141,7 @@ export function createAiSdkAdapter<Datum, Out = string>(
           let trace: AiSdkTrace;
 
           try {
-            result = await run({ candidate, datum, signal });
+            result = await run({ candidate, datum, run: context, signal });
             trace = {
               ...summarizeRun(result),
               durationMs: Date.now() - startedAt,

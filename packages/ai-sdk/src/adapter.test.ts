@@ -90,6 +90,31 @@ describe("createAiSdkAdapter", () => {
     expect(seen).toEqual(["revision-3", "revision-3"]);
   });
 
+  test("passes the run context to the run function", async () => {
+    // Without it a run is thousands of indistinguishable rollouts, and no
+    // trace can be tied back to the iteration whose score moved.
+    const seen: EvaluationContext[] = [];
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum, run }) => {
+        seen.push(run);
+        return resultFor(datum.answer);
+      },
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: false,
+      run: { iteration: 4, phase: "validation", split: "val", candidateId: 7 },
+    });
+
+    expect(seen).toEqual([
+      { iteration: 4, phase: "validation", split: "val", candidateId: 7 },
+      { iteration: 4, phase: "validation", split: "val", candidateId: 7 },
+    ]);
+  });
+
   test("supports a custom output extractor for structured generation", async () => {
     const adapter = createAiSdkAdapter<Question, { city: string }>({
       run: async ({ datum }) => ({

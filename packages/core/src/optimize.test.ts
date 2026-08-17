@@ -17,9 +17,16 @@ import type {
   OptimizationResult,
   OptimizerEvent,
   OptimizerSnapshot,
+  Reflector,
 } from "./types.js";
 
 const SEED = { instruction: "Answer the user question." };
+/** Instances that need a different number of marks to be answered. */
+const MARK_EXAMPLES = [{ need: 1 }, { need: 2 }, { need: 3 }, { need: 4 }];
+/** Instances each answered by one named component of the candidate. */
+const PART_TASKS = ["alpha", "beta", "gamma"].flatMap((part) =>
+  [1, 2, 3, 4].map((need) => ({ part, need })),
+);
 
 describe("optimize", () => {
   test("improves the aggregate score over the seed candidate", async () => {
@@ -67,6 +74,49 @@ describe("optimize", () => {
 
     expect(result.metricCalls).toBeLessThanOrEqual(37);
     expect(result.stopReason).toBe("budgetExhausted");
+  });
+
+  test("does not start an iteration it cannot afford to promote", async () => {
+    // Screening a child costs two minibatches; promoting it costs a full
+    // validation sweep. A guard that only covers the screening spends the tail
+    // of the budget on a child it then has to throw away.
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: KEYWORD_EXAMPLES.length + 3,
+      minibatchSize: 1,
+      seed: 1,
+    });
+
+    expect(result.metricCalls).toBe(KEYWORD_EXAMPLES.length);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.stopReason).toBe("budgetExhausted");
+  });
+
+  test("ends on the snapshot its last checkpoint reported", async () => {
+    // types.ts tells callers to hand `result.snapshot` straight back as
+    // `resumeFrom`. If it runs ahead of the last checkpoint they persisted,
+    // resuming from either one replays work the other already paid for.
+    const snapshots: OptimizerSnapshot[] = [];
+
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: KEYWORD_EXAMPLES.length + 10,
+      minibatchSize: 1,
+      seed: 1,
+      proposals: { perIteration: 3, concurrency: 3 },
+      onCheckpoint: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    expect(result.stopReason).toBe("budgetExhausted");
+    expect(snapshots.at(-1)).toEqual(result.snapshot);
   });
 
   test("returns the seed when the budget only covers the seed evaluation", async () => {
@@ -380,6 +430,57 @@ describe("optimize", () => {
     );
   });
 
+  test("stops testing merges once maxInvocations is reached", async () => {
+    // Every acceptance schedules a merge, so a run that keeps improving builds
+    // a backlog. The cap has to be checked where merges are triggered, not
+    // only where they are scheduled, or the backlog spends straight past it.
+    const result = await optimize({
+      ...mergeRunwayOptions(),
+      merge: { enabled: true, maxInvocations: 1 },
+    });
+
+    expect(
+      result.candidates.filter((record) => record.source === "merge"),
+    ).toHaveLength(1);
+  });
+
+  test("keeps merging while the invocation cap allows it", async () => {
+    const result = await optimize({
+      ...mergeRunwayOptions(),
+      merge: { enabled: true, maxInvocations: 5 },
+    });
+
+    expect(
+      result.candidates.filter((record) => record.source === "merge").length,
+    ).toBeGreaterThan(1);
+  });
+
+  test("announces a merge iteration the way it announces a mutation", async () => {
+    // Without an iterationStart, an event consumer watching a merge iteration
+    // sees evaluations and an acceptance appear from nowhere.
+    const events: OptimizerEvent[] = [];
+
+    await optimize({
+      ...mergeRunwayOptions(),
+      merge: { enabled: true },
+      onEvent: (event) => events.push(event),
+    });
+
+    const merged = events.flatMap((event) =>
+      event.type === "candidateAccepted" && event.source === "merge"
+        ? [event.iteration]
+        : [],
+    );
+    const started = events.flatMap((event) =>
+      event.type === "iterationStart" ? [event.iteration] : [],
+    );
+
+    expect(merged.length).toBeGreaterThan(0);
+    for (const iteration of merged) {
+      expect(started).toContain(iteration);
+    }
+  });
+
   test("rejects an empty validation set", async () => {
     await expect(
       optimize({
@@ -392,6 +493,65 @@ describe("optimize", () => {
         seed: 1,
       }),
     ).rejects.toThrow(/valset/i);
+  });
+
+  test("rejects a minibatch size below one", async () => {
+    // An empty minibatch is vacuously perfect, so every iteration skips
+    // straight past reflection and charges nothing: with the default
+    // maxIterations the run never terminates and never spends.
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 0,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/minibatchSize/);
+  });
+
+  test("rejects a non-finite perfect score", async () => {
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        perfectScore: Number.NaN,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/perfectScore/);
+  });
+
+  test("rejects a negative rejected proposal memory", async () => {
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        rejectedProposalMemory: -1,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/rejectedProposalMemory/);
+  });
+
+  test("rejects a fractional iteration ceiling", async () => {
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        maxIterations: 1.5,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/maxIterations/);
   });
 
   test("scores validation instances separately from trainset instances sharing an id", async () => {
@@ -601,6 +761,47 @@ describe("optimize", () => {
     expect(second.cacheHits).toBe(0);
   });
 
+  test("leaves a validation instance unscored when its score was transient", async () => {
+    // Skipping the cache is not enough: nothing ever re-measures a promoted
+    // candidate, so a transient zero written into the record is permanent, and
+    // it drops the candidate off that instance's front for the rest of the run.
+    const adapter = createKeywordAdapter();
+
+    const result = await optimize({
+      seedCandidate: {
+        instruction:
+          "hold ten seconds ticket portal thirty days billing prorated",
+      },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: {
+        ...adapter,
+        evaluate: async (args) => {
+          const evaluation = await adapter.evaluate(args);
+          if (args.run.phase !== "seed") {
+            return evaluation;
+          }
+          return {
+            ...evaluation,
+            scores: evaluation.scores.map((score, index) =>
+              index === 2 ? 0 : score,
+            ),
+            transient: evaluation.scores.map((_, index) => index === 2),
+          };
+        },
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    const seedRecord = result.candidates[0];
+
+    expect(seedRecord?.instanceScores).toEqual([1, 1, undefined, 1]);
+    expect(seedRecord?.aggregateScore).toBe(1);
+  });
+
   test("caches a score the adapter did not mark transient", async () => {
     const cache = createMemoryCache();
     const run = () =>
@@ -628,6 +829,43 @@ describe("optimize", () => {
     const second = await run();
 
     expect(second.cacheHits).toBeGreaterThan(0);
+  });
+
+  test("rejects a component selector that names a component the candidate lacks", async () => {
+    // The patch is merged over the parent, so an unknown name does not fail —
+    // it grows the candidate a component the system under optimization never
+    // reads, and every descendant carries it.
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+        componentSelector: () => ["instrution"],
+      }),
+    ).rejects.toThrow(/instrution/);
+  });
+
+  test("rejects a proposal that names a component the candidate lacks", async () => {
+    const adapter = createKeywordAdapter();
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          proposeNewTexts: () => ({ instrution: "hold ten seconds" }),
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/instrution/);
   });
 
   test("rejects a non-finite score from the adapter", async () => {
@@ -676,6 +914,99 @@ describe("optimize", () => {
         seed: 1,
       }),
     ).rejects.toThrow(/index 1/i);
+  });
+
+  test("rejects feedback that does not align with the batch", async () => {
+    // Feedback is read positionally into the reflective dataset, so a short
+    // array silently attributes one instance's diagnosis to another.
+    const adapter = createKeywordAdapter();
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          evaluate: ({ batch }) => ({
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0),
+            feedback: ["only one"],
+          }),
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/feedback/i);
+  });
+
+  test("rejects objective scores that do not align with the batch", async () => {
+    const adapter = createKeywordAdapter();
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          evaluate: ({ batch }) => ({
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0),
+            objectiveScores: [{ coverage: 1 }],
+          }),
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/objectiveScores/i);
+  });
+
+  test("rejects outputs that do not align with the batch", async () => {
+    const adapter = createKeywordAdapter();
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          evaluate: ({ batch }) => ({
+            outputs: [""],
+            scores: batch.map(() => 0),
+          }),
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/outputs/i);
+  });
+
+  test("rejects transient flags that do not align with the batch", async () => {
+    const adapter = createKeywordAdapter();
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          evaluate: ({ batch }) => ({
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0),
+            transient: [true],
+          }),
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+      }),
+    ).rejects.toThrow(/transient/i);
   });
 
   test("stops cleanly when an adapter aborts mid-iteration", async () => {
@@ -772,6 +1103,42 @@ describe("optimize", () => {
     expect(coverage?.candidateIds).toContain(result.bestCandidateId);
     // The seed says nothing, so nothing is shorter than it.
     expect(brevity?.candidateIds).toContain(0);
+  });
+
+  test("omits an objective only some instances reported", async () => {
+    // Averaged over the instances that reported it, an objective seen once
+    // competes on the objective frontier against one seen everywhere, as
+    // though the two numbers meant the same thing.
+    const adapter = createKeywordAdapter();
+
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: {
+        ...adapter,
+        evaluate: async (args) => {
+          const evaluation = await adapter.evaluate(args);
+          return {
+            ...evaluation,
+            objectiveScores: evaluation.scores.map(
+              (score, index): Record<string, number> =>
+                index === 0
+                  ? { coverage: score, speed: 1 }
+                  : { coverage: score },
+            ),
+          };
+        },
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    expect(Object.keys(result.candidates[0]?.objectiveScores ?? {})).toEqual([
+      "coverage",
+    ]);
   });
 
   test("leaves objective reporting out when the adapter scores no objectives", async () => {
@@ -1090,6 +1457,36 @@ describe("optimize", () => {
     }
   });
 
+  test("does not mutate the snapshot it resumes from", async () => {
+    const interrupted = await optimize(resumeOptions({ maxIterations: 2 }));
+    const pristine = JSON.parse(JSON.stringify(interrupted.snapshot));
+
+    await optimize({
+      ...resumeOptions({ maxIterations: 4 }),
+      resumeFrom: interrupted.snapshot,
+    });
+
+    // The caller persisted this object. A run that writes component cursors
+    // and rejected proposals straight back into it corrupts every later resume.
+    expect(interrupted.snapshot).toEqual(pristine);
+  });
+
+  test("resumes twice from one snapshot to the same result", async () => {
+    const interrupted = await optimize(resumeOptions({ maxIterations: 2 }));
+
+    const first = await optimize({
+      ...resumeOptions({ maxIterations: 4 }),
+      resumeFrom: interrupted.snapshot,
+    });
+    const second = await optimize({
+      ...resumeOptions({ maxIterations: 4 }),
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(second.metricCalls).toBe(first.metricCalls);
+    expect(second.candidates).toEqual(first.candidates);
+  });
+
   test("refuses a checkpoint taken against a different seed candidate", async () => {
     const other = await optimize({
       seedCandidate: { instruction: "Something else entirely." },
@@ -1391,6 +1788,93 @@ describe("optimize proposals", () => {
     expect(result.metricCalls).toBeLessThanOrEqual(43);
   });
 
+  test("reaches the same lineage whichever order overlapping proposals finish in", async () => {
+    // Siblings in one iteration routinely converge on the same child text. Which
+    // of them the engine screens must be decided in plan order, not by whichever
+    // reflection call happened to return first — otherwise the surviving
+    // outcome carries a different parent, minibatch and parent score, and the
+    // seeded run stops being reproducible.
+    const run = (pace: (prompt: string) => number) => {
+      // Two children of the seed that differ in text but not in score, so the
+      // next iteration reflects on both and proposes the same replacement.
+      const parents = [0, 0, 1, 2];
+      let pick = -1;
+
+      return optimize({
+        seedCandidate: { instruction: "" },
+        trainset: MARK_EXAMPLES,
+        adapter: createMarkAdapter(),
+        reflect: createMarkReflector(pace),
+        maxMetricCalls: 1000,
+        maxIterations: 2,
+        minibatchSize: 2,
+        seed: 1,
+        candidateSelector: () => {
+          pick += 1;
+          return parents[pick] ?? 0;
+        },
+        // Both siblings of the colliding iteration diagnose the same failures.
+        batchSampler: ({ iteration }) =>
+          iteration < 2 ? [iteration, 2] : [0, 1],
+        proposals: { perIteration: 2, concurrency: 2 },
+      });
+    };
+
+    const firstSiblingLast = await run((prompt) =>
+      prompt.includes("+1-3") ? 3 : 0,
+    );
+    const firstSiblingFirst = await run((prompt) =>
+      prompt.includes("+1-3") ? 0 : 3,
+    );
+
+    expect(lineageOf(firstSiblingLast)).toEqual(lineageOf(firstSiblingFirst));
+    expect(firstSiblingLast.metricCalls).toBe(firstSiblingFirst.metricCalls);
+  });
+
+  test("never announces a validation id it does not go on to record", async () => {
+    // Sweeps are scheduled with the id each candidate will be recorded under.
+    // A sweep that runs and is paid for, and is then thrown away to keep the
+    // remaining ids aligned, costs the run rollouts and breaks that contract.
+    const adapter = createKeywordAdapter();
+    const contexts: EvaluationContext[] = [];
+    let selections = -1;
+
+    const result = await optimize({
+      ...options,
+      adapter: {
+        ...adapter,
+        evaluate: (args) => {
+          contexts.push(args.run);
+          return adapter.evaluate(args);
+        },
+      },
+      maxMetricCalls: KEYWORD_EXAMPLES.length + 10,
+      maxIterations: 10,
+      minibatchSize: 1,
+      cache: false,
+      proposals: { perIteration: 3, concurrency: 3 },
+      // Later survivors are cheaper to sweep than earlier ones, so a survivor
+      // can still be affordable after the one before it was not.
+      valEvaluationPolicy: {
+        selectInstances: () => {
+          selections += 1;
+          return selections % 2 === 0 ? [0, 1, 2, 3] : [0];
+        },
+        bestCandidate: fullEvaluationPolicy().bestCandidate,
+      },
+    });
+
+    const announced = contexts
+      .filter((context) => context.phase === "validation")
+      .map((context) => context.candidateId);
+    const recorded = result.candidates.map((record) => record.id);
+
+    expect(announced.length).toBeGreaterThan(0);
+    for (const candidateId of announced) {
+      expect(recorded).toContain(candidateId);
+    }
+  });
+
   test("rejects a proposal count below one", async () => {
     await expect(
       optimize({ ...options, proposals: { perIteration: 0 } }),
@@ -1609,6 +2093,170 @@ async function recordMinibatches(args: {
   });
 
   return { batches, result };
+}
+
+/**
+ * A task where each component answers its own instances, so lineages that
+ * improved different components stay complementary for long enough that a run
+ * has many merges available to it.
+ */
+function mergeRunwayOptions() {
+  return {
+    seedCandidate: { alpha: "", beta: "", gamma: "" },
+    trainset: PART_TASKS,
+    adapter: createPartAdapter(),
+    reflect: createAppendingReflector(),
+    maxMetricCalls: 5000,
+    maxIterations: 40,
+    minibatchSize: 3,
+    seed: 1,
+    proposals: { perIteration: 3, selection: "all" as const },
+  };
+}
+
+function createPartAdapter(): Adapter<
+  (typeof PART_TASKS)[number],
+  null,
+  string
+> {
+  const marks = (text: string) => (text.match(/\+/g) ?? []).length;
+
+  return {
+    evaluate: ({ batch, candidate }) => ({
+      outputs: batch.map(() => ""),
+      scores: batch.map((datum) =>
+        Math.min(1, marks(candidate[datum.part] ?? "") / datum.need),
+      ),
+      feedback: batch.map(
+        (datum) =>
+          `${datum.part} has ${marks(candidate[datum.part] ?? "")} of ${datum.need}`,
+      ),
+      trajectories: batch.map(() => null),
+    }),
+    makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) =>
+      Object.fromEntries(
+        componentsToUpdate.map((component) => [
+          component,
+          batch.map((datum, index) => ({
+            inputs: { part: datum.part },
+            generatedOutputs: "",
+            feedback: evaluation.feedback?.[index] ?? "",
+          })),
+        ]),
+      ),
+  };
+}
+
+/** Adds one mark to whichever component it is asked to rewrite. */
+function createAppendingReflector(): Reflector {
+  return async ({ prompt }) => {
+    const current =
+      /<current_instruction>\n([\s\S]*?)\n<\/current_instruction>/.exec(
+        prompt,
+      )?.[1] ?? "";
+
+    return `\`\`\`\n${current.trim()}+\n\`\`\``;
+  };
+}
+
+/**
+ * A run whose every proposal loses, over a candidate with enough components to
+ * move a cursor — the two pieces of snapshot state a resumed run writes back.
+ */
+function resumeOptions(args: { maxIterations: number }) {
+  return {
+    seedCandidate: { alpha: "a", beta: "b", gamma: "c" },
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createAlternatingReflector(),
+    maxMetricCalls: 400,
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+  };
+}
+
+/**
+ * Improves on every other call, so a run both advances component cursors and
+ * accumulates rejected proposals — an always-improving reflector records no
+ * rejections, and an always-degrading one never moves the frontier.
+ */
+function createAlternatingReflector(): Reflector {
+  const improving = createKeywordReflector();
+  let calls = 0;
+
+  return async (args) => {
+    calls += 1;
+    return calls % 2 === 0
+      ? "```\nno useful information\n```"
+      : improving(args);
+  };
+}
+
+/** Everything about a run that a reproducible engine must reach identically. */
+function lineageOf(
+  result: OptimizationResult,
+): [number, number[], Record<string, string>][] {
+  return result.candidates.map((record) => [
+    record.id,
+    record.parentIds,
+    record.candidate,
+  ]);
+}
+
+/**
+ * Scores a candidate on how many marks it carries, so two candidates with the
+ * same number of marks score identically however differently they are written.
+ */
+function createMarkAdapter(): Adapter<
+  (typeof MARK_EXAMPLES)[number],
+  null,
+  string
+> {
+  return {
+    evaluate: ({ batch, candidate }) => {
+      const marks = (Object.values(candidate).join("").match(/\+/g) ?? [])
+        .length;
+
+      return {
+        outputs: batch.map(() => ""),
+        scores: batch.map((datum) => Math.min(1, marks / datum.need)),
+        feedback: batch.map((datum) => `have ${marks} of ${datum.need}`),
+        trajectories: batch.map(() => null),
+      };
+    },
+    makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) =>
+      Object.fromEntries(
+        componentsToUpdate.map((component) => [
+          component,
+          batch.map((datum, index) => ({
+            inputs: { need: datum.need },
+            generatedOutputs: "",
+            feedback: evaluation.feedback?.[index] ?? "",
+          })),
+        ]),
+      ),
+  };
+}
+
+/**
+ * Proposes one more mark than the feedback reports, so two parents that scored
+ * the same on the same minibatch get the same proposal — which is what makes
+ * two siblings of one iteration collide. A pure function of its prompt: `pace`
+ * decides only how long the call takes, which nothing may depend on.
+ */
+function createMarkReflector(pace: (prompt: string) => number): Reflector {
+  return async ({ prompt }) => {
+    const marks = Number(/have (\d+) of/.exec(prompt)?.[1] ?? 0);
+    const needs = [...prompt.matchAll(/have \d+ of (\d+)/g)]
+      .map((match) => match[1])
+      .join("-");
+
+    for (let tick = 0; tick < pace(prompt); tick += 1) {
+      await Promise.resolve();
+    }
+    return `\`\`\`\n${"+".repeat(marks + 1)}${needs}\n\`\`\``;
+  };
 }
 
 function countProposals(

@@ -60,6 +60,51 @@ describe("mapWithConcurrency", () => {
     ).rejects.toThrow("boom");
   });
 
+  test("stops dispatching new items once a task fails", async () => {
+    const dispatched: number[] = [];
+
+    await expect(
+      mapWithConcurrency({
+        items: [0, 1, 2, 3, 4, 5],
+        limit: 2,
+        task: async (value) => {
+          dispatched.push(value);
+          if (value === 0) {
+            throw new Error("boom");
+          }
+          await delay(1);
+          return value;
+        },
+      }),
+    ).rejects.toThrow("boom");
+
+    // Stragglers dispatched after the caller has control back would keep
+    // spending an optimizer's budget on a run that already ended.
+    await delay(20);
+    expect(dispatched).toEqual([0, 1]);
+  });
+
+  test("waits for in-flight tasks to settle before rejecting", async () => {
+    const finished: number[] = [];
+
+    await expect(
+      mapWithConcurrency({
+        items: [0, 1, 2],
+        limit: 3,
+        task: async (value) => {
+          if (value === 0) {
+            throw new Error("boom");
+          }
+          await delay(5);
+          finished.push(value);
+          return value;
+        },
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(finished).toEqual([1, 2]);
+  });
+
   test("stops dispatching new items once the signal aborts", async () => {
     const controller = new AbortController();
     let dispatched = 0;

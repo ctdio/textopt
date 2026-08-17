@@ -24,6 +24,14 @@ export interface BraintrustScorerOptions<Output> {
   weights?: Record<string, number>;
   /** Override how scorer output becomes reflection feedback. */
   buildFeedback?: (scores: readonly BraintrustScoreLike[]) => string;
+  /**
+   * Classify a thrown scorer error as infrastructure (rate limit, 5xx,
+   * network) rather than as the candidate's doing. A scorer that failed this
+   * way leaves the composite computed from whichever scorers survived, so the
+   * whole result is reported transient and never cached. Defaults to treating
+   * every failure as the candidate's, which is the safe assumption.
+   */
+  isTransient?: (err: unknown) => boolean;
 }
 
 /**
@@ -36,27 +44,43 @@ export interface BraintrustScorerOptions<Output> {
 export function createBraintrustScorer<Output = string>(
   options: BraintrustScorerOptions<Output>,
 ): (args: BraintrustScorerArgs<Output>) => Promise<ScoreResult> {
-  const { scorers, weights, buildFeedback = defaultFeedback } = options;
+  const {
+    scorers,
+    weights,
+    buildFeedback = defaultFeedback,
+    isTransient = () => false,
+  } = options;
 
   assertUsableWeights(weights);
 
   return async (args) => {
-    const settled = await Promise.all(
+    const outcomes = await Promise.all(
       scorers.map(async (scorer, index) => {
         try {
-          return normalizeScore({ value: await scorer(args), index });
+          return {
+            score: normalizeScore({ value: await scorer(args), index }),
+            transient: false,
+          };
         } catch (err) {
           return {
-            name: `scorer_${index}`,
-            score: null,
-            metadata: {
-              error: err instanceof Error ? err.message : String(err),
-            },
-          } satisfies BraintrustScoreLike;
+            score: {
+              name: `scorer_${index}`,
+              score: null,
+              metadata: {
+                error: err instanceof Error ? err.message : String(err),
+              },
+            } satisfies BraintrustScoreLike,
+            transient: isTransient(err),
+          };
         }
       }),
     );
 
+    const settled = outcomes.map((outcome) => outcome.score);
+    // One infrastructure failure degrades the whole composite, not just its
+    // own objective: what survives is a blend over a different set of scorers
+    // than the one the candidate is supposed to be measured on.
+    const degraded = outcomes.some((outcome) => outcome.transient);
     const usable = settled.filter((score) => score.score !== null);
     assertDistinctNames(usable);
 
@@ -75,7 +99,12 @@ export function createBraintrustScorer<Output = string>(
     // to nothing is a config error, and returning a plausible-looking zero
     // would hide it.
     if (usable.length === 0) {
-      return { score: 0, feedback: buildFeedback(settled), objectiveScores };
+      return {
+        score: 0,
+        feedback: buildFeedback(settled),
+        objectiveScores,
+        ...(degraded ? { transient: true } : {}),
+      };
     }
     if (weightSum === 0) {
       throw new Error(
@@ -89,6 +118,7 @@ export function createBraintrustScorer<Output = string>(
       score: weightedTotal / weightSum,
       feedback: buildFeedback(settled),
       objectiveScores,
+      ...(degraded ? { transient: true } : {}),
     };
   };
 }

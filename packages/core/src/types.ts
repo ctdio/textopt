@@ -192,6 +192,12 @@ export type ComponentSelector = (args: {
 
 export type BatchSampler<Datum> = ((args: {
   trainset: readonly Datum[];
+  /**
+   * Position in the sequence of minibatches the run has drawn, not the loop
+   * iteration: an iteration proposing `n` mutations draws `n` minibatches, and
+   * they arrive as `iteration * n + slot` so that siblings of one iteration
+   * diagnose different failures instead of sharing a batch.
+   */
   iteration: number;
   rng: Rng;
 }) => number[]) & {

@@ -121,6 +121,58 @@ describe("createBraintrustScorer", () => {
     expect(result.score).toBe(0);
   });
 
+  test("marks the result transient when every scorer failed on infrastructure", async () => {
+    // A rate limited judge is not the candidate's fault. Without the flag the
+    // engine caches this zero against the candidate permanently.
+    const score = createBraintrustScorer({
+      scorers: [
+        () => {
+          throw new Error("429 rate limited");
+        },
+      ],
+      isTransient: (err) => String(err).includes("429"),
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.score).toBe(0);
+    expect(result.transient).toBe(true);
+  });
+
+  test("marks the result transient when only some scorers failed on infrastructure", async () => {
+    // The composite is now computed from the survivors alone, and the failed
+    // scorer's objective has vanished from the breakdown. Caching that as the
+    // candidate's score records a number that was never measured.
+    const score = createBraintrustScorer({
+      scorers: [
+        () => ({ name: "a", score: 1 }),
+        () => {
+          throw new Error("429 rate limited");
+        },
+      ],
+      isTransient: (err) => String(err).includes("429"),
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.score).toBe(1);
+    expect(result.transient).toBe(true);
+  });
+
+  test("leaves a scorer failure the caller does not classify as the candidate's", async () => {
+    const score = createBraintrustScorer({
+      scorers: [
+        () => {
+          throw new Error("the output could not be parsed");
+        },
+      ],
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.transient).toBeUndefined();
+  });
+
   test("rejects a negative weight", () => {
     expect(() =>
       createBraintrustScorer({

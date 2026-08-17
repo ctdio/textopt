@@ -37,7 +37,15 @@ export function createBudget(args: {
       return true;
     },
     refund: (calls: number) => {
-      used = Math.max(0, used - calls);
+      // Refunding more than is outstanding means a reservation was released
+      // twice. Clamping would absorb that silently and let the run spend past
+      // its ceiling, so it is reported where it happens.
+      if (calls > used) {
+        throw new Error(
+          `Cannot refund ${calls} metric calls; only ${used} are reserved`,
+        );
+      }
+      used -= calls;
     },
   };
 }
