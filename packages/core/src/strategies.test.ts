@@ -4,11 +4,14 @@ import {
   createEpochShuffledSampler,
   currentBestSelector,
   epsilonGreedySelector,
+  fullEvaluationPolicy,
   improvementAcceptance,
   paretoSelector,
   roundRobinComponentSelector,
+  subsampledEvaluationPolicy,
   topKParetoSelector,
 } from "./strategies.js";
+import type { CandidateRecord } from "./types.js";
 
 const STATE = {
   scoreMatrix: [
@@ -37,6 +40,110 @@ describe("paretoSelector", () => {
     }
 
     expect(picks.has(0)).toBe(true);
+  });
+
+  test("selects on objectives rather than instances when asked", () => {
+    const rng = createSeededRng(4);
+    const state = {
+      ...STATE,
+      // Candidate 2 wins no instance, so instance selection can never reach it.
+      objectiveScores: [
+        { accuracy: 0.2, brevity: 0.1 },
+        { accuracy: 0.3, brevity: 0.2 },
+        { accuracy: 1, brevity: 1 },
+      ],
+    };
+    const picks = new Set<number>();
+
+    for (let i = 0; i < 100; i += 1) {
+      picks.add(paretoSelector({ frontier: "objective" })({ state, rng }));
+    }
+
+    expect(picks).toEqual(new Set([2]));
+  });
+
+  test("keeps instance winners alongside objective leaders under the hybrid frontier", () => {
+    const rng = createSeededRng(4);
+    const state = {
+      ...STATE,
+      objectiveScores: [{ accuracy: 0.2 }, { accuracy: 0.3 }, { accuracy: 1 }],
+    };
+    const picks = new Set<number>();
+
+    for (let i = 0; i < 100; i += 1) {
+      picks.add(paretoSelector({ frontier: "hybrid" })({ state, rng }));
+    }
+
+    expect(picks).toEqual(new Set([0, 1, 2]));
+  });
+
+  test("rejects an objective frontier when no candidate has objective scores", () => {
+    const rng = createSeededRng(4);
+
+    expect(() =>
+      paretoSelector({ frontier: "objective" })({ state: STATE, rng }),
+    ).toThrow(/objective/i);
+  });
+});
+
+describe("fullEvaluationPolicy", () => {
+  const policy = fullEvaluationPolicy();
+
+  test("selects every validation instance", () => {
+    expect(
+      policy.selectInstances({
+        valset: ["a", "b", "c"],
+        candidate: { instruction: "x" },
+        records: [],
+        iteration: 0,
+        rng: createSeededRng(1),
+      }),
+    ).toEqual([0, 1, 2]);
+  });
+
+  test("returns the highest mean over the instances actually scored", () => {
+    expect(
+      policy.bestCandidate([
+        buildRecord({ id: 0, instanceScores: [1, 0] }),
+        buildRecord({ id: 1, instanceScores: [0.75, 0.75] }),
+      ]),
+    ).toBe(1);
+  });
+
+  test("breaks a tie in favour of the wider coverage", () => {
+    expect(
+      policy.bestCandidate([
+        buildRecord({ id: 0, instanceScores: [1, undefined] }),
+        buildRecord({ id: 1, instanceScores: [1, 1] }),
+      ]),
+    ).toBe(1);
+  });
+});
+
+describe("subsampledEvaluationPolicy", () => {
+  test("selects no more instances than the requested size", () => {
+    const selected = subsampledEvaluationPolicy({ size: 2 }).selectInstances({
+      valset: ["a", "b", "c", "d"],
+      candidate: { instruction: "x" },
+      records: [],
+      iteration: 0,
+      rng: createSeededRng(3),
+    });
+
+    expect(selected).toHaveLength(2);
+    expect(new Set(selected).size).toBe(2);
+  });
+
+  test("selects every instance when the valset is smaller than the size", () => {
+    const selected = subsampledEvaluationPolicy({ size: 5 }).selectInstances({
+      valset: ["a", "b"],
+      candidate: { instruction: "x" },
+      records: [],
+      iteration: 0,
+      rng: createSeededRng(3),
+    });
+
+    expect(selected.sort()).toEqual([0, 1]);
   });
 });
 
@@ -198,3 +305,27 @@ describe("improvementAcceptance", () => {
     ).toBe(false);
   });
 });
+
+function buildRecord(args: {
+  id: number;
+  instanceScores: (number | undefined)[];
+}): CandidateRecord {
+  const scored = args.instanceScores.filter(
+    (score): score is number => score !== undefined,
+  );
+
+  return {
+    id: args.id,
+    candidate: { instruction: `candidate ${args.id}` },
+    parentIds: [],
+    instanceScores: args.instanceScores,
+    aggregateScore:
+      scored.length === 0
+        ? 0
+        : scored.reduce((total, score) => total + score, 0) / scored.length,
+    source: "mutation",
+    updatedComponents: [],
+    iteration: 0,
+    componentCursor: 0,
+  };
+}

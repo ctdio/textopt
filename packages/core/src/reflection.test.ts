@@ -33,6 +33,30 @@ describe("buildReflectionPrompt", () => {
     expect(prompt).toContain("printer on fire");
     expect(prompt).toContain("Expected hardware, got billing.");
   });
+
+  test("lists instructions that were already tried and rejected", () => {
+    const prompt = buildReflectionPrompt({
+      componentName: "classifier",
+      currentText: "Classify the ticket.",
+      records: [],
+      rejected: [
+        { text: "Guess the category.", parentScore: 0.5, childScore: 0.1 },
+      ],
+    });
+
+    expect(prompt).toContain("Guess the category.");
+    expect(prompt).toContain("<rejected_instructions>");
+  });
+
+  test("says nothing about rejected instructions when there are none", () => {
+    const prompt = buildReflectionPrompt({
+      componentName: "classifier",
+      currentText: "Classify the ticket.",
+      records: [],
+    });
+
+    expect(prompt).not.toContain("<rejected_instructions>");
+  });
 });
 
 describe("parseProposedText", () => {
@@ -143,5 +167,27 @@ describe("createDefaultProposer", () => {
     });
 
     expect(proposed).toEqual({});
+  });
+
+  test("shows the reflection model the proposals already rejected", async () => {
+    const propose = createDefaultProposer();
+    const prompts: string[] = [];
+
+    await propose({
+      candidate: { alpha: "old alpha" },
+      reflectiveDataset: {
+        alpha: [{ inputs: {}, generatedOutputs: "", feedback: "be specific" }],
+      },
+      componentsToUpdate: ["alpha"],
+      rejectedProposals: {
+        alpha: [{ text: "tried alpha", parentScore: 1, childScore: 0 }],
+      },
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nnew alpha\n```";
+      },
+    });
+
+    expect(prompts[0]).toContain("tried alpha");
   });
 });

@@ -5,8 +5,12 @@ import type { Budget } from "./types.js";
  * metric calls, not iterations. The engine debits this budget before every
  * evaluation and stops when it can no longer afford the next one.
  */
-export function createBudget(args: { maxMetricCalls: number }): Budget {
-  const { maxMetricCalls } = args;
+export function createBudget(args: {
+  maxMetricCalls: number;
+  /** Rollouts a resumed run already paid for before the checkpoint. */
+  spent?: number;
+}): Budget {
+  const { maxMetricCalls, spent = 0 } = args;
 
   if (!Number.isFinite(maxMetricCalls) || maxMetricCalls <= 0) {
     throw new Error(
@@ -14,7 +18,7 @@ export function createBudget(args: { maxMetricCalls: number }): Budget {
     );
   }
 
-  let used = 0;
+  let used = spent;
 
   return {
     maxMetricCalls,

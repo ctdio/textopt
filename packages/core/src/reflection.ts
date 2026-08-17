@@ -1,9 +1,16 @@
-import type { ComponentPatch, ProposeArgs, ReflectiveRecord } from "./types.js";
+import type {
+  ComponentPatch,
+  ProposeArgs,
+  ReflectiveRecord,
+  RejectedProposal,
+} from "./types.js";
 
 export interface ReflectionPromptArgs {
   componentName: string;
   currentText: string;
   records: readonly ReflectiveRecord[];
+  /** Texts already tried for this component that lost to their parent. */
+  rejected?: readonly RejectedProposal[];
 }
 
 const LANGUAGE_TAG = /^[a-zA-Z0-9_+.-]*\n/;
@@ -17,7 +24,7 @@ const DANGLING_CLOSE_FENCE = /\n?```\s*$/;
  * down knowledge the traces revealed.
  */
 export function buildReflectionPrompt(args: ReflectionPromptArgs): string {
-  const { componentName, currentText, records } = args;
+  const { componentName, currentText, records, rejected = [] } = args;
 
   return [
     `I gave an assistant the following instruction for the "${componentName}" component of a larger system:`,
@@ -31,6 +38,16 @@ export function buildReflectionPrompt(args: ReflectionPromptArgs): string {
     "<examples>",
     JSON.stringify(records, jsonSafeReplacer, 2),
     "</examples>",
+    ...(rejected.length === 0
+      ? []
+      : [
+          "",
+          "These instructions have already been tried for this component and scored worse than the one they replaced. Do not propose them again, and do not propose a variation that repeats the idea that made them fail:",
+          "",
+          "<rejected_instructions>",
+          JSON.stringify(rejected, jsonSafeReplacer, 2),
+          "</rejected_instructions>",
+        ]),
     "",
     "Write a new instruction for this component.",
     "Read the inputs carefully and infer a detailed description of the task the component is solving, including its input format.",
@@ -81,6 +98,7 @@ export function createDefaultProposer(): (
       candidate,
       reflectiveDataset,
       componentsToUpdate,
+      rejectedProposals,
       reflect,
       signal,
     } = args;
@@ -95,7 +113,12 @@ export function createDefaultProposer(): (
 
       const currentText = candidate[componentName] ?? "";
       const response = await reflect({
-        prompt: buildReflectionPrompt({ componentName, currentText, records }),
+        prompt: buildReflectionPrompt({
+          componentName,
+          currentText,
+          records,
+          rejected: rejectedProposals?.[componentName],
+        }),
         signal,
       });
       const newText = parseProposedText(response);

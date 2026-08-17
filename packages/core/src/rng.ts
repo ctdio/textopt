@@ -14,12 +14,14 @@ export interface Rng {
   sample<T>(items: readonly T[], k: number): T[];
   /** Picks proportionally to `weights`; falls back to uniform when all are 0. */
   weighted<T>(items: readonly T[], weights: readonly number[]): T;
+  /** Position in the stream, for checkpointing. Restore via `createSeededRng`. */
+  state(): number;
 }
 
 const DEFAULT_SEED = 0x9e3779b9;
 
-export function createSeededRng(seed: number): Rng {
-  let state = normalizeSeed(seed);
+export function createSeededRng(seed: number, resumeState?: number): Rng {
+  let state = resumeState ?? normalizeSeed(seed);
 
   function next(): number {
     // mulberry32
@@ -86,7 +88,7 @@ export function createSeededRng(seed: number): Rng {
     return items[items.length - 1] as T;
   }
 
-  return { next, nextInt, pick, shuffle, sample, weighted };
+  return { next, nextInt, pick, shuffle, sample, weighted, state: () => state };
 }
 
 function normalizeSeed(seed: number): number {

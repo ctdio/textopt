@@ -36,7 +36,7 @@ import {
 
 requireApiKey("OPENAI_API_KEY");
 
-const taskModel = openai("gpt-5.4-mini");
+const taskModel = openai("gpt-5.6-luna");
 const reflect = createReflector({
   model: openai("gpt-5.6"),
   providerOptions: { openai: { reasoningEffort: "high" } },

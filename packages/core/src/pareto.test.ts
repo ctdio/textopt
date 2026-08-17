@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   buildInstanceFronts,
+  buildObjectiveFronts,
   computeInstanceBests,
+  objectiveBests,
   pruneDominatedFronts,
   selectParetoCandidate,
 } from "./pareto.js";
@@ -54,6 +56,59 @@ describe("buildInstanceFronts", () => {
     });
 
     expect(fronts[0]).toEqual(new Set([0, 1]));
+  });
+});
+
+describe("buildObjectiveFronts", () => {
+  test("assigns the best candidate to each objective", () => {
+    const fronts = buildObjectiveFronts({
+      objectiveScores: [
+        { accuracy: 1, brevity: 0 },
+        { accuracy: 0, brevity: 1 },
+      ],
+    });
+
+    expect(fronts).toEqual([new Set([0]), new Set([1])]);
+  });
+
+  test("includes every candidate tied on an objective", () => {
+    const fronts = buildObjectiveFronts({
+      objectiveScores: [{ accuracy: 1 }, { accuracy: 1 }, { accuracy: 0.5 }],
+    });
+
+    expect(fronts).toEqual([new Set([0, 1])]);
+  });
+
+  test("ignores candidates that were never scored on an objective", () => {
+    const fronts = buildObjectiveFronts({
+      objectiveScores: [{ accuracy: 0.5 }, undefined, { brevity: 1 }],
+    });
+
+    expect(fronts).toEqual([new Set([0]), new Set([2])]);
+  });
+
+  test("treats scores within epsilon of the best as tied", () => {
+    const fronts = buildObjectiveFronts({
+      objectiveScores: [{ accuracy: 1 }, { accuracy: 0.99 }],
+      epsilon: 0.05,
+    });
+
+    expect(fronts).toEqual([new Set([0, 1])]);
+  });
+
+  test("returns no fronts when no candidate has objective scores", () => {
+    expect(buildObjectiveFronts({ objectiveScores: [undefined] })).toEqual([]);
+  });
+});
+
+describe("objectiveBests", () => {
+  test("returns the best score reached on each objective", () => {
+    const bests = objectiveBests([
+      { accuracy: 0.5, brevity: 1 },
+      { accuracy: 0.75 },
+    ]);
+
+    expect(bests).toEqual({ accuracy: 0.75, brevity: 1 });
   });
 });
 

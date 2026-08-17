@@ -35,7 +35,7 @@ requireApiKey("OPENAI_API_KEY");
 // choice — swap in `new ChatAnthropic({ model: "claude-sonnet-5" })` and
 // nothing else in this file changes.
 const model = new ChatOpenAI({
-  model: "gpt-5.4-mini",
+  model: "gpt-5.6-luna",
   reasoning: { effort: "none" },
   maxCompletionTokens: 512,
 });

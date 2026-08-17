@@ -345,4 +345,17 @@ describe("selectMergeSubsample", () => {
       }),
     ).toEqual([]);
   });
+
+  test("skips instances only one parent was scored on", () => {
+    // Under a partial evaluation policy the parents can cover different
+    // instances; comparing them there would compare a score against nothing.
+    const selected = selectMergeSubsample({
+      scores1: [1, 0, undefined, 1],
+      scores2: [0, 1, 1, undefined],
+      rng: createSeededRng(1),
+      size: 5,
+    });
+
+    expect(new Set(selected)).toEqual(new Set([0, 1]));
+  });
 });

@@ -7,7 +7,12 @@ import type { Rng } from "./rng.js";
  * function in this module is pure arithmetic over that matrix.
  */
 export interface InstanceFrontArgs {
-  scoreMatrix: readonly (readonly number[])[];
+  scoreMatrix: readonly (readonly (number | undefined)[])[];
+  epsilon?: number;
+}
+
+export interface ObjectiveFrontArgs {
+  objectiveScores: readonly (Readonly<Record<string, number>> | undefined)[];
   epsilon?: number;
 }
 
@@ -23,16 +28,16 @@ export interface SelectParetoCandidateArgs {
 }
 
 export function computeInstanceBests(
-  scoreMatrix: readonly (readonly number[])[],
+  scoreMatrix: readonly (readonly (number | undefined)[])[],
 ): number[] {
   const first = scoreMatrix[0];
   if (first === undefined) {
     return [];
   }
 
-  const bests = [...first];
+  const bests = first.map((score) => score ?? Number.NEGATIVE_INFINITY);
   for (let candidate = 1; candidate < scoreMatrix.length; candidate += 1) {
-    const row = scoreMatrix[candidate] as readonly number[];
+    const row = scoreMatrix[candidate] as readonly (number | undefined)[];
     for (let instance = 0; instance < bests.length; instance += 1) {
       const score = row[instance] ?? Number.NEGATIVE_INFINITY;
       if (score > (bests[instance] as number)) {
@@ -55,8 +60,54 @@ export function buildInstanceFronts(args: InstanceFrontArgs): Set<number>[] {
   return bests.map((best, instance) => {
     const front = new Set<number>();
     for (let candidate = 0; candidate < scoreMatrix.length; candidate += 1) {
-      const score = (scoreMatrix[candidate] as readonly number[])[instance];
+      const score = (scoreMatrix[candidate] as readonly (number | undefined)[])[
+        instance
+      ];
       if (score !== undefined && score >= best - epsilon) {
+        front.add(candidate);
+      }
+    }
+    return front;
+  });
+}
+
+/** The best value any candidate reached on each objective. */
+export function objectiveBests(
+  objectiveScores: readonly (Readonly<Record<string, number>> | undefined)[],
+): Record<string, number> {
+  const bests: Record<string, number> = {};
+
+  for (const scores of objectiveScores) {
+    for (const [objective, value] of Object.entries(scores ?? {})) {
+      const best = bests[objective];
+      if (best === undefined || value > best) {
+        bests[objective] = value;
+      }
+    }
+  }
+  return bests;
+}
+
+/**
+ * The objective-wise counterpart of `buildInstanceFronts`: one front per named
+ * objective, holding the candidates that lead it. Optimizing a system against
+ * several metrics at once — accuracy against cost, quality against latency —
+ * means the interesting candidates are the ones that lead *an* objective, which
+ * an average over instances hides.
+ */
+export function buildObjectiveFronts(args: ObjectiveFrontArgs): Set<number>[] {
+  const { objectiveScores, epsilon = 0 } = args;
+  const bests = objectiveBests(objectiveScores);
+
+  return Object.entries(bests).map(([objective, best]) => {
+    const front = new Set<number>();
+    for (
+      let candidate = 0;
+      candidate < objectiveScores.length;
+      candidate += 1
+    ) {
+      const value = objectiveScores[candidate]?.[objective];
+      if (value !== undefined && value >= best - epsilon) {
         front.add(candidate);
       }
     }
@@ -138,15 +189,18 @@ export function argmax(values: readonly number[]): number {
   return bestIndex;
 }
 
-export function mean(values: readonly number[]): number {
-  if (values.length === 0) {
-    return 0;
-  }
+/** Mean over the values that exist; unscored instances are not zeros. */
+export function mean(values: readonly (number | undefined)[]): number {
   let total = 0;
+  let count = 0;
+
   for (const value of values) {
-    total += value;
+    if (value !== undefined) {
+      total += value;
+      count += 1;
+    }
   }
-  return total / values.length;
+  return count === 0 ? 0 : total / count;
 }
 
 export function sum(values: readonly number[]): number {

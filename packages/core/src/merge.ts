@@ -102,16 +102,19 @@ export function proposeMerge(args: ProposeMergeArgs): MergeProposal | null {
  * off or breaks.
  */
 export function selectMergeSubsample(args: {
-  scores1: readonly number[];
-  scores2: readonly number[];
+  scores1: readonly (number | undefined)[];
+  scores2: readonly (number | undefined)[];
   rng: Rng;
   size?: number;
 }): number[] {
   const { scores1, scores2, rng, size = 5 } = args;
 
+  // Only instances both parents were scored on can discriminate between them.
   const ids = scores1
     .map((_, index) => index)
-    .filter((index) => index < scores2.length);
+    .filter(
+      (index) => scores1[index] !== undefined && scores2[index] !== undefined,
+    );
   if (ids.length === 0) {
     return [];
   }

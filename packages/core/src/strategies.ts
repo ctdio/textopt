@@ -1,6 +1,7 @@
 import {
   argmax,
   buildInstanceFronts,
+  buildObjectiveFronts,
   selectParetoCandidate,
   sum,
 } from "./pareto.js";
@@ -8,26 +9,56 @@ import type { Rng } from "./rng.js";
 import type {
   AcceptancePolicy,
   BatchSampler,
+  CandidateRecord,
   CandidateSelector,
   ComponentSelector,
+  ParetoFrontier,
+  ValEvaluationPolicy,
 } from "./types.js";
 
 /**
  * Default parent selection: sample from the instance-wise Pareto frontier with
  * probability proportional to how many validation instances a candidate is best
  * on. This is what keeps GEPA from tunnelling into one lineage.
+ *
+ * `frontier` chooses what the fronts are taken over. "instance" is GEPA as
+ * published. "objective" tracks candidates leading each named objective the
+ * adapter reports, and "hybrid" pools both — a candidate then earns selection
+ * weight for every instance it wins *and* every objective it leads.
  */
 export function paretoSelector(
-  args: { epsilon?: number } = {},
+  args: { epsilon?: number; frontier?: ParetoFrontier } = {},
 ): CandidateSelector {
-  const { epsilon = 0 } = args;
+  const { epsilon = 0, frontier = "instance" } = args;
 
-  return ({ state, rng }) =>
-    selectParetoCandidate({
-      fronts: buildInstanceFronts({ scoreMatrix: state.scoreMatrix, epsilon }),
+  return ({ state, rng }) => {
+    const fronts: Set<number>[] = [];
+
+    if (frontier !== "objective") {
+      fronts.push(
+        ...buildInstanceFronts({ scoreMatrix: state.scoreMatrix, epsilon }),
+      );
+    }
+    if (frontier !== "instance") {
+      const objectiveScores = state.objectiveScores ?? [];
+      const objectiveFronts = buildObjectiveFronts({
+        objectiveScores,
+        epsilon,
+      });
+      if (objectiveFronts.length === 0) {
+        throw new Error(
+          `paretoSelector frontier "${frontier}" needs objective scores, but no candidate has any; have the adapter return objectiveScores or use frontier "instance"`,
+        );
+      }
+      fronts.push(...objectiveFronts);
+    }
+
+    return selectParetoCandidate({
+      fronts,
       aggregateScores: state.aggregateScores,
       rng,
     });
+  };
 }
 
 /** Greedy hill climbing. Useful as an ablation baseline. */
@@ -78,6 +109,47 @@ export function topKParetoSelector(args: {
       aggregateScores: state.aggregateScores,
       rng,
     });
+  };
+}
+
+/**
+ * Score every accepted candidate on the whole validation set. This is GEPA as
+ * published: the frontier is exact, and the cost is one full sweep per
+ * acceptance.
+ */
+export function fullEvaluationPolicy<
+  Datum = unknown,
+>(): ValEvaluationPolicy<Datum> {
+  return {
+    selectInstances: ({ valset }) => valset.map((_, index) => index),
+    bestCandidate: bestByMeanThenCoverage,
+  };
+}
+
+/**
+ * Score each candidate on a random subset of the validation set. Cheaper per
+ * acceptance, at the cost of comparing candidates measured on different
+ * instances — coverage breaks ties, so a candidate cannot win by having been
+ * asked fewer questions.
+ */
+export function subsampledEvaluationPolicy<Datum = unknown>(args: {
+  size: number;
+}): ValEvaluationPolicy<Datum> {
+  const { size } = args;
+
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new Error(
+      `subsampledEvaluationPolicy requires a positive size, received ${size}`,
+    );
+  }
+
+  return {
+    selectInstances: ({ valset, rng }) =>
+      rng.sample(
+        valset.map((_, index) => index),
+        size,
+      ),
+    bestCandidate: bestByMeanThenCoverage,
   };
 }
 
@@ -155,6 +227,33 @@ export function improvementAcceptance(
 
   return ({ parentScores, childScores }) =>
     sum(childScores) > sum(parentScores) + minImprovement;
+}
+
+/**
+ * Highest mean over the instances it was scored on, with wider coverage
+ * winning a tie: a candidate measured on more instances has earned the same
+ * mean against more evidence.
+ */
+function bestByMeanThenCoverage(records: readonly CandidateRecord[]): number {
+  let bestId = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestCoverage = -1;
+
+  for (const record of records) {
+    const coverage = record.instanceScores.filter(
+      (score) => score !== undefined,
+    ).length;
+
+    if (
+      record.aggregateScore > bestScore ||
+      (record.aggregateScore === bestScore && coverage > bestCoverage)
+    ) {
+      bestId = record.id;
+      bestScore = record.aggregateScore;
+      bestCoverage = coverage;
+    }
+  }
+  return bestId;
 }
 
 function buildPaddedShuffle(args: {

@@ -73,10 +73,24 @@ export interface MakeReflectiveDatasetArgs<Datum, Traj, Out> {
   componentsToUpdate: readonly string[];
 }
 
+/**
+ * A component text that was proposed and lost on the minibatch. Showing these
+ * back to the reflection model is what stops a run from re-deriving the same
+ * dead end: only exact duplicates are filtered structurally, so without this
+ * the model can spend the whole budget circling one bad idea.
+ */
+export interface RejectedProposal {
+  text: string;
+  parentScore: number;
+  childScore: number;
+}
+
 export interface ProposeArgs {
   candidate: Candidate;
   reflectiveDataset: ReflectiveDataset;
   componentsToUpdate: readonly string[];
+  /** Component name -> texts already tried and rejected for it. */
+  rejectedProposals?: Record<string, RejectedProposal[]>;
   reflect: Reflector;
   signal?: AbortSignal;
 }
@@ -110,8 +124,15 @@ export interface CandidateRecord {
   id: number;
   candidate: Candidate;
   parentIds: number[];
-  instanceScores: number[];
+  /**
+   * One entry per validation instance. `undefined` marks an instance the
+   * evaluation policy did not select for this candidate — unknown, not zero.
+   */
+  instanceScores: (number | undefined)[];
+  /** Mean over the instances that were scored. */
   aggregateScore: number;
+  /** Mean of each objective over the evaluated validation instances. */
+  objectiveScores?: Record<string, number>;
   source: CandidateSource;
   updatedComponents: string[];
   iteration: number;
@@ -125,10 +146,15 @@ export interface CandidateRecord {
   componentCursor: number;
 }
 
+/** What a Pareto frontier is taken over. */
+export type ParetoFrontier = "instance" | "objective" | "hybrid";
+
 /** Read-only view handed to candidate selectors. */
 export interface SelectionState {
-  scoreMatrix: readonly (readonly number[])[];
+  scoreMatrix: readonly (readonly (number | undefined)[])[];
   aggregateScores: readonly number[];
+  /** Per-candidate objective means, absent when the adapter reports none. */
+  objectiveScores?: readonly (Readonly<Record<string, number>> | undefined)[];
 }
 
 export type CandidateSelector = (args: {
@@ -155,6 +181,26 @@ export type AcceptancePolicy = (args: {
   childScores: readonly number[];
 }) => boolean;
 
+/**
+ * Which validation instances a candidate is scored on, and how the best
+ * candidate is read back out of possibly partial coverage.
+ *
+ * A full sweep per accepted candidate is the published behaviour and the
+ * default. Swapping in a partial policy trades frontier fidelity for rollouts:
+ * candidates scored on different instances are no longer strictly comparable,
+ * which is why picking the best is the policy's job too.
+ */
+export interface ValEvaluationPolicy<Datum = unknown> {
+  selectInstances(args: {
+    valset: readonly Datum[];
+    candidate: Candidate;
+    records: readonly CandidateRecord[];
+    iteration: number;
+    rng: Rng;
+  }): number[];
+  bestCandidate(records: readonly CandidateRecord[]): number;
+}
+
 export interface Budget {
   readonly maxMetricCalls: number;
   spent(): number;
@@ -163,9 +209,22 @@ export interface Budget {
   charge(calls: number): void;
 }
 
+/**
+ * What the cache stores per (candidate, instance): the metric the frontier is
+ * built from, plus the per-objective breakdown when the adapter reports one.
+ * Both come from the same rollout, so caching the score without the objectives
+ * would force a re-run to recover them.
+ */
+export interface CachedScore {
+  score: number;
+  objectiveScores?: Record<string, number>;
+}
+
 export interface EvaluationCache {
-  get(key: string): number | undefined;
-  set(key: string, score: number): void;
+  get(key: string): CachedScore | undefined;
+  set(key: string, cached: CachedScore): void;
+  /** Entries for checkpointing. Omit on caches that are already durable. */
+  entries?(): [string, CachedScore][];
 }
 
 /**
@@ -220,15 +279,57 @@ export type OptimizerEvent =
       metricCalls: number;
     };
 
+/**
+ * Everything needed to continue a run: the candidate pool with its scores, the
+ * budget already spent, the position of the random stream, and the bookkeeping
+ * that stops merges and proposals from being relitigated. Plain JSON — write it
+ * wherever you like and hand it back as `resumeFrom`.
+ *
+ * A resumed run is deterministic from the checkpoint, but not bit-identical to
+ * an uninterrupted one: minibatch sampling restarts its epoch from the restored
+ * random stream rather than mid-shuffle.
+ */
+export interface OptimizerSnapshot {
+  version: 1;
+  /**
+   * Identifies the run this checkpoint came from — seed candidate, instance
+   * ids and seed. Resuming against a different setup is refused rather than
+   * silently scoring old candidates against new data.
+   */
+  fingerprint: string;
+  records: CandidateRecord[];
+  iteration: number;
+  metricCalls: number;
+  cacheHits: number;
+  rngState: number;
+  rejectedProposals: Record<string, RejectedProposal[]>;
+  merge: {
+    attempts: string[];
+    descriptions: string[];
+    due: number;
+    tested: number;
+    lastIterationAccepted: boolean;
+  };
+  /** Cached instance scores, when the cache can enumerate them. */
+  cache?: [string, CachedScore][];
+}
+
 export interface OptimizationResult {
   bestCandidate: Candidate;
   bestScore: number;
   bestCandidateId: number;
   candidates: CandidateRecord[];
   paretoFrontier: CandidateRecord[];
-  scoreMatrix: number[][];
+  /**
+   * Per objective: the best value reached and every candidate that reached it.
+   * Absent when the adapter reports no objective scores.
+   */
+  perObjectiveBest?: Record<string, { score: number; candidateIds: number[] }>;
+  scoreMatrix: (number | undefined)[][];
   metricCalls: number;
   cacheHits: number;
   iterations: number;
   stopReason: "budgetExhausted" | "aborted" | "maxIterations";
+  /** State as of the last iteration, ready to hand back as `resumeFrom`. */
+  snapshot: OptimizerSnapshot;
 }

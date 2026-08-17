@@ -2,12 +2,16 @@ import { describe, expect, test } from "vitest";
 import { createMemoryCache } from "./cache.js";
 import { optimize } from "./optimize.js";
 import {
+  fullEvaluationPolicy,
+  subsampledEvaluationPolicy,
+} from "./strategies.js";
+import {
   KEYWORD_EXAMPLES,
   createDegradingReflector,
   createKeywordAdapter,
   createKeywordReflector,
 } from "./testing.js";
-import type { OptimizerEvent } from "./types.js";
+import type { Adapter, OptimizerEvent, OptimizerSnapshot } from "./types.js";
 
 const SEED = { instruction: "Answer the user question." };
 
@@ -719,4 +723,469 @@ describe("optimize", () => {
       }),
     ).rejects.toThrow("adapter exploded");
   });
+
+  test("aggregates objective scores over the validation set", async () => {
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createObjectiveAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    const seedRecord = result.candidates[0];
+
+    // The seed covers no required term, so coverage is 0 everywhere and
+    // brevity is 1 everywhere.
+    expect(seedRecord?.objectiveScores).toEqual({ coverage: 0, brevity: 0.25 });
+    for (const record of result.candidates) {
+      expect(Object.keys(record.objectiveScores ?? {}).sort()).toEqual([
+        "brevity",
+        "coverage",
+      ]);
+    }
+  });
+
+  test("reports the leading candidates for each objective", async () => {
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createObjectiveAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    const coverage = result.perObjectiveBest?.coverage;
+    const brevity = result.perObjectiveBest?.brevity;
+
+    expect(coverage?.score).toBe(result.bestScore);
+    expect(coverage?.candidateIds).toContain(result.bestCandidateId);
+    // The seed says nothing, so nothing is shorter than it.
+    expect(brevity?.candidateIds).toContain(0);
+  });
+
+  test("leaves objective reporting out when the adapter scores no objectives", async () => {
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    expect(result.perObjectiveBest).toBeUndefined();
+    expect(result.candidates[0]?.objectiveScores).toBeUndefined();
+  });
+
+  test("reuses cached objective scores instead of re-evaluating", async () => {
+    const cache = createMemoryCache();
+    const options = {
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createObjectiveAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 500,
+      maxIterations: 5,
+      minibatchSize: 2,
+      seed: 1,
+      cache,
+    };
+
+    const first = await optimize(options);
+    const second = await optimize(options);
+
+    expect(second.metricCalls).toBeLessThan(first.metricCalls);
+    expect(second.candidates[0]?.objectiveScores).toEqual(
+      first.candidates[0]?.objectiveScores,
+    );
+  });
+
+  test("scores only the validation instances the evaluation policy selects", async () => {
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+      valEvaluationPolicy: {
+        selectInstances: () => [0, 2],
+        bestCandidate: () => 0,
+      },
+    });
+
+    for (const record of result.candidates) {
+      expect(record.instanceScores[1]).toBeUndefined();
+      expect(record.instanceScores[3]).toBeUndefined();
+      expect(record.instanceScores[0]).toBeTypeOf("number");
+      expect(record.instanceScores[2]).toBeTypeOf("number");
+    }
+  });
+
+  test("scores a candidate on fewer instances under a subsampling policy", async () => {
+    const events: OptimizerEvent[] = [];
+
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 500,
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+      valEvaluationPolicy: subsampledEvaluationPolicy({ size: 2 }),
+      onEvent: (event) => events.push(event),
+    });
+
+    const validations = events.filter(
+      (event) =>
+        event.type === "evaluation" &&
+        (event.phase === "validation" || event.phase === "seed"),
+    );
+
+    expect(validations.length).toBeGreaterThan(0);
+    for (const event of validations) {
+      expect(event.type === "evaluation" && event.metricCalls).toBeLessThan(
+        KEYWORD_EXAMPLES.length,
+      );
+    }
+    expect(
+      result.candidates.every(
+        (record) =>
+          record.instanceScores.filter((score) => score !== undefined)
+            .length === 2,
+      ),
+    ).toBe(true);
+  });
+
+  test("feeds rejected proposals back into later reflections", async () => {
+    const prompts: string[] = [];
+
+    await optimize({
+      seedCandidate: { instruction: "hold ten seconds ticket portal" },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nno useful information\n```";
+      },
+      maxMetricCalls: 200,
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    // The first proposal loses on the minibatch; every later reflection must
+    // be told so, or the same dead end is proposed for the whole run.
+    expect(prompts.length).toBeGreaterThan(1);
+    expect(prompts[0]).not.toContain("<rejected_instructions>");
+    expect(prompts.at(-1)).toContain("no useful information");
+  });
+
+  test("caps how many rejected proposals a reflection is shown", async () => {
+    const prompts: string[] = [];
+    let counter = 0;
+
+    await optimize({
+      seedCandidate: { instruction: "hold ten seconds ticket portal" },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        counter += 1;
+        return `\`\`\`\nuseless proposal ${counter}\n\`\`\``;
+      },
+      maxMetricCalls: 400,
+      maxIterations: 8,
+      minibatchSize: 2,
+      seed: 1,
+      rejectedProposalMemory: 2,
+    });
+
+    const last = prompts.at(-1) ?? "";
+
+    expect(prompts.length).toBeGreaterThan(3);
+    expect(last).toContain("useless proposal");
+    expect(last.match(/useless proposal/g) ?? []).toHaveLength(2);
+  });
+
+  test("emits a checkpoint for the seed and for every iteration", async () => {
+    const snapshots: OptimizerSnapshot[] = [];
+
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+      onCheckpoint: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    expect(snapshots).toHaveLength(result.iterations + 1);
+    expect(snapshots[0]?.records).toHaveLength(1);
+    expect(snapshots.at(-1)?.metricCalls).toBe(result.metricCalls);
+    expect(snapshots.at(-1)?.records).toHaveLength(result.candidates.length);
+  });
+
+  test("survives a round trip through JSON", async () => {
+    let snapshot: OptimizerSnapshot | undefined;
+
+    await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+      onCheckpoint: (taken) => {
+        snapshot = taken;
+      },
+    });
+
+    expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
+  });
+
+  test("resumes where the checkpoint left off", async () => {
+    const interrupted = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+      cache: false,
+    });
+    const snapshot = interrupted.snapshot;
+
+    const resumed = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
+      maxIterations: 6,
+      minibatchSize: 2,
+      seed: 1,
+      cache: false,
+      resumeFrom: snapshot,
+    });
+
+    expect(resumed.iterations).toBe(6);
+    expect(resumed.candidates.length).toBeGreaterThanOrEqual(
+      interrupted.candidates.length,
+    );
+    expect(resumed.candidates[0]?.candidate).toEqual(SEED);
+    // The seed and everything already scored is not paid for twice.
+    expect(resumed.metricCalls).toBeGreaterThanOrEqual(interrupted.metricCalls);
+    expect(resumed.bestScore).toBeGreaterThanOrEqual(interrupted.bestScore);
+  });
+
+  test("charges a resumed run for what the checkpoint already spent", async () => {
+    const interrupted = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+      cache: false,
+    });
+
+    const resumed = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+      minibatchSize: 2,
+      seed: 1,
+      cache: false,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(resumed.metricCalls).toBeLessThanOrEqual(60);
+    expect(resumed.metricCalls).toBeGreaterThanOrEqual(interrupted.metricCalls);
+    expect(resumed.stopReason).toBe("budgetExhausted");
+  });
+
+  test("carries the evaluation cache in the checkpoint", async () => {
+    const options = {
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+    };
+
+    const first = await optimize({ ...options, cache: createMemoryCache() });
+    const second = await optimize({
+      ...options,
+      cache: createMemoryCache({ entries: first.snapshot.cache }),
+    });
+
+    expect(first.snapshot.cache?.length).toBeGreaterThan(0);
+    expect(second.cacheHits).toBeGreaterThan(0);
+    expect(second.metricCalls).toBeLessThan(first.metricCalls);
+  });
+
+  test("restores the checkpoint's cache into a resumed run", async () => {
+    const interrupted = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+    });
+    const cache = createMemoryCache();
+
+    await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+      cache,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    const restored = new Map(cache.entries?.());
+
+    for (const [key, cached] of interrupted.snapshot.cache ?? []) {
+      expect(restored.get(key)).toEqual(cached);
+    }
+  });
+
+  test("refuses a checkpoint taken against a different seed candidate", async () => {
+    const other = await optimize({
+      seedCandidate: { instruction: "Something else entirely." },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+        resumeFrom: other.snapshot,
+      }),
+    ).rejects.toThrow(/checkpoint/i);
+  });
+
+  test("refuses a checkpoint taken against a different validation set", async () => {
+    const other = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      valset: KEYWORD_EXAMPLES.slice(0, 2),
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    });
+
+    await expect(
+      optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        minibatchSize: 2,
+        seed: 1,
+        resumeFrom: other.snapshot,
+      }),
+    ).rejects.toThrow(/checkpoint/i);
+  });
+
+  test("reports the best candidate chosen by the evaluation policy", async () => {
+    const result = await optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 300,
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+      valEvaluationPolicy: {
+        ...fullEvaluationPolicy(),
+        // Deliberately perverse: the worst candidate wins.
+        bestCandidate: (records) =>
+          records.reduce((worst, record) =>
+            record.aggregateScore < worst.aggregateScore ? record : worst,
+          ).id,
+      },
+    });
+
+    expect(result.bestCandidateId).toBe(0);
+    expect(result.bestCandidate).toEqual(SEED);
+  });
 });
+
+/**
+ * The keyword task scored on two competing objectives: coverage rewards saying
+ * more, brevity rewards saying less. A candidate cannot lead both.
+ */
+function createObjectiveAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const adapter = createKeywordAdapter();
+
+  return {
+    ...adapter,
+    evaluate: async (args) => {
+      const evaluation = await adapter.evaluate(args);
+      const words = Object.values(args.candidate).join(" ").split(/\s+/).length;
+
+      return {
+        ...evaluation,
+        objectiveScores: evaluation.scores.map((score: number) => ({
+          coverage: score,
+          brevity: 1 / words,
+        })),
+      };
+    },
+  };
+}

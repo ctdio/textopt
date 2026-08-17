@@ -227,7 +227,7 @@ async function complete(args: {
   if (client.kind === "openai") {
     const response = await client.openai.responses.create(
       {
-        model: "gpt-5.4-nano",
+        model: "gpt-5.6-luna",
         instructions: instruction,
         input,
         max_output_tokens: 1024,

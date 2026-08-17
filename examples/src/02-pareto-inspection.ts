@@ -176,7 +176,9 @@ for (const candidate of result.candidates) {
   console.log(
     [
       `#${candidate.id}`.padEnd(6),
-      ...candidate.instanceScores.map((score) => score.toFixed(2).padStart(6)),
+      ...candidate.instanceScores.map((score) =>
+        (score === undefined ? "—" : score.toFixed(2)).padStart(6),
+      ),
       `  ${candidate.aggregateScore.toFixed(3)}`,
     ].join(""),
   );

@@ -71,20 +71,52 @@ describe("createMemoryCache", () => {
   test("returns the stored score", () => {
     const cache = createMemoryCache();
 
-    cache.set("key", 0.75);
+    cache.set("key", { score: 0.75 });
 
-    expect(cache.get("key")).toBe(0.75);
+    expect(cache.get("key")?.score).toBe(0.75);
+  });
+
+  test("returns the stored objective scores", () => {
+    const cache = createMemoryCache();
+
+    cache.set("key", {
+      score: 0.5,
+      objectiveScores: { accuracy: 1, brevity: 0 },
+    });
+
+    expect(cache.get("key")?.objectiveScores).toEqual({
+      accuracy: 1,
+      brevity: 0,
+    });
   });
 
   test("evicts the oldest entry past maxEntries", () => {
     const cache = createMemoryCache({ maxEntries: 2 });
 
-    cache.set("a", 1);
-    cache.set("b", 2);
-    cache.set("c", 3);
+    cache.set("a", { score: 1 });
+    cache.set("b", { score: 2 });
+    cache.set("c", { score: 3 });
 
     expect(cache.get("a")).toBeUndefined();
-    expect(cache.get("b")).toBe(2);
-    expect(cache.get("c")).toBe(3);
+    expect(cache.get("b")?.score).toBe(2);
+    expect(cache.get("c")?.score).toBe(3);
+  });
+
+  test("exposes its entries for checkpointing", () => {
+    const cache = createMemoryCache();
+
+    cache.set("a", { score: 1 });
+    cache.set("b", { score: 2, objectiveScores: { accuracy: 1 } });
+
+    expect(cache.entries?.()).toEqual([
+      ["a", { score: 1 }],
+      ["b", { score: 2, objectiveScores: { accuracy: 1 } }],
+    ]);
+  });
+
+  test("restores entries it was seeded with", () => {
+    const cache = createMemoryCache({ entries: [["a", { score: 0.25 }]] });
+
+    expect(cache.get("a")?.score).toBe(0.25);
   });
 });
