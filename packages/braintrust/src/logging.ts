@@ -54,6 +54,12 @@ export function withBraintrustLogging<Datum, Traj, Out>(
             ...metadata,
             candidate: args.candidate,
             feedback: evaluation.feedback?.[index] ?? "",
+            // Group and filter a run's events by where they came from: without
+            // these an experiment is one undifferentiated pile of rollouts.
+            iteration: args.run.iteration,
+            phase: args.run.phase,
+            split: args.run.split,
+            candidateId: args.run.candidateId,
           },
         };
 

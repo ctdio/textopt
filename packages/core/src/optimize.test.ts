@@ -11,7 +11,12 @@ import {
   createKeywordAdapter,
   createKeywordReflector,
 } from "./testing.js";
-import type { Adapter, OptimizerEvent, OptimizerSnapshot } from "./types.js";
+import type {
+  Adapter,
+  EvaluationContext,
+  OptimizerEvent,
+  OptimizerSnapshot,
+} from "./types.js";
 
 const SEED = { instruction: "Answer the user question." };
 
@@ -1160,7 +1165,84 @@ describe("optimize", () => {
     expect(result.bestCandidateId).toBe(0);
     expect(result.bestCandidate).toEqual(SEED);
   });
+
+  test("tags the seed evaluation with the seed phase and the validation split", async () => {
+    const contexts = await recordRunContexts({ maxIterations: 1 });
+
+    expect(contexts[0]).toEqual({
+      iteration: 0,
+      phase: "seed",
+      candidateId: 0,
+      split: "val",
+    });
+  });
+
+  test("tags a parent's minibatch evaluation with the parent's id and the train split", async () => {
+    const contexts = await recordRunContexts({ maxIterations: 1 });
+
+    expect(contexts).toContainEqual({
+      iteration: 0,
+      phase: "minibatch",
+      candidateId: 0,
+      split: "train",
+    });
+  });
+
+  test("tags a child's validation evaluation with the id it will be recorded under", async () => {
+    const contexts = await recordRunContexts({ maxIterations: 1 });
+
+    expect(contexts).toContainEqual({
+      iteration: 0,
+      phase: "validation",
+      candidateId: 1,
+      split: "val",
+    });
+  });
+
+  test("reports a proposal that has no id yet as an unidentified candidate", async () => {
+    const contexts = await recordRunContexts({ maxIterations: 1 });
+
+    expect(contexts).toContainEqual({
+      iteration: 0,
+      phase: "minibatch",
+      candidateId: null,
+      split: "train",
+    });
+  });
+
+  test("advances the iteration number it reports to the adapter", async () => {
+    const contexts = await recordRunContexts({ maxIterations: 3 });
+
+    expect(new Set(contexts.map((context) => context.iteration))).toContain(1);
+  });
 });
+
+/** Runs the keyword task and collects the run context of every evaluation. */
+async function recordRunContexts(args: {
+  maxIterations: number;
+}): Promise<EvaluationContext[]> {
+  const adapter = createKeywordAdapter();
+  const contexts: EvaluationContext[] = [];
+
+  await optimize({
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: {
+      ...adapter,
+      evaluate: (evaluateArgs) => {
+        contexts.push(evaluateArgs.run);
+        return adapter.evaluate(evaluateArgs);
+      },
+    },
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 300,
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+  });
+
+  return contexts;
+}
 
 /**
  * The keyword task scored on two competing objectives: coverage rewards saying

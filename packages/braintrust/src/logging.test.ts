@@ -1,3 +1,4 @@
+import type { EvaluationContext } from "@ctdio/gepa";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "@ctdio/gepa/testing";
 import { describe, expect, test } from "vitest";
 import type { BraintrustEvent, BraintrustLoggerLike } from "./logging.js";
@@ -18,6 +19,13 @@ function createRecordingLogger(): BraintrustLoggerLike & {
 
 const CANDIDATE = { instruction: "hold ten seconds" };
 
+const RUN: EvaluationContext = {
+  iteration: 0,
+  phase: "minibatch",
+  split: "train",
+  candidateId: 0,
+};
+
 describe("withBraintrustLogging", () => {
   test("logs one event per evaluated instance", async () => {
     const logger = createRecordingLogger();
@@ -30,6 +38,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(0, 2),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     expect(logger.events).toHaveLength(2);
@@ -46,6 +55,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(0, 1),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     const event = logger.events[0];
@@ -65,6 +75,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(1, 2),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     expect(logger.events[0]?.metadata?.feedback).toContain(
@@ -84,11 +95,74 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(0, 2),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     for (const event of logger.events) {
       expect(event.metadata?.run).toBe("nightly");
     }
+  });
+
+  test("logs where in the run each event came from", async () => {
+    const logger = createRecordingLogger();
+    const adapter = withBraintrustLogging({
+      adapter: createKeywordAdapter(),
+      logger,
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: {
+        iteration: 7,
+        phase: "validation",
+        split: "val",
+        candidateId: 3,
+      },
+    });
+
+    expect(logger.events[0]?.metadata).toMatchObject({
+      iteration: 7,
+      phase: "validation",
+      split: "val",
+      candidateId: 3,
+    });
+  });
+
+  test("logs a proposal being screened as having no candidate id", async () => {
+    const logger = createRecordingLogger();
+    const adapter = withBraintrustLogging({
+      adapter: createKeywordAdapter(),
+      logger,
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: { ...RUN, candidateId: null },
+    });
+
+    expect(logger.events[0]?.metadata?.candidateId).toBeNull();
+  });
+
+  test("keeps the run context when the caller supplies its own metadata", async () => {
+    const logger = createRecordingLogger();
+    const adapter = withBraintrustLogging({
+      adapter: createKeywordAdapter(),
+      logger,
+      metadata: { iteration: "nightly" },
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: { ...RUN, iteration: 2 },
+    });
+
+    expect(logger.events[0]?.metadata?.iteration).toBe(2);
   });
 
   test("returns the wrapped adapter's evaluation unchanged", async () => {
@@ -101,6 +175,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES,
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     };
 
     const direct = await inner.evaluate(args);
@@ -124,6 +199,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(0, 2),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.scores).toHaveLength(2);
@@ -140,6 +216,7 @@ describe("withBraintrustLogging", () => {
       batch,
       candidate: CANDIDATE,
       captureTraces: true,
+      run: RUN,
     });
     const dataset = await adapter.makeReflectiveDataset({
       candidate: CANDIDATE,
@@ -163,6 +240,7 @@ describe("withBraintrustLogging", () => {
       batch: KEYWORD_EXAMPLES.slice(0, 1),
       candidate: CANDIDATE,
       captureTraces: false,
+      run: RUN,
     });
 
     expect(logger.events[0]?.expected).toEqual(["hold", "ten seconds"]);

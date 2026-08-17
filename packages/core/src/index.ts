@@ -52,6 +52,7 @@ export type {
   EvaluateArgs,
   EvaluationBatch,
   EvaluationCache,
+  EvaluationContext,
   EvaluationPhase,
   EvaluationSplit,
   MakeReflectiveDatasetArgs,

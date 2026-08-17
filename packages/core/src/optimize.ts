@@ -302,6 +302,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         batch: pendingIndices.map((index) => batch[index] as Datum),
         candidate,
         captureTraces: false,
+        run: { iteration, phase, split, candidateId },
         signal,
       });
       assertScores({
@@ -697,6 +698,12 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         batch,
         candidate: parent.candidate,
         captureTraces: true,
+        run: {
+          iteration,
+          phase: "minibatch",
+          split: "train",
+          candidateId: parent.id,
+        },
         signal,
       });
       assertScores({

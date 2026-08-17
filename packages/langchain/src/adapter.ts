@@ -88,8 +88,17 @@ export function createLangChainAdapter<Datum, Out>(
   } = options;
 
   return {
-    evaluate: async ({ batch, candidate, captureTraces, signal }) => {
+    evaluate: async ({ batch, candidate, captureTraces, run, signal }) => {
       const runnable = buildRunnable(candidate);
+      // Inert without a tracer configured, and the difference between a
+      // LangSmith project full of anonymous rollouts and one you can filter
+      // down to the iteration whose score moved.
+      const metadata = {
+        gepa_iteration: run.iteration,
+        gepa_phase: run.phase,
+        gepa_split: run.split,
+        gepa_candidate_id: run.candidateId,
+      };
 
       const results = await mapWithConcurrency({
         items: batch,
@@ -104,6 +113,7 @@ export function createLangChainAdapter<Datum, Out>(
           try {
             output = await runnable.invoke(toInput(datum) as never, {
               callbacks: captureTraces ? [collector.handler] : undefined,
+              metadata,
               signal,
             });
           } catch (err) {

@@ -1,3 +1,4 @@
+import type { EvaluationContext } from "@ctdio/gepa";
 import type { generateText } from "ai";
 import { describe, expect, test } from "vitest";
 import type { AiSdkResultLike } from "./adapter.js";
@@ -12,6 +13,13 @@ const QUESTIONS: Question[] = [
   { question: "capital of france?", answer: "paris" },
   { question: "capital of japan?", answer: "tokyo" },
 ];
+
+const RUN: EvaluationContext = {
+  iteration: 0,
+  phase: "minibatch",
+  split: "train",
+  candidateId: 0,
+};
 
 // Compile-time proof that a real AI SDK generateText result satisfies the
 // structural type this adapter accepts. Fails typecheck if the SDK drifts.
@@ -55,6 +63,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "be terse" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.outputs).toEqual(["paris", "tokyo"]);
@@ -75,6 +84,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "revision-3" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(seen).toEqual(["revision-3", "revision-3"]);
@@ -96,6 +106,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.outputs).toEqual([{ city: "paris" }, { city: "tokyo" }]);
@@ -111,6 +122,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: true,
+      run: RUN,
     });
 
     const trace = result.trajectories?.[0];
@@ -134,6 +146,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: true,
+      run: RUN,
     });
 
     expect(result.scores).toEqual([0, 0]);
@@ -161,6 +174,7 @@ describe("createAiSdkAdapter", () => {
       batch: Array.from({ length: 8 }, () => QUESTIONS[0] as Question),
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(peak).toBeLessThanOrEqual(2);
@@ -193,6 +207,7 @@ describe("createAiSdkAdapter", () => {
       batch,
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.outputs).toEqual([
@@ -218,6 +233,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.scores).toEqual([0, 1]);
@@ -238,6 +254,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.transient).toEqual([true, true]);
@@ -256,6 +273,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.transient).toBeUndefined();
@@ -277,6 +295,7 @@ describe("createAiSdkAdapter", () => {
         batch: QUESTIONS,
         candidate: { system: "x" },
         captureTraces: false,
+        run: RUN,
         signal: controller.signal,
       }),
     ).rejects.toThrow(/abort/i);
@@ -295,6 +314,7 @@ describe("createAiSdkAdapter", () => {
       batch: QUESTIONS,
       candidate: { system: "x" },
       captureTraces: true,
+      run: RUN,
     });
     const dataset = await adapter.makeReflectiveDataset({
       candidate: { system: "x" },

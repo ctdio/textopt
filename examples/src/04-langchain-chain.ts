@@ -5,7 +5,9 @@
  * candidate text is optimizable — prompts, tool descriptions, routing rules.
  * Traces are captured through a plain callback handler, which means the same
  * events LangSmith records are available to the reflection model without a
- * LangSmith account.
+ * LangSmith account. With LANGSMITH_TRACING=1 set, every rollout also carries
+ * `gepa_iteration`, `gepa_phase`, `gepa_split` and `gepa_candidate_id`, so a
+ * score that moved can be filtered back to the rollouts that moved it.
  *
  * This one runs on OpenAI to make the point that none of the machinery is
  * vendor-specific — the AI SDK example next door is identical in structure and

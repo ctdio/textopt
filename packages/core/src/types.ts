@@ -52,7 +52,27 @@ export interface EvaluateArgs<Datum> {
   batch: readonly Datum[];
   candidate: Candidate;
   captureTraces: boolean;
+  /**
+   * Where this batch sits in the run. Forward it to whatever tracing the
+   * system under optimization already has — without it a run is thousands of
+   * indistinguishable rollouts, and no trace can be tied back to the iteration
+   * whose score moved.
+   */
+  run: EvaluationContext;
   signal?: AbortSignal;
+}
+
+/**
+ * Identifies one evaluation within a run. `candidateId` is null while the
+ * candidate is still a proposal being screened on a minibatch: it has no
+ * record, and inventing an id for it would collide with the one it gets if it
+ * is accepted.
+ */
+export interface EvaluationContext {
+  iteration: number;
+  phase: EvaluationPhase;
+  split: EvaluationSplit;
+  candidateId: number | null;
 }
 
 export interface ReflectiveRecord {

@@ -1,6 +1,8 @@
+import type { EvaluationContext } from "@ctdio/gepa";
 import type { CallbackManager } from "@langchain/core/callbacks/manager";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { RunnableLambda } from "@langchain/core/runnables";
 import { FakeListChatModel } from "@langchain/core/utils/testing";
 import { describe, expect, test } from "vitest";
@@ -15,6 +17,13 @@ const TICKETS: Ticket[] = [
   { text: "my printer is on fire", expected: "hardware" },
   { text: "charged twice this month", expected: "billing" },
 ];
+
+const RUN: EvaluationContext = {
+  iteration: 0,
+  phase: "minibatch",
+  split: "train",
+  candidateId: 0,
+};
 
 function echoRunnable(instruction: string) {
   return RunnableLambda.from((input: { text: string }) =>
@@ -71,6 +80,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "classify" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.scores).toEqual([1, 1]);
@@ -95,6 +105,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "version-two" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(seen).toContain("version-two");
@@ -114,6 +125,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.feedback).toEqual(["Expected hardware", "Expected billing"]);
@@ -130,6 +142,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.trajectories).toBeUndefined();
@@ -152,6 +165,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "Classify the ticket." },
       captureTraces: true,
+      run: RUN,
     });
 
     const steps = result.trajectories?.[0]?.steps ?? [];
@@ -175,6 +189,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: true,
+      run: RUN,
     });
 
     expect(result.scores).toEqual([0, 0]);
@@ -196,6 +211,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: true,
+      run: RUN,
     });
     const dataset = await adapter.makeReflectiveDataset({
       candidate: { instruction: "x" },
@@ -233,6 +249,7 @@ describe("createLangChainAdapter", () => {
       batch: Array.from({ length: 8 }, () => TICKETS[0] as Ticket),
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(peak).toBeLessThanOrEqual(2);
@@ -267,6 +284,7 @@ describe("createLangChainAdapter", () => {
       batch,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.outputs).toEqual(["slow", "medium", "fast"]);
@@ -289,6 +307,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.scores).toEqual([0, 1]);
@@ -311,6 +330,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.transient).toEqual([true, true]);
@@ -331,6 +351,7 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.transient).toBeUndefined();
@@ -347,6 +368,7 @@ describe("createLangChainAdapter", () => {
       batch: [TICKETS[0] as Ticket],
       candidate: { instruction: "x" },
       captureTraces: true,
+      run: RUN,
     });
 
     const orphan = result.trajectories?.[0]?.steps.find(
@@ -367,6 +389,7 @@ describe("createLangChainAdapter", () => {
       batch: [TICKETS[0] as Ticket],
       candidate: { instruction: "x" },
       captureTraces: true,
+      run: RUN,
     });
 
     const completed = result.trajectories?.[0]?.steps.find(
@@ -394,6 +417,7 @@ describe("createLangChainAdapter", () => {
         batch: TICKETS,
         candidate: { instruction: "x" },
         captureTraces: false,
+        run: RUN,
         signal: controller.signal,
       }),
     ).rejects.toThrow(/abort/i);
@@ -413,11 +437,70 @@ describe("createLangChainAdapter", () => {
       batch: TICKETS,
       candidate: { instruction: "x" },
       captureTraces: false,
+      run: RUN,
     });
 
     expect(result.objectiveScores?.[0]).toEqual({
       accuracy: 0.5,
       latencyMs: 120,
     });
+  });
+
+  test("attaches the run context to every invocation as tracing metadata", async () => {
+    const seen: (Record<string, unknown> | undefined)[] = [];
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(
+          (input: { text: string }, config: RunnableConfig) => {
+            seen.push(config.metadata);
+            return input.text;
+          },
+        ),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: TICKETS.slice(0, 1),
+      candidate: { instruction: "x" },
+      captureTraces: false,
+      run: {
+        iteration: 7,
+        phase: "validation",
+        split: "val",
+        candidateId: 3,
+      },
+    });
+
+    expect(seen[0]).toMatchObject({
+      gepa_iteration: 7,
+      gepa_phase: "validation",
+      gepa_split: "val",
+      gepa_candidate_id: 3,
+    });
+  });
+
+  test("marks a proposal being screened as having no candidate id", async () => {
+    const seen: (Record<string, unknown> | undefined)[] = [];
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(
+          (input: { text: string }, config: RunnableConfig) => {
+            seen.push(config.metadata);
+            return input.text;
+          },
+        ),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: TICKETS.slice(0, 1),
+      candidate: { instruction: "x" },
+      captureTraces: false,
+      run: { ...RUN, candidateId: null },
+    });
+
+    expect(seen[0]?.gepa_candidate_id).toBeNull();
   });
 });
