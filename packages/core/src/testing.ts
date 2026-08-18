@@ -1,5 +1,6 @@
-import { buildReflectionPrompt } from "./reflection.js";
-import type { Adapter, Reflector } from "./types.js";
+import { buildReflectionPrompt } from "./gepa/reflection.js";
+import type { GepaAdapter } from "./gepa/types.js";
+import type { TextModel } from "./types.js";
 
 /**
  * A deterministic, LLM-free system under optimization.
@@ -28,7 +29,7 @@ export const KEYWORD_EXAMPLES: KeywordExample[] = [
   { question: "How do I upgrade a plan?", required: ["billing", "prorated"] },
 ];
 
-export function createKeywordAdapter(): Adapter<
+export function createKeywordAdapter(): GepaAdapter<
   KeywordExample,
   KeywordTrajectory,
   string
@@ -88,7 +89,7 @@ export function createKeywordAdapter(): Adapter<
  * A deterministic stand-in for a reflection model: it reads the feedback in the
  * prompt and folds the missing terms into the current instruction.
  */
-export function createKeywordReflector(): Reflector {
+export function createKeywordReflector(): TextModel {
   return async ({ prompt }) => {
     const current = extractCurrentInstruction(prompt);
     const missing = extractMissingTerms(prompt);
@@ -101,7 +102,7 @@ export function createKeywordReflector(): Reflector {
 }
 
 /** A reflection model that always proposes something strictly worse. */
-export function createDegradingReflector(): Reflector {
+export function createDegradingReflector(): TextModel {
   return async () => "```\nno useful information\n```";
 }
 

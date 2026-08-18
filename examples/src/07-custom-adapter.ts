@@ -1,24 +1,25 @@
 /**
- * No framework at all: a hand-written `Adapter` over a vendor's own SDK. Both
- * are implemented here — flip `VENDOR` below — because the point of the example
- * is that swapping them touches exactly one function.
+ * No framework at all: a hand-written `GepaAdapter` over a vendor's own SDK.
+ * Both are implemented here — flip `VENDOR` below — because the point of the
+ * example is that swapping them touches exactly one function.
  *
- * The adapter is the only integration seam GEPA has. Implement two methods —
- * `evaluate` (per-instance scores plus textual feedback) and
+ * The adapter is the only integration seam textopt has. Implement two
+ * methods — `evaluate` (per-instance scores plus textual feedback) and
  * `makeReflectiveDataset` (what the reflection model gets to read) — and any
  * system becomes optimizable: an HTTP call, a retrieval pipeline, a compiler
  * pass, a shell script.
  *
  * The task model here is the cheapest tier, deliberately. The interesting
- * result of a GEPA run is usually not "the big model got better" but "the small
- * model caught up once the prompt carried the domain knowledge".
+ * result of an optimization run is usually not "the big model got better" but
+ * "the small model caught up once the prompt carried the domain knowledge".
  *
- *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/gepa-examples custom
+ *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/textopt-examples custom
  */
 import { anthropic } from "@ai-sdk/anthropic";
 import Anthropic from "@anthropic-ai/sdk";
-import { mapWithConcurrency, optimize } from "@ctdio/gepa";
-import type { Adapter } from "@ctdio/gepa";
+import { mapWithConcurrency } from "@ctdio/textopt";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import type { GepaAdapter } from "@ctdio/textopt/gepa";
 import { openai } from "@ai-sdk/openai";
 import OpenAI from "openai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
@@ -146,14 +147,19 @@ const reflect =
         providerOptions: { anthropic: { thinking: { type: "adaptive" } } },
       });
 
-const adapter: Adapter<InvoiceLine, ExtractionTrace, string> = {
+const adapter: GepaAdapter<
+  InvoiceLine,
+  ExtractionTrace,
+  string,
+  "instruction"
+> = {
   evaluate: async ({ batch, candidate, signal }) => {
     const results = await mapWithConcurrency({
       items: batch,
       limit: 4,
       task: async (line) => {
         const response = await complete({
-          instruction: candidate.instruction ?? "",
+          instruction: candidate.instruction,
           input: line.raw,
           signal,
         });
@@ -184,8 +190,9 @@ const adapter: Adapter<InvoiceLine, ExtractionTrace, string> = {
       feedback: evaluation.feedback?.[index] ?? "",
       score: evaluation.scores[index],
       // Showing the target next to the output is what lets the reflection model
-      // state the convention explicitly instead of guessing at it.
-      expected: line.expected,
+      // state the convention explicitly instead of guessing at it. Anything the
+      // adapter adds beyond the four standard fields goes in `evidence`.
+      evidence: { expected: line.expected },
     }));
 
     return Object.fromEntries(
@@ -194,7 +201,12 @@ const adapter: Adapter<InvoiceLine, ExtractionTrace, string> = {
   },
 };
 
-const result = await optimize({
+const gepa = new GepaOptimizer({
+  minibatchSize: 3,
+  seed: 2,
+});
+
+const result = await gepa.optimize({
   seedCandidate: {
     instruction:
       "Extract the vendor, amount and currency from the invoice line.",
@@ -204,8 +216,6 @@ const result = await optimize({
   adapter,
   reflect,
   maxMetricCalls: 120,
-  minibatchSize: 3,
-  seed: 2,
   instanceId: ({ datum }) => datum.id,
   onEvent: logEvent,
 });

@@ -10,11 +10,11 @@
  *
  * Merge is enabled by default whenever a candidate has more than one component.
  *
- *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/gepa-examples merge
+ *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/textopt-examples merge
  */
 import { anthropic } from "@ai-sdk/anthropic";
-import { optimize } from "@ctdio/gepa";
-import { createAiSdkAdapter } from "@ctdio/gepa-ai-sdk";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { createAiSdkAdapter } from "@ctdio/textopt-ai-sdk";
 import { generateText } from "ai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
 import { logEvent, printResult } from "./shared/report.js";
@@ -124,7 +124,13 @@ const adapter = createAiSdkAdapter<Ticket, Draft>({
   concurrency: 3,
 });
 
-const result = await optimize({
+const gepa = new GepaOptimizer({
+  minibatchSize: 3,
+  seed: 4,
+  merge: { enabled: true, maxInvocations: 4 },
+});
+
+const result = await gepa.optimize({
   seedCandidate: {
     router: "Classify the support ticket. Answer with one word.",
     replyStyle: "Write a reply to the customer.",
@@ -134,10 +140,7 @@ const result = await optimize({
   adapter,
   reflect,
   maxMetricCalls: 120,
-  minibatchSize: 3,
-  seed: 4,
   instanceId: ({ datum }) => datum.id,
-  merge: { enabled: true, maxInvocations: 4 },
   onEvent: logEvent,
 });
 

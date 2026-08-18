@@ -1,7 +1,7 @@
 {
-  "name": "@ctdio/gepa-ai-sdk",
+  "name": "@ctdio/textopt-ai-sdk",
   "version": "0.0.0",
-  "description": "Vercel AI SDK adapter for @ctdio/gepa",
+  "description": "Vercel AI SDK adapter for @ctdio/textopt",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ctdio/gepa": "workspace:*"
+    "@ctdio/textopt": "workspace:*"
   },
   "devDependencies": {
     "ai": "^7.0.66"

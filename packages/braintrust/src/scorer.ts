@@ -1,4 +1,4 @@
-import type { ScoreResult } from "@ctdio/gepa";
+import type { ScoreResult } from "@ctdio/textopt";
 
 /** Matches the `Score` object returned by braintrust and autoevals scorers. */
 export interface BraintrustScoreLike {
@@ -35,7 +35,7 @@ export interface BraintrustScorerOptions<Output> {
 }
 
 /**
- * Turns braintrust / autoevals scorers into a GEPA metric.
+ * Turns braintrust / autoevals scorers into a metric an optimizer can run.
  *
  * The important part is not the number — it is that scorer metadata (an
  * LLM judge's rationale, a diff, a validation error) is carried through as

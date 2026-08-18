@@ -10,11 +10,15 @@ export default defineConfig({
     // Ordered: the more specific subpath must be matched before the bare name.
     alias: [
       {
-        find: "@ctdio/gepa/testing",
+        find: "@ctdio/textopt/testing",
         replacement: sourceOf("./packages/core/src/testing.ts"),
       },
       {
-        find: "@ctdio/gepa",
+        find: "@ctdio/textopt/gepa",
+        replacement: sourceOf("./packages/core/src/gepa/index.ts"),
+      },
+      {
+        find: "@ctdio/textopt",
         replacement: sourceOf("./packages/core/src/index.ts"),
       },
     ],

@@ -8,11 +8,11 @@
  * Cost note: capped at 150 rollouts of the task model plus roughly a dozen
  * reflection calls. Lower `maxMetricCalls` to spend less.
  *
- *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/gepa-examples ai-sdk
+ *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/textopt-examples ai-sdk
  */
 import { anthropic } from "@ai-sdk/anthropic";
-import { optimize } from "@ctdio/gepa";
-import { createAiSdkAdapter } from "@ctdio/gepa-ai-sdk";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { createAiSdkAdapter } from "@ctdio/textopt-ai-sdk";
 import { generateText } from "ai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
 import { logEvent, printResult } from "./shared/report.js";
@@ -86,7 +86,12 @@ const adapter = createAiSdkAdapter<Ticket>({
   concurrency: 4,
 });
 
-const result = await optimize<Ticket>({
+const gepa = new GepaOptimizer({
+  minibatchSize: 3,
+  seed: 11,
+});
+
+const result = await gepa.optimize({
   seedCandidate: {
     system: "Classify the support ticket. Answer with one word.",
   },
@@ -95,8 +100,6 @@ const result = await optimize<Ticket>({
   adapter,
   reflect,
   maxMetricCalls: 150,
-  minibatchSize: 3,
-  seed: 11,
   instanceId: ({ datum }) => datum.id,
   onEvent: logEvent,
 });

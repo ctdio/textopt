@@ -1,7 +1,7 @@
 /**
- * Order-preserving concurrency-limited map. GEPA's workload is entirely IO
- * bound, so adapters use this to fan out a batch across a bounded number of
- * in-flight model calls.
+ * Order-preserving concurrency-limited map. An optimization run's workload is
+ * entirely IO bound, so adapters use this to fan out a batch across a bounded
+ * number of in-flight model calls.
  */
 export async function mapWithConcurrency<Item, Result>(args: {
   items: readonly Item[];

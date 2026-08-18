@@ -7,7 +7,7 @@ import {
   pruneDominatedFronts,
   selectParetoCandidate,
 } from "./pareto.js";
-import { createSeededRng } from "./rng.js";
+import { createSeededRng } from "../rng.js";
 
 describe("computeInstanceBests", () => {
   test("returns the best score achieved on each instance", () => {

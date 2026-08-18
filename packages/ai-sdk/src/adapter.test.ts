@@ -1,7 +1,8 @@
-import type { EvaluationContext } from "@ctdio/gepa";
+import type { EvaluationContext } from "@ctdio/textopt";
+import type { GepaAdapter } from "@ctdio/textopt/gepa";
 import type { generateText } from "ai";
 import { describe, expect, test } from "vitest";
-import type { AiSdkResultLike } from "./adapter.js";
+import type { AiSdkResultLike, AiSdkTrace } from "./adapter.js";
 import { createAiSdkAdapter, summarizeRun } from "./adapter.js";
 
 interface Question {
@@ -74,7 +75,7 @@ describe("createAiSdkAdapter", () => {
     const seen: string[] = [];
     const adapter = createAiSdkAdapter<Question, string>({
       run: async ({ candidate, datum }) => {
-        seen.push(candidate.system as string);
+        seen.push(candidate.system);
         return resultFor(datum.answer);
       },
       score: () => ({ score: 1 }),
@@ -351,6 +352,140 @@ describe("createAiSdkAdapter", () => {
     expect(dataset.system).toHaveLength(2);
     expect(dataset.system?.[0]?.feedback).toBe("The answer must be paris");
     expect(dataset.system?.[0]?.inputs).toEqual(QUESTIONS[0]);
+  });
+
+  test("nests a multi-step trace under the record's evidence slot", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum }) => ({
+        text: datum.answer,
+        steps: [{ text: "thinking" }, { text: datum.answer }],
+      }),
+      score: () => ({ score: 0 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { system: "x" },
+      batch: QUESTIONS,
+      evaluation,
+      componentsToUpdate: ["system"],
+    });
+    expect(dataset.system?.[0]?.evidence).toEqual({
+      trace: [
+        { index: 0, text: "thinking" },
+        { index: 1, text: "paris" },
+      ],
+    });
+  });
+
+  test("nests a run failure's message under the record's evidence slot", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async () => {
+        throw new Error("rate limited");
+      },
+      score: () => ({ score: 1 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { system: "x" },
+      batch: QUESTIONS,
+      evaluation,
+      componentsToUpdate: ["system"],
+    });
+    expect(dataset.system?.[0]?.evidence).toEqual({
+      trace: [],
+      error: "rate limited",
+    });
+  });
+
+  test("omits evidence for a single-step run that did not fail", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum }) => resultFor(datum.answer),
+      score: () => ({ score: 0 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { system: "x" },
+      batch: QUESTIONS,
+      evaluation,
+      componentsToUpdate: ["system"],
+    });
+
+    expect(dataset.system?.[0]?.evidence).toBeUndefined();
+  });
+
+  test("uses a custom buildRecord when one is supplied", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum }) => resultFor(datum.answer),
+      score: () => ({ score: 0.5 }),
+      buildRecord: ({ datum, output, score, component }) => ({
+        inputs: { asked: datum.question, for: component },
+        generatedOutputs: output,
+        feedback: "custom",
+        score,
+      }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { system: "x" },
+      batch: QUESTIONS,
+      evaluation,
+      componentsToUpdate: ["system"],
+    });
+
+    expect(dataset.system?.[0]).toEqual({
+      inputs: { asked: "capital of france?", for: "system" },
+      generatedOutputs: "paris",
+      feedback: "custom",
+      score: 0.5,
+    });
+  });
+
+  test("plugs into a component-keyed GEPA task while staying key-agnostic", async () => {
+    // The annotation is the point: `createAiSdkAdapter` never sees the
+    // component names, so its adapter must still satisfy a keyed task's slot.
+    const keyed: GepaAdapter<
+      Question,
+      AiSdkTrace,
+      string | null,
+      "system" | "style"
+    > = createAiSdkAdapter<Question, string>({
+      run: async ({ candidate, datum }) =>
+        resultFor(`${candidate.system}:${datum.answer}`),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await keyed.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "terse", style: "plain" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.outputs).toEqual(["terse:paris", "terse:tokyo"]);
   });
 });
 

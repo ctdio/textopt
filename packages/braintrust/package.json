@@ -1,7 +1,7 @@
 {
-  "name": "@ctdio/gepa-braintrust",
+  "name": "@ctdio/textopt-braintrust",
   "version": "0.0.0",
-  "description": "Braintrust scorers and experiment logging for @ctdio/gepa",
+  "description": "Braintrust scorers and experiment logging for @ctdio/textopt",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ctdio/gepa": "workspace:*"
+    "@ctdio/textopt": "workspace:*"
   },
   "devDependencies": {
     "autoevals": "^0.3.0"

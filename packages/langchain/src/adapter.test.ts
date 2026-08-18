@@ -1,4 +1,6 @@
-import type { EvaluationContext } from "@ctdio/gepa";
+import type { EvaluationContext } from "@ctdio/textopt";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { createKeywordReflector } from "@ctdio/textopt/testing";
 import type { CallbackManager } from "@langchain/core/callbacks/manager";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
@@ -29,6 +31,20 @@ function echoRunnable(instruction: string) {
   return RunnableLambda.from((input: { text: string }) =>
     `${instruction}|${input.text}`.trim(),
   );
+}
+
+/** A chain whose model call carries a run name, so a trace step can be attributed. */
+function tracedClassifier() {
+  return ChatPromptTemplate.fromMessages([
+    ["system", "Classify the ticket."],
+    ["human", "{text}"],
+  ])
+    .pipe(
+      new FakeListChatModel({ responses: ["hardware", "billing"] }).withConfig({
+        runName: "classifier",
+      }),
+    )
+    .pipe(new StringOutputParser());
 }
 
 /**
@@ -225,6 +241,82 @@ describe("createLangChainAdapter", () => {
     expect(dataset.instruction?.[0]?.inputs).toEqual({
       text: "my printer is on fire",
     });
+  });
+
+  test("nests the captured trace steps under the record's evidence", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => tracedClassifier(),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { instruction: "x" },
+      batch: TICKETS,
+      evaluation,
+      componentsToUpdate: ["instruction"],
+    });
+
+    expect(evaluation.trajectories?.[0]?.steps).not.toHaveLength(0);
+    expect(dataset.instruction?.[0]?.evidence).toEqual({
+      trace: evaluation.trajectories?.[0]?.steps,
+    });
+  });
+
+  test("keeps only the named run in the evidence when componentRunNames names one", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => tracedClassifier(),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+      componentRunNames: { instruction: "classifier" },
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { instruction: "x" },
+      batch: TICKETS,
+      evaluation,
+      componentsToUpdate: ["instruction"],
+    });
+
+    expect(dataset.instruction?.[0]?.evidence).toEqual({
+      trace: [expect.objectContaining({ name: "classifier", type: "llm" })],
+    });
+  });
+
+  test("omits the evidence when no trace step belongs to the component", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => tracedClassifier(),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+      componentRunNames: { instruction: "some-other-run" },
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: true,
+      run: RUN,
+    });
+    const dataset = await adapter.makeReflectiveDataset({
+      candidate: { instruction: "x" },
+      batch: TICKETS,
+      evaluation,
+      componentsToUpdate: ["instruction"],
+    });
+
+    expect(dataset.instruction?.[0]).not.toHaveProperty("evidence");
   });
 
   test("respects the concurrency limit", async () => {
@@ -473,10 +565,10 @@ describe("createLangChainAdapter", () => {
     });
 
     expect(seen[0]).toMatchObject({
-      gepa_iteration: 7,
-      gepa_phase: "validation",
-      gepa_split: "val",
-      gepa_candidate_id: 3,
+      textopt_iteration: 7,
+      textopt_phase: "validation",
+      textopt_split: "val",
+      textopt_candidate_id: 3,
     });
   });
 
@@ -501,6 +593,36 @@ describe("createLangChainAdapter", () => {
       run: { ...RUN, candidateId: null },
     });
 
-    expect(seen[0]?.gepa_candidate_id).toBeNull();
+    expect(seen[0]?.textopt_candidate_id).toBeNull();
+  });
+});
+
+describe("createLangChainAdapter driven by GepaOptimizer", () => {
+  test("optimizes the components the seed candidate names", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: (candidate) => echoRunnable(candidate.instruction),
+      toInput: (datum) => ({ text: datum.text }),
+      score: ({ datum, output }) => ({
+        score: Number(output?.includes(datum.expected) === true),
+        feedback: `Missing required terms: ${datum.expected}`,
+      }),
+    });
+
+    const gepa = new GepaOptimizer({ minibatchSize: 2, seed: 7 });
+    const result = await gepa.optimize({
+      seedCandidate: { instruction: "classify" },
+      trainset: TICKETS,
+      adapter,
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.bestScore).toBe(1);
+    expect(result.bestCandidate.instruction).toContain("hardware");
+    expect(result.bestCandidate.instruction).toContain("billing");
+    // The adapter is K-agnostic; this fails to compile if that widens the
+    // component keys the seed candidate inferred back to `string`.
+    // @ts-expect-error `instructions` is not a component of the seed candidate
+    expect(result.bestCandidate.instructions).toBeUndefined();
   });
 });

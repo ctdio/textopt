@@ -1,27 +1,40 @@
-import { createBudget } from "./budget.js";
-import { mapWithConcurrency } from "./concurrency.js";
+import { createBudget } from "../budget.js";
 import {
   candidateHash,
   createMemoryCache,
   evaluationCacheKey,
   stableHash,
-} from "./cache.js";
+} from "../cache.js";
+import type { EvaluationCache } from "../cache.js";
+import { mapWithConcurrency } from "../concurrency.js";
+import { mean, sum } from "../math.js";
+import type {
+  Optimizer,
+  OptimizerResult,
+  OptimizerTask,
+} from "../optimizer.js";
+import { createSeededRng } from "../rng.js";
+import { createEpochShuffledSampler } from "../sampling.js";
+import type { BatchSampler } from "../sampling.js";
+import { componentNames } from "../types.js";
+import type {
+  Candidate,
+  EvaluationBatch,
+  EvaluationPhase,
+  EvaluationSplit,
+  TextModel,
+} from "../types.js";
 import { proposeMerge, selectMergeSubsample } from "./merge.js";
 import {
   buildInstanceFronts,
-  mean,
   objectiveBests,
   pruneDominatedFronts,
-  sum,
 } from "./pareto.js";
 import {
-  type ReflectionLimits,
   type ReflectionPromptBuilder,
   createDefaultProposer,
 } from "./reflection.js";
-import { createSeededRng } from "./rng.js";
 import {
-  createEpochShuffledSampler,
   fullEvaluationPolicy,
   improvementAcceptance,
   paretoSelector,
@@ -29,53 +42,34 @@ import {
 } from "./strategies.js";
 import type {
   AcceptancePolicy,
-  Adapter,
-  BatchSampler,
-  Candidate,
   CandidateRecord,
   CandidateSelector,
   ComponentPatch,
   ComponentSelector,
-  EvaluationBatch,
-  EvaluationCache,
-  EvaluationPhase,
-  EvaluationSplit,
-  OptimizationResult,
-  OptimizerEvent,
-  OptimizerSnapshot,
-  Reflector,
+  GepaAdapter,
+  GepaEvent,
+  GepaSnapshot,
+  GepaStopReason,
   RejectedProposal,
   SelectionState,
-  StopReason,
   ValEvaluationPolicy,
 } from "./types.js";
 
-export interface OptimizeOptions<Datum, Traj = unknown, Out = unknown> {
-  /** Starting text for every component under optimization. */
-  seedCandidate: Candidate;
-  /** Examples used to build minibatches and reflective feedback. */
-  trainset: readonly Datum[];
-  /** Instances the Pareto frontier is tracked over. Defaults to the trainset. */
-  valset?: readonly Datum[];
-  adapter: Adapter<Datum, Traj, Out>;
-  reflect: Reflector;
-  /** Hard ceiling on rollouts. Cached evaluations are not charged. */
-  maxMetricCalls: number;
+/**
+ * How GEPA searches. Immutable, reusable across runs, and free of both the
+ * component names and the datum type — the honest line between this and
+ * `GepaTask` is "type-free and stateless" rather than "how it searches".
+ *
+ * Holds no run state: the candidate pool, the budget spent, the position of the
+ * random stream, rejected proposals and merge bookkeeping all live in
+ * `GepaSnapshot`.
+ */
+export interface GepaConfig {
   minibatchSize?: number;
   maxIterations?: number;
   seed?: number;
   candidateSelector?: CandidateSelector;
-  componentSelector?: ComponentSelector;
-  batchSampler?: BatchSampler<Datum>;
   acceptance?: AcceptancePolicy;
-  /**
-   * Which validation instances each candidate is scored on. Defaults to a full
-   * sweep per accepted candidate, which is what makes the frontier exact.
-   */
-  valEvaluationPolicy?: ValEvaluationPolicy<Datum>;
-  /** Pass `false` to disable caching entirely. */
-  cache?: EvaluationCache | false;
-  instanceId?: (args: { datum: Datum; index: number }) => string;
   /**
    * System-aware merge. Enabled by default for multi-component candidates,
    * where two lineages can improve different components independently.
@@ -120,9 +114,13 @@ export interface OptimizeOptions<Datum, Traj = unknown, Out = unknown> {
    * calls are often the most expensive part of a run and the prompt carries
    * traces of unbounded size.
    */
-  reflection?: ReflectionLimits & {
+  reflection?: {
     /** Hard ceiling on reflection calls. The run stops once it is reached. */
     maxCalls?: number;
+    /** Records shown per component. The worst scoring ones are kept. */
+    maxRecords?: number;
+    /** Rough ceiling on the characters the records serialize to. */
+    maxCharacters?: number;
     /** Replaces the default prompt template. Ignored by custom proposers. */
     buildPrompt?: ReflectionPromptBuilder;
   };
@@ -138,18 +136,66 @@ export interface OptimizeOptions<Datum, Traj = unknown, Out = unknown> {
    * Costs memory proportional to the outputs of every accepted candidate.
    */
   trackBestOutputs?: boolean;
-  onEvent?: (event: OptimizerEvent) => void;
+  /** Rethrow adapter failures instead of skipping the iteration. Default true. */
+  raiseOnError?: boolean;
+}
+
+/**
+ * One run: what is being optimized, over what data, with what run-scoped state
+ * and IO.
+ *
+ * `seedCandidate` and `trainset` are the inference sites for the component
+ * names and the datum type; every other position is `NoInfer`, so it is checked
+ * against them instead of widening them.
+ */
+export interface GepaTask<
+  Datum,
+  Traj = unknown,
+  Out = unknown,
+  K extends string = string,
+> extends OptimizerTask<Datum, Traj, Out, K> {
+  adapter: GepaAdapter<Datum, Traj, Out, NoInfer<K>>;
+  reflect: TextModel;
+  componentSelector?: ComponentSelector<NoInfer<K>>;
+  batchSampler?: BatchSampler<NoInfer<Datum>>;
+  /**
+   * Which validation instances each candidate is scored on. Defaults to a full
+   * sweep per accepted candidate, which is what makes the frontier exact.
+   */
+  valEvaluationPolicy?: ValEvaluationPolicy<NoInfer<Datum>, NoInfer<K>>;
+  instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
+  /** Pass `false` to disable caching entirely. */
+  cache?: EvaluationCache | false;
+  onEvent?: (event: GepaEvent<NoInfer<K>>) => void;
   /**
    * Called with a resumable snapshot after the seed is scored and after every
    * iteration. Persist it and a killed run costs the last iteration, not all
    * of them.
    */
-  onCheckpoint?: (snapshot: OptimizerSnapshot) => void | Promise<void>;
+  onCheckpoint?: (snapshot: GepaSnapshot) => void | Promise<void>;
   /** Snapshot to continue from, instead of starting at the seed candidate. */
-  resumeFrom?: OptimizerSnapshot;
-  signal?: AbortSignal;
-  /** Rethrow adapter failures instead of skipping the iteration. Default true. */
-  raiseOnError?: boolean;
+  resumeFrom?: GepaSnapshot;
+}
+
+export interface GepaResult<
+  K extends string = string,
+  Out = unknown,
+> extends OptimizerResult<K, GepaStopReason, Out> {
+  bestCandidateId: number;
+  candidates: CandidateRecord<K>[];
+  paretoFrontier: CandidateRecord<K>[];
+  /**
+   * Per objective: the best value reached and every candidate that reached it.
+   * Absent when the adapter reports no objective scores.
+   */
+  perObjectiveBest?: Record<string, { score: number; candidateIds: number[] }>;
+  scoreMatrix: (number | undefined)[][];
+  iterations: number;
+  /** Calls made to the reflection model, which no metric budget covers. */
+  reflectionCalls: number;
+  cacheHits: number;
+  /** State as of the last iteration, ready to hand back as `resumeFrom`. */
+  snapshot: GepaSnapshot;
 }
 
 /** Scores plus, when the adapter reports them, their per-objective breakdown. */
@@ -170,18 +216,18 @@ interface EvaluatedBatch<Out> {
 }
 
 /** One mutation an iteration intends to make, drawn before any of them runs. */
-interface ProposalPlan<Datum> {
-  parent: CandidateRecord;
+interface ProposalPlan<Datum, K extends string> {
+  parent: CandidateRecord<K>;
   batch: Datum[];
   batchIds: string[];
-  componentsToUpdate: string[];
+  componentsToUpdate: K[];
 }
 
-interface ScreenedProposal<Datum> {
+interface ScreenedProposal<Datum, K extends string> {
   status: "screened";
-  plan: ProposalPlan<Datum>;
-  child: Candidate;
-  proposed: ComponentPatch;
+  plan: ProposalPlan<Datum, K>;
+  child: Candidate<K>;
+  proposed: ComponentPatch<K>;
   parentScore: number;
   childScore: number;
   /** Total score gained over the parent on its own minibatch. */
@@ -189,8 +235,8 @@ interface ScreenedProposal<Datum> {
   accepted: boolean;
 }
 
-type ProposalOutcome<Datum> =
-  | ScreenedProposal<Datum>
+type ProposalOutcome<Datum, K extends string> =
+  | ScreenedProposal<Datum, K>
   | { status: "skipped" }
   | { status: "budgetExhausted" }
   | { status: "reflectionExhausted" };
@@ -210,26 +256,44 @@ class BudgetExhausted extends Error {}
 
 class ReflectionBudgetExhausted extends Error {}
 
-export async function optimize<Datum, Traj = unknown, Out = unknown>(
-  options: OptimizeOptions<Datum, Traj, Out>,
-): Promise<OptimizationResult<Out>> {
+/**
+ * Reflective prompt evolution: propose, screen on a minibatch, promote what
+ * survives, and track the Pareto frontier of everything promoted.
+ *
+ * One instance is a configured search that can be run against any number of
+ * tasks. It holds no run state, so two runs never share a shuffle position, a
+ * budget or a candidate pool.
+ */
+export class GepaOptimizer implements Optimizer<GepaStopReason> {
+  readonly #config: GepaConfig;
+
+  constructor(config: GepaConfig = {}) {
+    assertGepaConfig(config);
+    this.#config = config;
+  }
+
+  async optimize<
+    Datum,
+    Traj = unknown,
+    Out = unknown,
+    const K extends string = string,
+  >(task: GepaTask<Datum, Traj, Out, K>): Promise<GepaResult<K, Out>> {
+    return runGepa({ config: this.#config, task });
+  }
+}
+
+async function runGepa<Datum, Traj, Out, K extends string>(args: {
+  config: GepaConfig;
+  task: GepaTask<Datum, Traj, Out, K>;
+}): Promise<GepaResult<K, Out>> {
+  const { config, task } = args;
+
   const {
-    seedCandidate,
-    trainset,
-    valset = trainset,
-    adapter,
-    reflect,
-    maxMetricCalls,
     minibatchSize = DEFAULT_MINIBATCH_SIZE,
     maxIterations = Number.POSITIVE_INFINITY,
     seed = 0,
     candidateSelector = paretoSelector(),
-    componentSelector = roundRobinComponentSelector(),
-    batchSampler = createEpochShuffledSampler<Datum>({ minibatchSize }),
     acceptance = improvementAcceptance(),
-    valEvaluationPolicy = fullEvaluationPolicy<Datum>(),
-    cache,
-    instanceId = defaultInstanceId,
     merge,
     skipPerfectScore = true,
     perfectScore = 1,
@@ -238,58 +302,39 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     reflection,
     checkpointCache = true,
     trackBestOutputs = false,
+    raiseOnError = true,
+  } = config;
+
+  // Every stateful default is built here rather than in the constructor: the
+  // epoch-shuffled sampler carries a shuffle position and the memory cache
+  // carries scores, so building either once per optimizer would make two runs
+  // share the state of the first.
+  const {
+    seedCandidate,
+    trainset,
+    valset = trainset,
+    adapter,
+    reflect,
+    maxMetricCalls,
+    componentSelector = roundRobinComponentSelector<K>(),
+    batchSampler = createEpochShuffledSampler<Datum>({ minibatchSize }),
+    valEvaluationPolicy = fullEvaluationPolicy<Datum, K>(),
+    cache,
+    instanceId = defaultInstanceId,
     onEvent,
     onCheckpoint,
     resumeFrom,
     signal,
-    raiseOnError = true,
-  } = options;
+  } = task;
 
+  const seedComponents = componentNames(seedCandidate);
   const mergeConfig = {
-    enabled: merge?.enabled ?? Object.keys(seedCandidate).length > 1,
+    enabled: merge?.enabled ?? seedComponents.length > 1,
     maxInvocations: merge?.maxInvocations ?? DEFAULT_MAX_MERGES,
   };
   const proposalsPerIteration = proposals?.perIteration ?? 1;
   const proposalConcurrency = proposals?.concurrency ?? 1;
   const survivorsPerIteration = keepCount(proposals?.selection ?? "all");
-
-  if (!Number.isInteger(proposalsPerIteration) || proposalsPerIteration < 1) {
-    throw new Error(
-      `proposals.perIteration must be a positive integer, received ${proposalsPerIteration}`,
-    );
-  }
-  if (!Number.isInteger(proposalConcurrency) || proposalConcurrency < 1) {
-    throw new Error(
-      `proposals.concurrency must be a positive integer, received ${proposalConcurrency}`,
-    );
-  }
-
-  // An empty minibatch is vacuously perfect, which skips the iteration body
-  // and charges nothing: uncaught, the default iteration ceiling turns that
-  // into a run that neither spends nor terminates.
-  if (!Number.isInteger(minibatchSize) || minibatchSize < 1) {
-    throw new Error(
-      `minibatchSize must be a positive integer, received ${minibatchSize}`,
-    );
-  }
-  if (!Number.isFinite(perfectScore)) {
-    throw new Error(
-      `perfectScore must be a finite number, received ${perfectScore}`,
-    );
-  }
-  if (!Number.isInteger(rejectedProposalMemory) || rejectedProposalMemory < 0) {
-    throw new Error(
-      `rejectedProposalMemory must be a non-negative integer, received ${rejectedProposalMemory}`,
-    );
-  }
-  if (
-    maxIterations !== Number.POSITIVE_INFINITY &&
-    (!Number.isInteger(maxIterations) || maxIterations < 0)
-  ) {
-    throw new Error(
-      `maxIterations must be a non-negative integer or Infinity, received ${maxIterations}`,
-    );
-  }
 
   if (trainset.length === 0) {
     throw new Error("optimize requires a non-empty trainset");
@@ -299,7 +344,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       "optimize requires a non-empty valset; the Pareto frontier is tracked over validation instances",
     );
   }
-  if (Object.keys(seedCandidate).length === 0) {
+  if (seedComponents.length === 0) {
     throw new Error(
       "optimize requires a seed candidate with at least one component",
     );
@@ -309,7 +354,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     cache === false ? undefined : (cache ?? createMemoryCache());
   const propose =
     adapter.proposeNewTexts?.bind(adapter) ??
-    createDefaultProposer({
+    createDefaultProposer<K>({
       ...(reflection?.buildPrompt === undefined
         ? {}
         : { buildPrompt: reflection.buildPrompt }),
@@ -354,7 +399,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * adapter's own proposer may make any number of calls, and a cap that only
    * counted proposals would not bound it.
    */
-  const countedReflect: Reflector = async (args) => {
+  const countedReflect: TextModel = async (args) => {
     if (
       reflection?.maxCalls !== undefined &&
       reflectionCalls >= reflection.maxCalls
@@ -368,14 +413,18 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   // Copied on the way in as well as on the way out: the caller owns the object
   // it persisted, and the run writes component cursors and rejections back into
   // exactly these structures.
-  const records: CandidateRecord[] = copyRecords(resumeFrom?.records ?? []);
+  const records: CandidateRecord<K>[] = restoreRecords({
+    records: resumeFrom?.records ?? [],
+    seedCandidate,
+  });
   const seenCandidates = new Set(
     records.map((record) => candidateFingerprint(record.candidate)),
   );
   const outputsByCandidate = new Map<number, (Out | undefined)[]>();
-  const rejectedProposals: Record<string, RejectedProposal[]> = copyRejections(
-    resumeFrom?.rejectedProposals ?? {},
-  );
+  const rejectedProposals = restoreRejections({
+    rejections: resumeFrom?.rejectedProposals ?? {},
+    components: seedComponents,
+  });
   let cacheHits = resumeFrom?.cacheHits ?? 0;
   let iteration = resumeFrom?.iteration ?? 0;
 
@@ -389,7 +438,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     evaluationCache?.set(key, cached);
   }
 
-  function emit(event: OptimizerEvent): void {
+  function emit(event: GepaEvent<K>): void {
     onEvent?.(event);
   }
 
@@ -397,7 +446,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * Copies everything mutable: a snapshot handed to `onCheckpoint` is a record
    * of that moment, and would otherwise keep growing as the run continues.
    */
-  function takeSnapshot(): OptimizerSnapshot {
+  function takeSnapshot(): GepaSnapshot {
     const cached = checkpointCache ? evaluationCache?.entries?.() : undefined;
     const samplerState = batchSampler.state?.();
 
@@ -410,7 +459,10 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       reflectionCalls,
       cacheHits,
       ...(samplerState === undefined ? {} : { sampler: samplerState }),
-      rejectedProposals: copyRejections(rejectedProposals),
+      rejectedProposals: snapshotRejections({
+        rejections: rejectedProposals,
+        components: seedComponents,
+      }),
       rngState: rng.state(),
       merge: {
         attempts: [...mergeAttempts],
@@ -435,7 +487,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * charging the budget only for instances that actually run.
    */
   async function evaluateCached(args: {
-    candidate: Candidate;
+    candidate: Candidate<K>;
     batch: readonly Datum[];
     ids: readonly string[];
     split: EvaluationSplit;
@@ -543,7 +595,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * rather than as a zero.
    */
   async function evaluateValidation(args: {
-    candidate: Candidate;
+    candidate: Candidate<K>;
     instances: readonly number[];
     phase: EvaluationPhase;
     candidateId: number | null;
@@ -582,7 +634,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   }
 
   /** The validation instances this candidate should be scored on. */
-  function selectValInstances(candidate: Candidate): number[] {
+  function selectValInstances(candidate: Candidate<K>): number[] {
     const selected = valEvaluationPolicy.selectInstances({
       valset,
       candidate,
@@ -600,7 +652,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   }
 
   function countUncached(args: {
-    candidate: Candidate;
+    candidate: Candidate<K>;
     ids: readonly string[];
     split: EvaluationSplit;
   }): number {
@@ -619,17 +671,17 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   }
 
   function addCandidate(args: {
-    candidate: Candidate;
+    candidate: Candidate<K>;
     parentIds: number[];
     evaluation: EvaluatedBatch<Out>;
     source: CandidateRecord["source"];
-    updatedComponents: string[];
-  }): CandidateRecord {
+    updatedComponents: K[];
+  }): CandidateRecord<K> {
     const objectiveScores = meanObjectives({
       rows: args.evaluation.objectiveScores,
       scores: args.evaluation.scores,
     });
-    const record: CandidateRecord = {
+    const record: CandidateRecord<K> = {
       id: records.length,
       candidate: args.candidate,
       parentIds: args.parentIds,
@@ -659,7 +711,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
 
   /** Keeps the most recent rejections per component, oldest dropped first. */
   function rememberRejection(args: {
-    proposed: ComponentPatch;
+    proposed: ComponentPatch<K>;
     parentScore: number;
     childScore: number;
   }): void {
@@ -668,7 +720,11 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     if (rejectedProposalMemory <= 0) {
       return;
     }
-    for (const [component, text] of Object.entries(proposed)) {
+    for (const component of componentNames(proposed)) {
+      const text = proposed[component];
+      if (text === undefined) {
+        continue;
+      }
       const history = rejectedProposals[component] ?? [];
       history.unshift({ text, parentScore, childScore });
       rejectedProposals[component] = history.slice(0, rejectedProposalMemory);
@@ -688,7 +744,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
 
   emit({
     type: "start",
-    components: Object.keys(seedCandidate),
+    components: seedComponents,
     valsetSize: valset.length,
   });
 
@@ -721,7 +777,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     await checkpoint();
   }
 
-  let stopReason: StopReason = "budgetExhausted";
+  let stopReason: GepaStopReason = "budgetExhausted";
 
   /**
    * Proposes and gates one merge. Returns "none" when nothing was tested — the
@@ -742,8 +798,8 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     }
 
     const [leftId, rightId] = proposal.parentIds;
-    const left = records[leftId] as CandidateRecord;
-    const right = records[rightId] as CandidateRecord;
+    const left = records[leftId] as CandidateRecord<K>;
+    const right = records[rightId] as CandidateRecord<K>;
 
     const subsample = selectMergeSubsample({
       scores1: left.instanceScores,
@@ -840,13 +896,13 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       candidateId: records.length,
     });
 
-    const ancestor = records[proposal.ancestorId] as CandidateRecord;
+    const ancestor = records[proposal.ancestorId] as CandidateRecord<K>;
     const record = addCandidate({
       candidate: proposal.candidate,
       parentIds: [...proposal.parentIds],
       evaluation,
       source: "merge",
-      updatedComponents: Object.keys(proposal.candidate).filter(
+      updatedComponents: componentNames(proposal.candidate).filter(
         (name) => proposal.candidate[name] !== ancestor.candidate[name],
       ),
     });
@@ -872,18 +928,18 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * inside the concurrent phase instead would make the whole run's trajectory
    * depend on which network call returned first.
    */
-  function planProposals(): ProposalPlan<Datum>[] {
+  function planProposals(): ProposalPlan<Datum, K>[] {
     const state: SelectionState = {
       scoreMatrix: records.map((record) => record.instanceScores),
       aggregateScores: records.map((record) => record.aggregateScore),
       objectiveScores: records.map((record) => record.objectiveScores),
     };
-    const plans: ProposalPlan<Datum>[] = [];
+    const plans: ProposalPlan<Datum, K>[] = [];
 
     for (let slot = 0; slot < proposalsPerIteration; slot += 1) {
       const parent = records[
         candidateSelector({ state, rng })
-      ] as CandidateRecord;
+      ] as CandidateRecord<K>;
       const batchIndices = batchSampler({
         trainset,
         // Each proposal takes the next minibatch in the sampler's schedule, so
@@ -904,7 +960,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       });
       parent.componentCursor =
         (parent.componentCursor + 1) %
-        Math.max(1, Object.keys(parent.candidate).length);
+        Math.max(1, componentNames(parent.candidate).length);
 
       plans.push({
         parent,
@@ -922,8 +978,8 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * the candidate pool, which is what makes overlapping it safe.
    */
   async function runProposal(
-    plan: ProposalPlan<Datum>,
-  ): Promise<ProposalOutcome<Datum>> {
+    plan: ProposalPlan<Datum, K>,
+  ): Promise<ProposalOutcome<Datum, K>> {
     const { parent, batch, batchIds, componentsToUpdate } = plan;
 
     // Traces are required for reflection, so this evaluation always runs and
@@ -979,7 +1035,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
       componentsToUpdate,
     });
 
-    let proposed: ComponentPatch;
+    let proposed: ComponentPatch<K>;
     try {
       proposed = await propose({
         candidate: parent.candidate,
@@ -997,18 +1053,18 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     }
 
     assertComponents({
-      names: Object.keys(proposed),
+      names: componentNames(proposed),
       candidate: parent.candidate,
       source: "proposeNewTexts",
     });
 
-    const child: Candidate = { ...parent.candidate, ...proposed };
+    const child: Candidate<K> = { ...parent.candidate, ...proposed };
     // Only the already-recorded pool is consulted here: it does not change
     // while proposals are in flight, whereas deduplicating siblings against
     // each other would hand the run to whichever reflection returned first.
     // That is settled in plan order when the outcomes are committed.
     const changed =
-      Object.keys(proposed).length > 0 &&
+      componentNames(proposed).length > 0 &&
       !seenCandidates.has(candidateFingerprint(child));
 
     emit({
@@ -1061,10 +1117,10 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
    * sweep. Returns a stop reason when the iteration ran the run out of budget.
    */
   async function commitProposals(
-    outcomes: readonly ProposalOutcome<Datum>[],
-  ): Promise<StopReason | undefined> {
-    let stop: StopReason | undefined;
-    const improved: ScreenedProposal<Datum>[] = [];
+    outcomes: readonly ProposalOutcome<Datum, K>[],
+  ): Promise<GepaStopReason | undefined> {
+    let stop: GepaStopReason | undefined;
+    const improved: ScreenedProposal<Datum, K>[] = [];
     /**
      * Children two siblings converged on. Resolved here rather than while the
      * proposals were in flight: the first one in plan order keeps the child,
@@ -1133,7 +1189,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     // the id their candidate will be recorded under.
     const baseId = records.length;
     const scheduled: {
-      outcome: ScreenedProposal<Datum>;
+      outcome: ScreenedProposal<Datum, K>;
       candidateId: number;
       instances: number[];
     }[] = [];
@@ -1200,7 +1256,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
         parentIds: [item.outcome.plan.parent.id],
         evaluation,
         source: "mutation",
-        updatedComponents: Object.keys(item.outcome.proposed),
+        updatedComponents: componentNames(item.outcome.proposed),
       });
       emit({
         type: "candidateAccepted",
@@ -1217,8 +1273,8 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
 
   /** The improving proposals an iteration keeps, in the order they were made. */
   function selectSurvivors(
-    improved: readonly ScreenedProposal<Datum>[],
-  ): ScreenedProposal<Datum>[] {
+    improved: readonly ScreenedProposal<Datum, K>[],
+  ): ScreenedProposal<Datum, K>[] {
     if (improved.length <= survivorsPerIteration) {
       return [...improved];
     }
@@ -1265,7 +1321,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     }
 
     const spentBeforeIteration = budget.spent();
-    let pendingStop: StopReason | undefined;
+    let pendingStop: GepaStopReason | undefined;
 
     try {
       // The cap is checked here as well as where merges are scheduled: a run
@@ -1332,7 +1388,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
   }
 
   const bestCandidateId = valEvaluationPolicy.bestCandidate(records);
-  const best = records[bestCandidateId] as CandidateRecord;
+  const best = records[bestCandidateId] as CandidateRecord<K>;
 
   emit({
     type: "finish",
@@ -1351,7 +1407,7 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     ...(bestOutputs === undefined ? {} : { bestOutputs }),
     candidates: records,
     paretoFrontier: collectDominatorIds(records).map(
-      (id) => records[id] as CandidateRecord,
+      (id) => records[id] as CandidateRecord<K>,
     ),
     ...(perObjectiveBest === undefined ? {} : { perObjectiveBest }),
     scoreMatrix: records.map((record) => [...record.instanceScores]),
@@ -1362,6 +1418,132 @@ export async function optimize<Datum, Traj = unknown, Out = unknown>(
     stopReason,
     snapshot: takeSnapshot(),
   };
+}
+
+/**
+ * Range checks on the search knobs, run at construction so a configuration
+ * that could never terminate is refused before a task is ever handed to it.
+ * Task-shaped checks stay in `runGepa`, where the data is.
+ */
+function assertGepaConfig(config: GepaConfig): void {
+  const {
+    minibatchSize = DEFAULT_MINIBATCH_SIZE,
+    maxIterations = Number.POSITIVE_INFINITY,
+    perfectScore = 1,
+    rejectedProposalMemory = DEFAULT_REJECTED_PROPOSAL_MEMORY,
+    proposals,
+  } = config;
+
+  const proposalsPerIteration = proposals?.perIteration ?? 1;
+  const proposalConcurrency = proposals?.concurrency ?? 1;
+
+  if (!Number.isInteger(proposalsPerIteration) || proposalsPerIteration < 1) {
+    throw new Error(
+      `proposals.perIteration must be a positive integer, received ${proposalsPerIteration}`,
+    );
+  }
+  if (!Number.isInteger(proposalConcurrency) || proposalConcurrency < 1) {
+    throw new Error(
+      `proposals.concurrency must be a positive integer, received ${proposalConcurrency}`,
+    );
+  }
+  keepCount(proposals?.selection ?? "all");
+
+  // An empty minibatch is vacuously perfect, which skips the iteration body
+  // and charges nothing: uncaught, the default iteration ceiling turns that
+  // into a run that neither spends nor terminates.
+  if (!Number.isInteger(minibatchSize) || minibatchSize < 1) {
+    throw new Error(
+      `minibatchSize must be a positive integer, received ${minibatchSize}`,
+    );
+  }
+  if (!Number.isFinite(perfectScore)) {
+    throw new Error(
+      `perfectScore must be a finite number, received ${perfectScore}`,
+    );
+  }
+  if (!Number.isInteger(rejectedProposalMemory) || rejectedProposalMemory < 0) {
+    throw new Error(
+      `rejectedProposalMemory must be a non-negative integer, received ${rejectedProposalMemory}`,
+    );
+  }
+  if (
+    maxIterations !== Number.POSITIVE_INFINITY &&
+    (!Number.isInteger(maxIterations) || maxIterations < 0)
+  ) {
+    throw new Error(
+      `maxIterations must be a non-negative integer or Infinity, received ${maxIterations}`,
+    );
+  }
+}
+
+/**
+ * The single narrowing point for a snapshot's candidate pool. A snapshot is
+ * JSON that left the process and came back with plain string keys, so every
+ * record is checked against the seed's components before it is read as one of
+ * them — behind the fingerprint check, which has already established that the
+ * snapshot belongs to this run.
+ */
+function restoreRecords<K extends string>(args: {
+  records: readonly CandidateRecord[];
+  seedCandidate: Candidate<K>;
+}): CandidateRecord<K>[] {
+  const { records, seedCandidate } = args;
+
+  const known = new Set<string>(componentNames(seedCandidate));
+  for (const record of records) {
+    const named = [
+      ...Object.keys(record.candidate),
+      ...record.updatedComponents,
+    ];
+    for (const name of named) {
+      if (!known.has(name)) {
+        throw new Error(
+          `checkpoint names the component "${name}", which the seed candidate does not have (${[...known].join(", ")})`,
+        );
+      }
+    }
+  }
+
+  return copyRecords(records) as CandidateRecord<K>[];
+}
+
+/**
+ * Rejections arrive from a snapshot keyed by plain strings. Reading them
+ * through the seed's own component names narrows them without an assertion,
+ * and drops anything the seed no longer has.
+ */
+function restoreRejections<K extends string>(args: {
+  rejections: Readonly<Record<string, RejectedProposal[]>>;
+  components: readonly K[];
+}): Partial<Record<K, RejectedProposal[]>> {
+  const { rejections, components } = args;
+
+  const restored: Partial<Record<K, RejectedProposal[]>> = {};
+  for (const component of components) {
+    const history = rejections[component];
+    if (history !== undefined) {
+      restored[component] = history.map((entry) => ({ ...entry }));
+    }
+  }
+  return restored;
+}
+
+/** The inverse: back to the plain string keys a snapshot is written with. */
+function snapshotRejections<K extends string>(args: {
+  rejections: Readonly<Partial<Record<K, RejectedProposal[]>>>;
+  components: readonly K[];
+}): Record<string, RejectedProposal[]> {
+  const { rejections, components } = args;
+
+  const copy: Record<string, RejectedProposal[]> = {};
+  for (const component of components) {
+    const history = rejections[component];
+    if (history !== undefined) {
+      copy[component] = history.map((entry) => ({ ...entry }));
+    }
+  }
+  return copy;
 }
 
 /**
@@ -1386,7 +1568,9 @@ function assertComponents(args: {
 }
 
 /** Copies everything a run mutates in place, so a snapshot never aliases one. */
-function copyRecords(records: readonly CandidateRecord[]): CandidateRecord[] {
+function copyRecords<K extends string>(
+  records: readonly CandidateRecord<K>[],
+): CandidateRecord<K>[] {
   return records.map((record) => ({
     ...record,
     parentIds: [...record.parentIds],
@@ -1396,17 +1580,6 @@ function copyRecords(records: readonly CandidateRecord[]): CandidateRecord[] {
       ? {}
       : { objectiveScores: { ...record.objectiveScores } }),
   }));
-}
-
-function copyRejections(
-  rejections: Readonly<Record<string, RejectedProposal[]>>,
-): Record<string, RejectedProposal[]> {
-  return Object.fromEntries(
-    Object.entries(rejections).map(([component, history]) => [
-      component,
-      history.map((entry) => ({ ...entry })),
-    ]),
-  );
 }
 
 /** How many improving proposals an iteration is allowed to keep. */
@@ -1464,7 +1637,7 @@ function meanObjectives(args: {
 
 function collectPerObjectiveBest(
   records: readonly CandidateRecord[],
-): OptimizationResult["perObjectiveBest"] {
+): GepaResult["perObjectiveBest"] {
   const bests = objectiveBests(records.map((record) => record.objectiveScores));
   if (Object.keys(bests).length === 0) {
     return undefined;
@@ -1528,9 +1701,11 @@ function runFingerprint(args: {
   });
 }
 
-function candidateFingerprint(candidate: Candidate): string {
+function candidateFingerprint<K extends string>(
+  candidate: Candidate<K>,
+): string {
   return JSON.stringify(
-    Object.keys(candidate)
+    componentNames(candidate)
       .sort()
       .map((name) => [name, candidate[name]]),
   );

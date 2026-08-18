@@ -1,8 +1,10 @@
-import type { Rng } from "./rng.js";
-import type { Candidate, CandidateRecord } from "./types.js";
+import type { Rng } from "../rng.js";
+import { componentNames } from "../types.js";
+import type { Candidate } from "../types.js";
+import type { CandidateRecord } from "./types.js";
 
-export interface MergeProposal {
-  candidate: Candidate;
+export interface MergeProposal<K extends string = string> {
+  candidate: Candidate<K>;
   parentIds: [number, number];
   ancestorId: number;
   /** Identifies the (parent, parent, ancestor) triplet this proposal came from. */
@@ -11,8 +13,8 @@ export interface MergeProposal {
   descriptionKey: string;
 }
 
-export interface ProposeMergeArgs {
-  records: readonly CandidateRecord[];
+export interface ProposeMergeArgs<K extends string = string> {
+  records: readonly CandidateRecord<K>[];
   /**
    * Candidates eligible to be merged — the Pareto dominators. Merging off the
    * frontier wastes rollouts on lineages nothing else needs.
@@ -39,7 +41,9 @@ const DEFAULT_MAX_ATTEMPTS = 10;
  * Returns a proposal to be *tested*, not an accepted candidate: the caller
  * still has to score it.
  */
-export function proposeMerge(args: ProposeMergeArgs): MergeProposal | null {
+export function proposeMerge<K extends string>(
+  args: ProposeMergeArgs<K>,
+): MergeProposal<K> | null {
   const {
     records,
     pool,
@@ -158,8 +162,8 @@ export function selectMergeSubsample(args: {
   return selected.slice(0, size);
 }
 
-function sampleTriplet(args: {
-  records: readonly CandidateRecord[];
+function sampleTriplet<K extends string>(args: {
+  records: readonly CandidateRecord<K>[];
   pool: readonly number[];
   rng: Rng;
   attempted: ReadonlySet<string>;
@@ -196,7 +200,9 @@ function sampleTriplet(args: {
       parentIds: [left, right],
       ancestorId: rng.weighted(
         eligible,
-        eligible.map((id) => (records[id] as CandidateRecord).aggregateScore),
+        eligible.map(
+          (id) => (records[id] as CandidateRecord<K>).aggregateScore,
+        ),
       ),
     };
   }
@@ -204,8 +210,8 @@ function sampleTriplet(args: {
   return null;
 }
 
-function isEligibleAncestor(args: {
-  records: readonly CandidateRecord[];
+function isEligibleAncestor<K extends string>(args: {
+  records: readonly CandidateRecord<K>[];
   left: number;
   right: number;
   ancestorId: number;
@@ -217,9 +223,9 @@ function isEligibleAncestor(args: {
     return false;
   }
 
-  const ancestor = records[ancestorId] as CandidateRecord;
-  const leftRecord = records[left] as CandidateRecord;
-  const rightRecord = records[right] as CandidateRecord;
+  const ancestor = records[ancestorId] as CandidateRecord<K>;
+  const leftRecord = records[left] as CandidateRecord<K>;
+  const rightRecord = records[right] as CandidateRecord<K>;
 
   // An ancestor that outscores a descendant is not a baseline the descendants
   // agree on, so recombining around it has no reason to help.
@@ -242,14 +248,14 @@ function isEligibleAncestor(args: {
  * lineages that rewrote every shared component give the merge nothing to
  * attribute an improvement to.
  */
-function hasComplementaryComponent(args: {
-  ancestor: Candidate;
-  left: Candidate;
-  right: Candidate;
+function hasComplementaryComponent<K extends string>(args: {
+  ancestor: Candidate<K>;
+  left: Candidate<K>;
+  right: Candidate<K>;
 }): boolean {
   const { ancestor, left, right } = args;
 
-  return Object.keys(ancestor).some((name) => {
+  return componentNames(ancestor).some((name) => {
     const base = ancestor[name];
     return (
       (base === left[name] || base === right[name]) &&
@@ -258,23 +264,23 @@ function hasComplementaryComponent(args: {
   });
 }
 
-function mergeComponents(args: {
-  records: readonly CandidateRecord[];
+function mergeComponents<K extends string>(args: {
+  records: readonly CandidateRecord<K>[];
   parentIds: [number, number];
   ancestorId: number;
   rng: Rng;
-}): { candidate: Candidate; sources: number[] } {
+}): { candidate: Candidate<K>; sources: number[] } {
   const { records, parentIds, ancestorId, rng } = args;
   const [leftId, rightId] = parentIds;
 
-  const ancestor = (records[ancestorId] as CandidateRecord).candidate;
-  const leftRecord = records[leftId] as CandidateRecord;
-  const rightRecord = records[rightId] as CandidateRecord;
+  const ancestor = (records[ancestorId] as CandidateRecord<K>).candidate;
+  const leftRecord = records[leftId] as CandidateRecord<K>;
+  const rightRecord = records[rightId] as CandidateRecord<K>;
 
-  const candidate: Candidate = { ...ancestor };
+  const candidate: Candidate<K> = { ...ancestor };
   const sources: number[] = [];
 
-  for (const name of Object.keys(ancestor)) {
+  for (const name of componentNames(ancestor)) {
     const base = ancestor[name];
     const leftText = leftRecord.candidate[name];
     const rightText = rightRecord.candidate[name];
@@ -288,21 +294,19 @@ function mergeComponents(args: {
       rng,
     });
 
-    candidate[name] = (records[sourceId] as CandidateRecord).candidate[
-      name
-    ] as string;
+    candidate[name] = (records[sourceId] as CandidateRecord<K>).candidate[name];
     sources.push(sourceId);
   }
 
   return { candidate, sources };
 }
 
-function resolveComponentSource(args: {
+function resolveComponentSource<K extends string>(args: {
   base: string | undefined;
   leftText: string | undefined;
   rightText: string | undefined;
-  leftRecord: CandidateRecord;
-  rightRecord: CandidateRecord;
+  leftRecord: CandidateRecord<K>;
+  rightRecord: CandidateRecord<K>;
   rng: Rng;
 }): number {
   const { base, leftText, rightText, leftRecord, rightRecord, rng } = args;
@@ -329,7 +333,9 @@ function resolveComponentSource(args: {
 }
 
 /** Strict ancestors of each record, keyed by record id. */
-function buildAncestries(records: readonly CandidateRecord[]): Set<number>[] {
+function buildAncestries<K extends string>(
+  records: readonly CandidateRecord<K>[],
+): Set<number>[] {
   const ancestries: Set<number>[] = [];
 
   for (const record of records) {
@@ -346,9 +352,9 @@ function buildAncestries(records: readonly CandidateRecord[]): Set<number>[] {
   return ancestries;
 }
 
-function fingerprint(candidate: Candidate): string {
+function fingerprint<K extends string>(candidate: Candidate<K>): string {
   return JSON.stringify(
-    Object.keys(candidate)
+    componentNames(candidate)
       .sort()
       .map((name) => [name, candidate[name]]),
   );

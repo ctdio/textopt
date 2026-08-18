@@ -1,4 +1,4 @@
-import type { Reflector } from "@ctdio/gepa";
+import type { TextModel } from "@ctdio/textopt";
 import { generateText, type LanguageModel } from "ai";
 
 /** Vendor-specific knobs, typed off `generateText` rather than re-declared. */
@@ -13,10 +13,10 @@ export interface ReflectorSettings {
 }
 
 /**
- * A `Reflector` is `text in, text out` — the whole provider seam is these eight
+ * A `TextModel` is `text in, text out` — the whole provider seam is these eight
  * lines. This one goes through the AI SDK, so it works with any provider the
  * SDK supports; a LangChain chat model, a raw SDK call, a local model, or a
- * hand-written rule would each be an equally valid `Reflector`.
+ * hand-written rule would each be an equally valid `TextModel`.
  *
  * Which model to use is a real decision, so examples make it explicitly rather
  * than sniffing the environment: the system under optimization should be the
@@ -24,7 +24,7 @@ export interface ReflectorSettings {
  * a frontier model, because it is the component doing the reasoning about
  * failure.
  */
-export function createReflector(settings: ReflectorSettings): Reflector {
+export function createReflector(settings: ReflectorSettings): TextModel {
   const { model, providerOptions = {}, maxOutputTokens = 8192 } = settings;
 
   return async ({ prompt, signal }) => {
@@ -49,8 +49,8 @@ export function requireApiKey(envVar: string): void {
     `${envVar} is not set.\n` +
       "This example names its models explicitly at the top of the file — edit them to use another provider.\n" +
       "The offline examples need no key at all:\n" +
-      "  pnpm --filter @ctdio/gepa-examples keyword\n" +
-      "  pnpm --filter @ctdio/gepa-examples pareto",
+      "  pnpm --filter @ctdio/textopt-examples keyword\n" +
+      "  pnpm --filter @ctdio/textopt-examples pareto",
   );
   process.exit(1);
 }

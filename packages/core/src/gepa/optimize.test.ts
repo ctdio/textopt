@@ -1,23 +1,24 @@
 import { describe, expect, test } from "vitest";
-import { createMemoryCache } from "./cache.js";
-import { optimize } from "./optimize.js";
-import {
-  fullEvaluationPolicy,
-  subsampledEvaluationPolicy,
-} from "./strategies.js";
+import { createMemoryCache } from "../cache.js";
+import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
   KEYWORD_EXAMPLES,
   createDegradingReflector,
   createKeywordAdapter,
   createKeywordReflector,
-} from "./testing.js";
+} from "../testing.js";
+import type { Candidate, EvaluationContext, TextModel } from "../types.js";
+import { GepaOptimizer } from "./optimize.js";
+import type { GepaResult } from "./optimize.js";
+import {
+  fullEvaluationPolicy,
+  subsampledEvaluationPolicy,
+} from "./strategies.js";
 import type {
-  Adapter,
-  EvaluationContext,
-  OptimizationResult,
-  OptimizerEvent,
-  OptimizerSnapshot,
-  Reflector,
+  GepaAdapter,
+  GepaEvent,
+  GepaSnapshot,
+  GepaStopReason,
 } from "./types.js";
 
 const SEED = { instruction: "Answer the user question." };
@@ -29,15 +30,35 @@ const PART_TASKS = ["alpha", "beta", "gamma"].flatMap((part) =>
 );
 
 describe("optimize", () => {
+  test("satisfies the Optimizer contract", async () => {
+    const gepa = new GepaOptimizer();
+    const contract: Optimizer<GepaStopReason> = gepa;
+
+    const result = await gepa.optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 30,
+    });
+    const outcome: OptimizerResult<"instruction", GepaStopReason, string> =
+      result;
+
+    expect(contract).toBe(gepa);
+    expect(outcome.bestScore).toBeGreaterThan(0);
+    expect(outcome.bestCandidate.instruction).not.toBe(SEED.instruction);
+  });
+
   test("improves the aggregate score over the seed candidate", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const seedRecord = result.candidates[0];
@@ -48,28 +69,30 @@ describe("optimize", () => {
   });
 
   test("reaches a perfect score on a fully learnable task", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.bestScore).toBe(1);
   });
 
   test("never spends more than the metric call budget", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 37,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.metricCalls).toBeLessThanOrEqual(37);
@@ -80,14 +103,15 @@ describe("optimize", () => {
     // Screening a child costs two minibatches; promoting it costs a full
     // validation sweep. A guard that only covers the screening spends the tail
     // of the budget on a child it then has to throw away.
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 1,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length + 3,
-      minibatchSize: 1,
-      seed: 1,
     });
 
     expect(result.metricCalls).toBe(KEYWORD_EXAMPLES.length);
@@ -99,17 +123,18 @@ describe("optimize", () => {
     // types.ts tells callers to hand `result.snapshot` straight back as
     // `resumeFrom`. If it runs ahead of the last checkpoint they persisted,
     // resuming from either one replays work the other already paid for.
-    const snapshots: OptimizerSnapshot[] = [];
+    const snapshots: GepaSnapshot[] = [];
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 1,
+      seed: 1,
+      proposals: { perIteration: 3, concurrency: 3 },
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length + 10,
-      minibatchSize: 1,
-      seed: 1,
-      proposals: { perIteration: 3, concurrency: 3 },
       onCheckpoint: (snapshot) => {
         snapshots.push(snapshot);
       },
@@ -120,14 +145,15 @@ describe("optimize", () => {
   });
 
   test("returns the seed when the budget only covers the seed evaluation", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.candidates).toHaveLength(1);
@@ -136,14 +162,15 @@ describe("optimize", () => {
   });
 
   test("records parent lineage for every accepted candidate", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const children = result.candidates.filter((record) => record.id !== 0);
@@ -156,14 +183,15 @@ describe("optimize", () => {
   });
 
   test("keeps one score per validation instance for every candidate", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     for (const row of result.scoreMatrix) {
@@ -173,14 +201,15 @@ describe("optimize", () => {
   });
 
   test("rejects children that do not beat their parent on the minibatch", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createDegradingReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.candidates).toHaveLength(1);
@@ -190,16 +219,17 @@ describe("optimize", () => {
   });
 
   test("emits a start event first and a finish event last", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
+    await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      minibatchSize: 2,
-      seed: 1,
       onEvent: (event) => events.push(event),
     });
 
@@ -213,14 +243,15 @@ describe("optimize", () => {
   test("stops when the abort signal fires", async () => {
     const controller = new AbortController();
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
-      minibatchSize: 2,
-      seed: 1,
       signal: controller.signal,
       onEvent: (event) => {
         if (event.type === "candidateAccepted") {
@@ -235,14 +266,15 @@ describe("optimize", () => {
 
   test("produces identical results for the same seed", async () => {
     const run = () =>
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 7,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 150,
-        minibatchSize: 2,
-        seed: 7,
       });
 
     const first = await run();
@@ -253,18 +285,62 @@ describe("optimize", () => {
     expect(second.candidates.length).toBe(first.candidates.length);
   });
 
+  test("keeps two runs of one optimizer independent", async () => {
+    // The batch sampler holds a shuffle position and the default cache holds
+    // scores. Building either once per optimizer instead of once per run would
+    // make the second run resume the first one's schedule and read the first
+    // one's scores.
+    const gepa = new GepaOptimizer({
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    });
+    const run = async () => {
+      const adapter = createKeywordAdapter();
+      const batches: string[] = [];
+
+      const result = await gepa.optimize({
+        seedCandidate: SEED,
+        trainset: KEYWORD_EXAMPLES,
+        adapter: {
+          ...adapter,
+          evaluate: (args) => {
+            if (args.captureTraces) {
+              batches.push(
+                args.batch.map((example) => example.question).join("|"),
+              );
+            }
+            return adapter.evaluate(args);
+          },
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 400,
+      });
+
+      return { batches, metricCalls: result.metricCalls };
+    };
+
+    const first = await run();
+    const second = await run();
+
+    expect(first.batches.length).toBeGreaterThan(0);
+    expect(second.batches).toEqual(first.batches);
+    expect(second.metricCalls).toBe(first.metricCalls);
+  });
+
   test("a shared cache makes an identical run cheaper", async () => {
     const cache = createMemoryCache();
     const run = () =>
-      optimize({
+      new GepaOptimizer({
+        maxIterations: 5,
+        minibatchSize: 2,
+        seed: 7,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 500,
-        maxIterations: 5,
-        minibatchSize: 2,
-        seed: 7,
         cache,
       });
 
@@ -277,15 +353,16 @@ describe("optimize", () => {
   });
 
   test("stops at maxIterations", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
-      maxIterations: 3,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.iterations).toBe(3);
@@ -295,15 +372,16 @@ describe("optimize", () => {
   test("uses a separate validation set when provided", async () => {
     const valset = KEYWORD_EXAMPLES.slice(0, 2);
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       valset,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 120,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     for (const row of result.scoreMatrix) {
@@ -312,14 +390,15 @@ describe("optimize", () => {
   });
 
   test("rotates across components of a multi-component candidate", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const updated = new Set(
@@ -331,14 +410,15 @@ describe("optimize", () => {
   });
 
   test("reports a pareto frontier drawn from evaluated candidates", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.paretoFrontier.length).toBeGreaterThan(0);
@@ -351,21 +431,22 @@ describe("optimize", () => {
     // Force the two first children to branch off the seed and improve
     // different components, which is exactly the situation system-aware merge
     // exists to exploit.
-    const result = await optimize({
-      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
-      adapter: createKeywordAdapter(),
-      reflect: createKeywordReflector(),
-      maxMetricCalls: 600,
+    const result = await new GepaOptimizer({
       maxIterations: 6,
       minibatchSize: 2,
       seed: 1,
       candidateSelector: ({ state }) =>
         state.aggregateScores.length < 3 ? 0 : state.aggregateScores.length - 1,
+      merge: { enabled: true },
+    }).optimize({
+      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 600,
       componentSelector: ({ iteration }) => [
         iteration % 2 === 0 ? "retriever" : "writer",
       ],
-      merge: { enabled: true },
     });
 
     const merged = result.candidates.filter(
@@ -380,25 +461,27 @@ describe("optimize", () => {
     // The merge gate is charged against the same budget as mutation, so a
     // merge that no longer fits must be skipped — not treated as the end of
     // the run while mutation iterations are still affordable.
-    const withMerge = await optimize({
-      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
-      adapter: createKeywordAdapter(),
-      reflect: createKeywordReflector(),
-      maxMetricCalls: 60,
+    const withMerge = await new GepaOptimizer({
       minibatchSize: 2,
       seed: 1,
       merge: { enabled: true },
-    });
-    const withoutMerge = await optimize({
+    }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
+    });
+    const withoutMerge = await new GepaOptimizer({
       minibatchSize: 2,
       seed: 1,
       merge: { enabled: false },
+    }).optimize({
+      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
     });
 
     // Enabling merge must not cost the run a meaningful slice of its budget.
@@ -408,21 +491,22 @@ describe("optimize", () => {
   });
 
   test("does not merge when merging is disabled", async () => {
-    const result = await optimize({
-      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
-      adapter: createKeywordAdapter(),
-      reflect: createKeywordReflector(),
-      maxMetricCalls: 600,
+    const result = await new GepaOptimizer({
       maxIterations: 6,
       minibatchSize: 2,
       seed: 1,
       candidateSelector: ({ state }) =>
         state.aggregateScores.length < 3 ? 0 : state.aggregateScores.length - 1,
+      merge: { enabled: false },
+    }).optimize({
+      seedCandidate: { retriever: "Find documents.", writer: "Answer." },
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 600,
       componentSelector: ({ cursor }) => [
         cursor % 2 === 0 ? "retriever" : "writer",
       ],
-      merge: { enabled: false },
     });
 
     expect(result.candidates.every((record) => record.source !== "merge")).toBe(
@@ -434,10 +518,10 @@ describe("optimize", () => {
     // Every acceptance schedules a merge, so a run that keeps improving builds
     // a backlog. The cap has to be checked where merges are triggered, not
     // only where they are scheduled, or the backlog spends straight past it.
-    const result = await optimize({
-      ...mergeRunwayOptions(),
+    const result = await new GepaOptimizer({
+      ...mergeRunwayConfig(),
       merge: { enabled: true, maxInvocations: 1 },
-    });
+    }).optimize(mergeRunwayTask());
 
     expect(
       result.candidates.filter((record) => record.source === "merge"),
@@ -445,10 +529,10 @@ describe("optimize", () => {
   });
 
   test("keeps merging while the invocation cap allows it", async () => {
-    const result = await optimize({
-      ...mergeRunwayOptions(),
+    const result = await new GepaOptimizer({
+      ...mergeRunwayConfig(),
       merge: { enabled: true, maxInvocations: 5 },
-    });
+    }).optimize(mergeRunwayTask());
 
     expect(
       result.candidates.filter((record) => record.source === "merge").length,
@@ -458,11 +542,13 @@ describe("optimize", () => {
   test("announces a merge iteration the way it announces a mutation", async () => {
     // Without an iterationStart, an event consumer watching a merge iteration
     // sees evaluations and an acceptance appear from nowhere.
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
-      ...mergeRunwayOptions(),
+    await new GepaOptimizer({
+      ...mergeRunwayConfig(),
       merge: { enabled: true },
+    }).optimize({
+      ...mergeRunwayTask(),
       onEvent: (event) => events.push(event),
     });
 
@@ -483,75 +569,44 @@ describe("optimize", () => {
 
   test("rejects an empty validation set", async () => {
     await expect(
-      optimize({
+      new GepaOptimizer({
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         valset: [],
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        seed: 1,
       }),
     ).rejects.toThrow(/valset/i);
   });
 
-  test("rejects a minibatch size below one", async () => {
+  test("rejects a minibatch size below one", () => {
     // An empty minibatch is vacuously perfect, so every iteration skips
     // straight past reflection and charges nothing: with the default
     // maxIterations the run never terminates and never spends.
-    await expect(
-      optimize({
-        seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
-        adapter: createKeywordAdapter(),
-        reflect: createKeywordReflector(),
-        maxMetricCalls: 100,
-        minibatchSize: 0,
-        seed: 1,
-      }),
-    ).rejects.toThrow(/minibatchSize/);
+    expect(() => new GepaOptimizer({ minibatchSize: 0, seed: 1 })).toThrow(
+      /minibatchSize/,
+    );
   });
 
-  test("rejects a non-finite perfect score", async () => {
-    await expect(
-      optimize({
-        seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
-        adapter: createKeywordAdapter(),
-        reflect: createKeywordReflector(),
-        maxMetricCalls: 100,
-        perfectScore: Number.NaN,
-        seed: 1,
-      }),
-    ).rejects.toThrow(/perfectScore/);
+  test("rejects a non-finite perfect score", () => {
+    expect(
+      () => new GepaOptimizer({ perfectScore: Number.NaN, seed: 1 }),
+    ).toThrow(/perfectScore/);
   });
 
-  test("rejects a negative rejected proposal memory", async () => {
-    await expect(
-      optimize({
-        seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
-        adapter: createKeywordAdapter(),
-        reflect: createKeywordReflector(),
-        maxMetricCalls: 100,
-        rejectedProposalMemory: -1,
-        seed: 1,
-      }),
-    ).rejects.toThrow(/rejectedProposalMemory/);
+  test("rejects a negative rejected proposal memory", () => {
+    expect(
+      () => new GepaOptimizer({ rejectedProposalMemory: -1, seed: 1 }),
+    ).toThrow(/rejectedProposalMemory/);
   });
 
-  test("rejects a fractional iteration ceiling", async () => {
-    await expect(
-      optimize({
-        seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
-        adapter: createKeywordAdapter(),
-        reflect: createKeywordReflector(),
-        maxMetricCalls: 100,
-        maxIterations: 1.5,
-        seed: 1,
-      }),
-    ).rejects.toThrow(/maxIterations/);
+  test("rejects a fractional iteration ceiling", () => {
+    expect(() => new GepaOptimizer({ maxIterations: 1.5, seed: 1 })).toThrow(
+      /maxIterations/,
+    );
   });
 
   test("scores validation instances separately from trainset instances sharing an id", async () => {
@@ -562,7 +617,10 @@ describe("optimize", () => {
     const valset: Instance[] = [{ split: "val" }];
     let revision = 0;
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset,
       valset,
@@ -602,8 +660,6 @@ describe("optimize", () => {
         return `\`\`\`\nrevision ${revision}\n\`\`\``;
       },
       maxMetricCalls: 60,
-      minibatchSize: 2,
-      seed: 1,
       instanceId: ({ index }) => String(index),
     });
 
@@ -619,7 +675,11 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+        raiseOnError: false,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -633,9 +693,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 1000,
-        minibatchSize: 2,
-        seed: 1,
-        raiseOnError: false,
       }),
     ).rejects.toThrow("tracing backend down");
   });
@@ -644,7 +701,12 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
     let errorEvents = 0;
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+      raiseOnError: false,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: {
@@ -655,10 +717,6 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      maxIterations: 3,
-      minibatchSize: 2,
-      seed: 1,
-      raiseOnError: false,
       onEvent: (event) => {
         if (event.type === "error") {
           errorEvents += 1;
@@ -674,16 +732,17 @@ describe("optimize", () => {
   });
 
   test("advances a component cursor per candidate rather than per iteration", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+      candidateSelector: () => 0,
+    }).optimize({
       seedCandidate: { alpha: "a", beta: "b", gamma: "c" },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createDegradingReflector(),
       maxMetricCalls: 400,
-      maxIterations: 2,
-      minibatchSize: 2,
-      seed: 1,
-      candidateSelector: () => 0,
     });
 
     // The seed was the parent twice, so its own cursor advanced twice —
@@ -694,7 +753,11 @@ describe("optimize", () => {
   test("skips reflection when the parent minibatch is already perfect", async () => {
     let reflectCalls = 0;
 
-    await optimize({
+    await new GepaOptimizer({
+      maxIterations: 5,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: {
@@ -721,9 +784,6 @@ describe("optimize", () => {
         return "```\nnever needed\n```";
       },
       maxMetricCalls: 100,
-      maxIterations: 5,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(reflectCalls).toBe(0);
@@ -735,7 +795,11 @@ describe("optimize", () => {
     // text, with no rollout ever attempted again.
     const cache = createMemoryCache();
     const run = () =>
-      optimize({
+      new GepaOptimizer({
+        maxIterations: 2,
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -749,9 +813,6 @@ describe("optimize", () => {
         },
         reflect: async () => "```\nunused\n```",
         maxMetricCalls: 100,
-        maxIterations: 2,
-        minibatchSize: 2,
-        seed: 1,
         cache,
       });
 
@@ -767,7 +828,11 @@ describe("optimize", () => {
     // it drops the candidate off that instance's front for the rest of the run.
     const adapter = createKeywordAdapter();
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: {
         instruction:
           "hold ten seconds ticket portal thirty days billing prorated",
@@ -791,9 +856,6 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      maxIterations: 1,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const seedRecord = result.candidates[0];
@@ -805,7 +867,11 @@ describe("optimize", () => {
   test("caches a score the adapter did not mark transient", async () => {
     const cache = createMemoryCache();
     const run = () =>
-      optimize({
+      new GepaOptimizer({
+        maxIterations: 2,
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -819,9 +885,6 @@ describe("optimize", () => {
         },
         reflect: async () => "```\nunused\n```",
         maxMetricCalls: 100,
-        maxIterations: 2,
-        minibatchSize: 2,
-        seed: 1,
         cache,
       });
 
@@ -835,15 +898,23 @@ describe("optimize", () => {
     // The patch is merged over the parent, so an unknown name does not fail —
     // it grows the candidate a component the system under optimization never
     // reads, and every descendant carries it.
+    //
+    // Annotating the seed as `Candidate` widens the component names back to
+    // `string`, which is what a JavaScript caller and a dynamically assembled
+    // candidate both get. The typo is a compile error without it, and the
+    // runtime guard is what covers everyone who lost the union.
+    const untyped: Candidate = SEED;
+
     await expect(
-      optimize({
-        seedCandidate: SEED,
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
+        seedCandidate: untyped,
         trainset: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
         componentSelector: () => ["instrution"],
       }),
     ).rejects.toThrow(/instrution/);
@@ -851,10 +922,14 @@ describe("optimize", () => {
 
   test("rejects a proposal that names a component the candidate lacks", async () => {
     const adapter = createKeywordAdapter();
+    const untyped: Candidate = SEED;
 
     await expect(
-      optimize({
-        seedCandidate: SEED,
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
+        seedCandidate: untyped,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
@@ -862,8 +937,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/instrution/);
   });
@@ -872,7 +945,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -885,8 +961,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/finite/i);
   });
@@ -895,7 +969,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -910,8 +987,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/index 1/i);
   });
@@ -922,7 +997,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -935,8 +1013,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/feedback/i);
   });
@@ -945,7 +1021,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -958,8 +1037,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/objectiveScores/i);
   });
@@ -968,7 +1045,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -980,8 +1060,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/outputs/i);
   });
@@ -990,7 +1068,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -1003,8 +1084,6 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow(/transient/i);
   });
@@ -1016,7 +1095,10 @@ describe("optimize", () => {
     const controller = new AbortController();
     const adapter = createKeywordAdapter();
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: {
@@ -1031,8 +1113,6 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
-      minibatchSize: 2,
-      seed: 1,
       signal: controller.signal,
     });
 
@@ -1044,7 +1124,10 @@ describe("optimize", () => {
     const adapter = createKeywordAdapter();
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: {
@@ -1055,21 +1138,20 @@ describe("optimize", () => {
         },
         reflect: createKeywordReflector(),
         maxMetricCalls: 50,
-        minibatchSize: 2,
-        seed: 1,
       }),
     ).rejects.toThrow("adapter exploded");
   });
 
   test("aggregates objective scores over the validation set", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const seedRecord = result.candidates[0];
@@ -1086,14 +1168,15 @@ describe("optimize", () => {
   });
 
   test("reports the leading candidates for each objective", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     const coverage = result.perObjectiveBest?.coverage;
@@ -1111,7 +1194,11 @@ describe("optimize", () => {
     // though the two numbers meant the same thing.
     const adapter = createKeywordAdapter();
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: {
@@ -1131,9 +1218,6 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      maxIterations: 1,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(Object.keys(result.candidates[0]?.objectiveScores ?? {})).toEqual([
@@ -1142,14 +1226,15 @@ describe("optimize", () => {
   });
 
   test("leaves objective reporting out when the adapter scores no objectives", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     expect(result.perObjectiveBest).toBeUndefined();
@@ -1158,20 +1243,22 @@ describe("optimize", () => {
 
   test("reuses cached objective scores instead of re-evaluating", async () => {
     const cache = createMemoryCache();
-    const options = {
+    const gepa = new GepaOptimizer({
+      maxIterations: 5,
+      minibatchSize: 2,
+      seed: 1,
+    });
+    const task = {
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
-      maxIterations: 5,
-      minibatchSize: 2,
-      seed: 1,
       cache,
     };
 
-    const first = await optimize(options);
-    const second = await optimize(options);
+    const first = await gepa.optimize(task);
+    const second = await gepa.optimize(task);
 
     expect(second.metricCalls).toBeLessThan(first.metricCalls);
     expect(second.candidates[0]?.objectiveScores).toEqual(
@@ -1180,15 +1267,16 @@ describe("optimize", () => {
   });
 
   test("scores only the validation instances the evaluation policy selects", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      maxIterations: 4,
-      minibatchSize: 2,
-      seed: 1,
       valEvaluationPolicy: {
         selectInstances: () => [0, 2],
         bestCandidate: () => 0,
@@ -1204,17 +1292,18 @@ describe("optimize", () => {
   });
 
   test("scores a candidate on fewer instances under a subsampling policy", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
-      maxIterations: 4,
-      minibatchSize: 2,
-      seed: 1,
       valEvaluationPolicy: subsampledEvaluationPolicy({ size: 2 }),
       onEvent: (event) => events.push(event),
     });
@@ -1243,7 +1332,11 @@ describe("optimize", () => {
   test("feeds rejected proposals back into later reflections", async () => {
     const prompts: string[] = [];
 
-    await optimize({
+    await new GepaOptimizer({
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
@@ -1252,9 +1345,6 @@ describe("optimize", () => {
         return "```\nno useful information\n```";
       },
       maxMetricCalls: 200,
-      maxIterations: 4,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     // The first proposal loses on the minibatch; every later reflection must
@@ -1268,7 +1358,12 @@ describe("optimize", () => {
     const prompts: string[] = [];
     let counter = 0;
 
-    await optimize({
+    await new GepaOptimizer({
+      maxIterations: 8,
+      minibatchSize: 2,
+      seed: 1,
+      rejectedProposalMemory: 2,
+    }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
@@ -1278,10 +1373,6 @@ describe("optimize", () => {
         return `\`\`\`\nuseless proposal ${counter}\n\`\`\``;
       },
       maxMetricCalls: 400,
-      maxIterations: 8,
-      minibatchSize: 2,
-      seed: 1,
-      rejectedProposalMemory: 2,
     });
 
     const last = prompts.at(-1) ?? "";
@@ -1292,17 +1383,18 @@ describe("optimize", () => {
   });
 
   test("emits a checkpoint for the seed and for every iteration", async () => {
-    const snapshots: OptimizerSnapshot[] = [];
+    const snapshots: GepaSnapshot[] = [];
 
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      maxIterations: 3,
-      minibatchSize: 2,
-      seed: 1,
       onCheckpoint: (snapshot) => {
         snapshots.push(snapshot);
       },
@@ -1315,17 +1407,18 @@ describe("optimize", () => {
   });
 
   test("survives a round trip through JSON", async () => {
-    let snapshot: OptimizerSnapshot | undefined;
+    let snapshot: GepaSnapshot | undefined;
 
-    await optimize({
+    await new GepaOptimizer({
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
-      maxIterations: 2,
-      minibatchSize: 2,
-      seed: 1,
       onCheckpoint: (taken) => {
         snapshot = taken;
       },
@@ -1335,28 +1428,30 @@ describe("optimize", () => {
   });
 
   test("resumes where the checkpoint left off", async () => {
-    const interrupted = await optimize({
+    const interrupted = await new GepaOptimizer({
+      maxIterations: 2,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
-      maxIterations: 2,
-      minibatchSize: 2,
-      seed: 1,
       cache: false,
     });
     const snapshot = interrupted.snapshot;
 
-    const resumed = await optimize({
+    const resumed = await new GepaOptimizer({
+      maxIterations: 6,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
-      maxIterations: 6,
-      minibatchSize: 2,
-      seed: 1,
       cache: false,
       resumeFrom: snapshot,
     });
@@ -1372,26 +1467,28 @@ describe("optimize", () => {
   });
 
   test("charges a resumed run for what the checkpoint already spent", async () => {
-    const interrupted = await optimize({
-      seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
-      adapter: createKeywordAdapter(),
-      reflect: createKeywordReflector(),
-      maxMetricCalls: 60,
+    const interrupted = await new GepaOptimizer({
       maxIterations: 2,
       minibatchSize: 2,
       seed: 1,
-      cache: false,
-    });
-
-    const resumed = await optimize({
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
+      cache: false,
+    });
+
+    const resumed = await new GepaOptimizer({
       minibatchSize: 2,
       seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
       cache: false,
       resumeFrom: interrupted.snapshot,
     });
@@ -1402,20 +1499,22 @@ describe("optimize", () => {
   });
 
   test("carries the evaluation cache in the checkpoint", async () => {
-    const options = {
+    const gepa = new GepaOptimizer({
+      maxIterations: 3,
+      minibatchSize: 2,
+      seed: 1,
+    });
+    const task = {
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
-      maxIterations: 3,
-      minibatchSize: 2,
-      seed: 1,
     };
 
-    const first = await optimize({ ...options, cache: createMemoryCache() });
-    const second = await optimize({
-      ...options,
+    const first = await gepa.optimize({ ...task, cache: createMemoryCache() });
+    const second = await gepa.optimize({
+      ...task,
       cache: createMemoryCache({ entries: first.snapshot.cache }),
     });
 
@@ -1425,27 +1524,29 @@ describe("optimize", () => {
   });
 
   test("restores the checkpoint's cache into a resumed run", async () => {
-    const interrupted = await optimize({
-      seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
-      adapter: createKeywordAdapter(),
-      reflect: createKeywordReflector(),
-      maxMetricCalls: 400,
+    const interrupted = await new GepaOptimizer({
       maxIterations: 3,
       minibatchSize: 2,
       seed: 1,
-    });
-    const cache = createMemoryCache();
-
-    await optimize({
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
+    });
+    const cache = createMemoryCache();
+
+    await new GepaOptimizer({
       maxIterations: 4,
       minibatchSize: 2,
       seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainset: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 400,
       cache,
       resumeFrom: interrupted.snapshot,
     });
@@ -1458,11 +1559,13 @@ describe("optimize", () => {
   });
 
   test("does not mutate the snapshot it resumes from", async () => {
-    const interrupted = await optimize(resumeOptions({ maxIterations: 2 }));
+    const interrupted = await new GepaOptimizer(
+      resumeConfig({ maxIterations: 2 }),
+    ).optimize(resumeTask());
     const pristine = JSON.parse(JSON.stringify(interrupted.snapshot));
 
-    await optimize({
-      ...resumeOptions({ maxIterations: 4 }),
+    await new GepaOptimizer(resumeConfig({ maxIterations: 4 })).optimize({
+      ...resumeTask(),
       resumeFrom: interrupted.snapshot,
     });
 
@@ -1472,14 +1575,20 @@ describe("optimize", () => {
   });
 
   test("resumes twice from one snapshot to the same result", async () => {
-    const interrupted = await optimize(resumeOptions({ maxIterations: 2 }));
+    const interrupted = await new GepaOptimizer(
+      resumeConfig({ maxIterations: 2 }),
+    ).optimize(resumeTask());
 
-    const first = await optimize({
-      ...resumeOptions({ maxIterations: 4 }),
+    const first = await new GepaOptimizer(
+      resumeConfig({ maxIterations: 4 }),
+    ).optimize({
+      ...resumeTask(),
       resumeFrom: interrupted.snapshot,
     });
-    const second = await optimize({
-      ...resumeOptions({ maxIterations: 4 }),
+    const second = await new GepaOptimizer(
+      resumeConfig({ maxIterations: 4 }),
+    ).optimize({
+      ...resumeTask(),
       resumeFrom: interrupted.snapshot,
     });
 
@@ -1488,68 +1597,73 @@ describe("optimize", () => {
   });
 
   test("refuses a checkpoint taken against a different seed candidate", async () => {
-    const other = await optimize({
+    const other = await new GepaOptimizer({
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: { instruction: "Something else entirely." },
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      maxIterations: 1,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
         resumeFrom: other.snapshot,
       }),
     ).rejects.toThrow(/checkpoint/i);
   });
 
   test("refuses a checkpoint taken against a different validation set", async () => {
-    const other = await optimize({
+    const other = await new GepaOptimizer({
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       valset: KEYWORD_EXAMPLES.slice(0, 2),
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      maxIterations: 1,
-      minibatchSize: 2,
-      seed: 1,
     });
 
     await expect(
-      optimize({
+      new GepaOptimizer({
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
         seedCandidate: SEED,
         trainset: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
-        minibatchSize: 2,
-        seed: 1,
         resumeFrom: other.snapshot,
       }),
     ).rejects.toThrow(/checkpoint/i);
   });
 
   test("reports the best candidate chosen by the evaluation policy", async () => {
-    const result = await optimize({
+    const result = await new GepaOptimizer({
+      maxIterations: 4,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
       seedCandidate: SEED,
       trainset: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 300,
-      maxIterations: 4,
-      minibatchSize: 2,
-      seed: 1,
       valEvaluationPolicy: {
         ...fullEvaluationPolicy(),
         // Deliberately perverse: the worst candidate wins.
@@ -1616,31 +1730,40 @@ describe("optimize", () => {
 });
 
 describe("optimize proposals", () => {
-  const options = {
+  const config = {
+    maxIterations: 4,
+    minibatchSize: 2,
+    seed: 1,
+  };
+  const task = {
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 2000,
-    maxIterations: 4,
-    minibatchSize: 2,
-    seed: 1,
   };
 
   test("makes one proposal per iteration by default", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({ ...options, onEvent: (event) => events.push(event) });
+    await new GepaOptimizer({
+      ...config,
+    }).optimize({
+      ...task,
+      onEvent: (event) => events.push(event),
+    });
 
     expect(countProposals(events, 0)).toBe(1);
   });
 
   test("makes several proposals in one iteration when asked", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3 },
+    }).optimize({
+      ...task,
       onEvent: (event) => events.push(event),
     });
 
@@ -1650,21 +1773,23 @@ describe("optimize proposals", () => {
   test("draws a different minibatch for each proposal in an iteration", async () => {
     const batches: string[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       maxIterations: 1,
+      proposals: { perIteration: 2 },
+    }).optimize({
+      ...task,
       adapter: {
-        ...options.adapter,
+        ...task.adapter,
         evaluate: (args) => {
           if (args.captureTraces) {
             batches.push(
               args.batch.map((example) => example.question).join("|"),
             );
           }
-          return options.adapter.evaluate(args);
+          return task.adapter.evaluate(args);
         },
       },
-      proposals: { perIteration: 2 },
     });
 
     expect(batches).toHaveLength(2);
@@ -1672,11 +1797,13 @@ describe("optimize proposals", () => {
   });
 
   test("accepts at most one candidate per iteration under best selection", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3, selection: "best" },
+    }).optimize({
+      ...task,
       onEvent: (event) => events.push(event),
     });
 
@@ -1690,11 +1817,13 @@ describe("optimize proposals", () => {
   });
 
   test("accepts several candidates in one iteration under all selection", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3, selection: "all" },
+    }).optimize({
+      ...task,
       onEvent: (event) => events.push(event),
     });
 
@@ -1712,12 +1841,14 @@ describe("optimize proposals", () => {
   });
 
   test("keeps the strongest of several proposals under best selection", async () => {
-    const events: OptimizerEvent[] = [];
+    const events: GepaEvent[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       maxIterations: 1,
       proposals: { perIteration: 3, selection: "best" },
+    }).optimize({
+      ...task,
       onEvent: (event) => events.push(event),
     });
 
@@ -1738,10 +1869,12 @@ describe("optimize proposals", () => {
   test("evaluates concurrent proposals at the same time", async () => {
     const tracked = withOverlapTracking(createKeywordAdapter());
 
-    await optimize({
-      ...options,
-      adapter: tracked.adapter,
+    await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3, concurrency: 3 },
+    }).optimize({
+      ...task,
+      adapter: tracked.adapter,
     });
 
     expect(tracked.maxInFlight()).toBeGreaterThan(1);
@@ -1750,25 +1883,31 @@ describe("optimize proposals", () => {
   test("runs proposals one at a time by default", async () => {
     const tracked = withOverlapTracking(createKeywordAdapter());
 
-    await optimize({
-      ...options,
-      adapter: tracked.adapter,
+    await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3 },
+    }).optimize({
+      ...task,
+      adapter: tracked.adapter,
     });
 
     expect(tracked.maxInFlight()).toBe(1);
   });
 
   test("reaches the same candidates whether or not proposals overlap", async () => {
-    const serial = await optimize({
-      ...options,
-      adapter: createKeywordAdapter(),
+    const serial = await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3, concurrency: 1 },
-    });
-    const concurrent = await optimize({
-      ...options,
+    }).optimize({
+      ...task,
       adapter: createKeywordAdapter(),
+    });
+    const concurrent = await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 3, concurrency: 3 },
+    }).optimize({
+      ...task,
+      adapter: createKeywordAdapter(),
     });
 
     expect(concurrent.candidates.map((record) => record.candidate)).toEqual(
@@ -1778,11 +1917,13 @@ describe("optimize proposals", () => {
   });
 
   test("never spends past the budget when proposals overlap", async () => {
-    const result = await optimize({
-      ...options,
-      maxMetricCalls: 43,
+    const result = await new GepaOptimizer({
+      ...config,
       maxIterations: 50,
       proposals: { perIteration: 4, concurrency: 4 },
+    }).optimize({
+      ...task,
+      maxMetricCalls: 43,
     });
 
     expect(result.metricCalls).toBeLessThanOrEqual(43);
@@ -1800,12 +1941,7 @@ describe("optimize proposals", () => {
       const parents = [0, 0, 1, 2];
       let pick = -1;
 
-      return optimize({
-        seedCandidate: { instruction: "" },
-        trainset: MARK_EXAMPLES,
-        adapter: createMarkAdapter(),
-        reflect: createMarkReflector(pace),
-        maxMetricCalls: 1000,
+      return new GepaOptimizer({
         maxIterations: 2,
         minibatchSize: 2,
         seed: 1,
@@ -1813,10 +1949,16 @@ describe("optimize proposals", () => {
           pick += 1;
           return parents[pick] ?? 0;
         },
+        proposals: { perIteration: 2, concurrency: 2 },
+      }).optimize({
+        seedCandidate: { instruction: "" },
+        trainset: MARK_EXAMPLES,
+        adapter: createMarkAdapter(),
+        reflect: createMarkReflector(pace),
+        maxMetricCalls: 1000,
         // Both siblings of the colliding iteration diagnose the same failures.
         batchSampler: ({ iteration }) =>
           iteration < 2 ? [iteration, 2] : [0, 1],
-        proposals: { perIteration: 2, concurrency: 2 },
       });
     };
 
@@ -1839,8 +1981,13 @@ describe("optimize proposals", () => {
     const contexts: EvaluationContext[] = [];
     let selections = -1;
 
-    const result = await optimize({
-      ...options,
+    const result = await new GepaOptimizer({
+      ...config,
+      maxIterations: 10,
+      minibatchSize: 1,
+      proposals: { perIteration: 3, concurrency: 3 },
+    }).optimize({
+      ...task,
       adapter: {
         ...adapter,
         evaluate: (args) => {
@@ -1849,10 +1996,7 @@ describe("optimize proposals", () => {
         },
       },
       maxMetricCalls: KEYWORD_EXAMPLES.length + 10,
-      maxIterations: 10,
-      minibatchSize: 1,
       cache: false,
-      proposals: { perIteration: 3, concurrency: 3 },
       // Later survivors are cheaper to sweep than earlier ones, so a survivor
       // can still be affordable after the one before it was not.
       valEvaluationPolicy: {
@@ -1875,35 +2019,44 @@ describe("optimize proposals", () => {
     }
   });
 
-  test("rejects a proposal count below one", async () => {
-    await expect(
-      optimize({ ...options, proposals: { perIteration: 0 } }),
-    ).rejects.toThrow(/perIteration/);
+  test("rejects a proposal count below one", () => {
+    expect(
+      () => new GepaOptimizer({ ...config, proposals: { perIteration: 0 } }),
+    ).toThrow(/perIteration/);
   });
 });
 
 describe("optimize reflection budget", () => {
-  const options = {
+  const config = {
+    maxIterations: 20,
+    minibatchSize: 2,
+    seed: 1,
+  };
+  const task = {
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 2000,
-    maxIterations: 20,
-    minibatchSize: 2,
-    seed: 1,
   };
 
   test("counts the reflection calls a run made", async () => {
-    const result = await optimize({ ...options, maxIterations: 3 });
+    const result = await new GepaOptimizer({
+      ...config,
+      maxIterations: 3,
+    }).optimize({
+      ...task,
+    });
 
     expect(result.reflectionCalls).toBeGreaterThan(0);
   });
 
   test("stops once the reflection call budget is spent", async () => {
-    const result = await optimize({
-      ...options,
+    const result = await new GepaOptimizer({
+      ...config,
       reflection: { maxCalls: 2 },
+    }).optimize({
+      ...task,
     });
 
     expect(result.reflectionCalls).toBe(2);
@@ -1911,10 +2064,12 @@ describe("optimize reflection budget", () => {
   });
 
   test("never exceeds the reflection budget with overlapping proposals", async () => {
-    const result = await optimize({
-      ...options,
+    const result = await new GepaOptimizer({
+      ...config,
       proposals: { perIteration: 4, concurrency: 4 },
       reflection: { maxCalls: 3 },
+    }).optimize({
+      ...task,
     });
 
     expect(result.reflectionCalls).toBe(3);
@@ -1923,12 +2078,19 @@ describe("optimize reflection budget", () => {
   test("carries reflection spend across a resumed run", async () => {
     // A reflector that never improves anything keeps every iteration
     // reflecting, so the count is a clean measure of what each run spent.
-    const persistent = { ...options, reflect: createDegradingReflector() };
-    const interrupted = await optimize({ ...persistent, maxIterations: 2 });
+    const persistentTask = { ...task, reflect: createDegradingReflector() };
+    const interrupted = await new GepaOptimizer({
+      ...config,
+      maxIterations: 2,
+    }).optimize({
+      ...persistentTask,
+    });
 
-    const resumed = await optimize({
-      ...persistent,
+    const resumed = await new GepaOptimizer({
+      ...config,
       maxIterations: 4,
+    }).optimize({
+      ...persistentTask,
       resumeFrom: interrupted.snapshot,
     });
 
@@ -1943,11 +2105,13 @@ describe("optimize reflection budget", () => {
   test("shows the reflection model at most maxRecords examples", async () => {
     const prompts: string[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       maxIterations: 2,
       minibatchSize: 4,
       reflection: { maxRecords: 1 },
+    }).optimize({
+      ...task,
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
         return createKeywordReflector()({ prompt });
@@ -1963,13 +2127,15 @@ describe("optimize reflection budget", () => {
   test("uses a supplied reflection prompt template", async () => {
     const prompts: string[] = [];
 
-    await optimize({
-      ...options,
+    await new GepaOptimizer({
+      ...config,
       maxIterations: 1,
       reflection: {
         buildPrompt: ({ componentName, currentText }) =>
           `improve ${componentName}: ${currentText}`,
       },
+    }).optimize({
+      ...task,
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
         return "```\nhold ten seconds\n```";
@@ -1981,25 +2147,32 @@ describe("optimize reflection budget", () => {
 });
 
 describe("optimize outputs", () => {
-  const options = {
+  const config = {
+    maxIterations: 4,
+    minibatchSize: 2,
+    seed: 1,
+  };
+  const task = {
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
-    maxIterations: 4,
-    minibatchSize: 2,
-    seed: 1,
   };
 
   test("omits validation outputs unless tracking is on", async () => {
-    const result = await optimize(options);
+    const result = await new GepaOptimizer(config).optimize(task);
 
     expect(result.bestOutputs).toBeUndefined();
   });
 
   test("returns the best candidate's output for every validation instance", async () => {
-    const result = await optimize({ ...options, trackBestOutputs: true });
+    const result = await new GepaOptimizer({
+      ...config,
+      trackBestOutputs: true,
+    }).optimize({
+      ...task,
+    });
 
     expect(result.bestOutputs).toHaveLength(KEYWORD_EXAMPLES.length);
     for (const output of result.bestOutputs ?? []) {
@@ -2009,14 +2182,16 @@ describe("optimize outputs", () => {
 });
 
 describe("optimize checkpoint fidelity", () => {
-  const options = {
+  const config = {
+    minibatchSize: 2,
+    seed: 1,
+  };
+  const task = {
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
-    minibatchSize: 2,
-    seed: 1,
   };
 
   test("keeps the run fingerprint small however large the dataset is", async () => {
@@ -2025,10 +2200,12 @@ describe("optimize checkpoint fidelity", () => {
       required: ["hold"],
     }));
 
-    const result = await optimize({
-      ...options,
-      trainset: large,
+    const result = await new GepaOptimizer({
+      ...config,
       maxIterations: 1,
+    }).optimize({
+      ...task,
+      trainset: large,
       maxMetricCalls: 1000,
     });
 
@@ -2038,10 +2215,12 @@ describe("optimize checkpoint fidelity", () => {
   });
 
   test("omits the cache from checkpoints when asked", async () => {
-    const result = await optimize({
-      ...options,
+    const result = await new GepaOptimizer({
+      ...config,
       maxIterations: 2,
       checkpointCache: false,
+    }).optimize({
+      ...task,
     });
 
     expect(result.snapshot.cache).toBeUndefined();
@@ -2065,12 +2244,16 @@ describe("optimize checkpoint fidelity", () => {
 /** Runs the keyword task and records every traced minibatch in order. */
 async function recordMinibatches(args: {
   maxIterations: number;
-  resumeFrom?: OptimizerSnapshot;
-}): Promise<{ batches: string[]; result: OptimizationResult }> {
+  resumeFrom?: GepaSnapshot;
+}): Promise<{ batches: string[]; result: GepaResult }> {
   const adapter = createKeywordAdapter();
   const batches: string[] = [];
 
-  const result = await optimize({
+  const result = await new GepaOptimizer({
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+  }).optimize({
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: {
@@ -2086,9 +2269,6 @@ async function recordMinibatches(args: {
     },
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
-    maxIterations: args.maxIterations,
-    minibatchSize: 2,
-    seed: 1,
     ...(args.resumeFrom === undefined ? {} : { resumeFrom: args.resumeFrom }),
   });
 
@@ -2100,13 +2280,8 @@ async function recordMinibatches(args: {
  * improved different components stay complementary for long enough that a run
  * has many merges available to it.
  */
-function mergeRunwayOptions() {
+function mergeRunwayConfig() {
   return {
-    seedCandidate: { alpha: "", beta: "", gamma: "" },
-    trainset: PART_TASKS,
-    adapter: createPartAdapter(),
-    reflect: createAppendingReflector(),
-    maxMetricCalls: 5000,
     maxIterations: 40,
     minibatchSize: 3,
     seed: 1,
@@ -2114,7 +2289,17 @@ function mergeRunwayOptions() {
   };
 }
 
-function createPartAdapter(): Adapter<
+function mergeRunwayTask() {
+  return {
+    seedCandidate: { alpha: "", beta: "", gamma: "" },
+    trainset: PART_TASKS,
+    adapter: createPartAdapter(),
+    reflect: createAppendingReflector(),
+    maxMetricCalls: 5000,
+  };
+}
+
+function createPartAdapter(): GepaAdapter<
   (typeof PART_TASKS)[number],
   null,
   string
@@ -2148,7 +2333,7 @@ function createPartAdapter(): Adapter<
 }
 
 /** Adds one mark to whichever component it is asked to rewrite. */
-function createAppendingReflector(): Reflector {
+function createAppendingReflector(): TextModel {
   return async ({ prompt }) => {
     const current =
       /<current_instruction>\n([\s\S]*?)\n<\/current_instruction>/.exec(
@@ -2163,16 +2348,21 @@ function createAppendingReflector(): Reflector {
  * A run whose every proposal loses, over a candidate with enough components to
  * move a cursor — the two pieces of snapshot state a resumed run writes back.
  */
-function resumeOptions(args: { maxIterations: number }) {
+function resumeConfig(args: { maxIterations: number }) {
+  return {
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+  };
+}
+
+function resumeTask() {
   return {
     seedCandidate: { alpha: "a", beta: "b", gamma: "c" },
     trainset: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createAlternatingReflector(),
     maxMetricCalls: 400,
-    maxIterations: args.maxIterations,
-    minibatchSize: 2,
-    seed: 1,
   };
 }
 
@@ -2181,7 +2371,7 @@ function resumeOptions(args: { maxIterations: number }) {
  * accumulates rejected proposals — an always-improving reflector records no
  * rejections, and an always-degrading one never moves the frontier.
  */
-function createAlternatingReflector(): Reflector {
+function createAlternatingReflector(): TextModel {
   const improving = createKeywordReflector();
   let calls = 0;
 
@@ -2195,7 +2385,7 @@ function createAlternatingReflector(): Reflector {
 
 /** Everything about a run that a reproducible engine must reach identically. */
 function lineageOf(
-  result: OptimizationResult,
+  result: GepaResult,
 ): [number, number[], Record<string, string>][] {
   return result.candidates.map((record) => [
     record.id,
@@ -2208,7 +2398,7 @@ function lineageOf(
  * Scores a candidate on how many marks it carries, so two candidates with the
  * same number of marks score identically however differently they are written.
  */
-function createMarkAdapter(): Adapter<
+function createMarkAdapter(): GepaAdapter<
   (typeof MARK_EXAMPLES)[number],
   null,
   string
@@ -2245,7 +2435,7 @@ function createMarkAdapter(): Adapter<
  * two siblings of one iteration collide. A pure function of its prompt: `pace`
  * decides only how long the call takes, which nothing may depend on.
  */
-function createMarkReflector(pace: (prompt: string) => number): Reflector {
+function createMarkReflector(pace: (prompt: string) => number): TextModel {
   return async ({ prompt }) => {
     const marks = Number(/have (\d+) of/.exec(prompt)?.[1] ?? 0);
     const needs = [...prompt.matchAll(/have \d+ of (\d+)/g)]
@@ -2260,7 +2450,7 @@ function createMarkReflector(pace: (prompt: string) => number): Reflector {
 }
 
 function countProposals(
-  events: readonly OptimizerEvent[],
+  events: readonly GepaEvent[],
   iteration: number,
 ): number {
   return events.filter(
@@ -2270,8 +2460,8 @@ function countProposals(
 
 /** Wraps an adapter to observe how many evaluations are ever in flight at once. */
 function withOverlapTracking<Datum, Traj, Out>(
-  adapter: Adapter<Datum, Traj, Out>,
-): { adapter: Adapter<Datum, Traj, Out>; maxInFlight: () => number } {
+  adapter: GepaAdapter<Datum, Traj, Out>,
+): { adapter: GepaAdapter<Datum, Traj, Out>; maxInFlight: () => number } {
   let inFlight = 0;
   let peak = 0;
 
@@ -2300,7 +2490,11 @@ async function recordRunContexts(args: {
   const adapter = createKeywordAdapter();
   const contexts: EvaluationContext[] = [];
 
-  await optimize({
+  await new GepaOptimizer({
+    maxIterations: args.maxIterations,
+    minibatchSize: 2,
+    seed: 1,
+  }).optimize({
     seedCandidate: SEED,
     trainset: KEYWORD_EXAMPLES,
     adapter: {
@@ -2312,9 +2506,6 @@ async function recordRunContexts(args: {
     },
     reflect: createKeywordReflector(),
     maxMetricCalls: 300,
-    maxIterations: args.maxIterations,
-    minibatchSize: 2,
-    seed: 1,
   });
 
   return contexts;
@@ -2324,7 +2515,7 @@ async function recordRunContexts(args: {
  * The keyword task scored on two competing objectives: coverage rewards saying
  * more, brevity rewards saying less. A candidate cannot lead both.
  */
-function createObjectiveAdapter(): Adapter<
+function createObjectiveAdapter(): GepaAdapter<
   (typeof KEYWORD_EXAMPLES)[number],
   unknown,
   string

@@ -1,6 +1,6 @@
 /**
- * Braintrust as the eval layer: autoevals scorers become the GEPA metric, and
- * every rollout is logged as an experiment row.
+ * Braintrust as the eval layer: autoevals scorers become the optimizer's
+ * metric, and every rollout is logged as an experiment row.
  *
  * Two independent pieces, usable separately:
  *   - `createBraintrustScorer` turns a list of autoevals scorers into one
@@ -12,16 +12,16 @@
  * Without BRAINTRUST_API_KEY it prints the events instead of shipping them, so
  * the example still runs.
  *
- *   OPENAI_API_KEY=... pnpm --filter @ctdio/gepa-examples braintrust
+ *   OPENAI_API_KEY=... pnpm --filter @ctdio/textopt-examples braintrust
  */
 import { openai } from "@ai-sdk/openai";
-import { optimize } from "@ctdio/gepa";
-import { createAiSdkAdapter } from "@ctdio/gepa-ai-sdk";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { createAiSdkAdapter } from "@ctdio/textopt-ai-sdk";
 import {
   createBraintrustScorer,
   withBraintrustLogging,
   type BraintrustLoggerLike,
-} from "@ctdio/gepa-braintrust";
+} from "@ctdio/textopt-braintrust";
 import { generateText } from "ai";
 import { ExactMatch, Levenshtein } from "autoevals";
 import { initLogger } from "braintrust";
@@ -44,7 +44,7 @@ const reflect = createReflector({
 
 /**
  * Three objectives on one rollout: the label must be right (weighted heaviest),
- * near-misses get partial credit, and the answer must be a bare label. GEPA
+ * near-misses get partial credit, and the answer must be a bare label. The run
  * optimizes the weighted mean but keeps every component score for inspection.
  */
 const scoreTicket = createBraintrustScorer<string>({
@@ -73,7 +73,7 @@ const braintrustLogger: BraintrustLoggerLike =
         log: (event) =>
           console.log("    [braintrust:offline]", JSON.stringify(event.scores)),
       }
-    : initLogger({ projectName: "gepa-examples" });
+    : initLogger({ projectName: "textopt-examples" });
 
 const adapter = withBraintrustLogging({
   adapter: createAiSdkAdapter<Ticket>({
@@ -122,12 +122,17 @@ const adapter = withBraintrustLogging({
     concurrency: 4,
   }),
   logger: braintrustLogger,
-  metadata: { experiment: "gepa-ticket-routing" },
+  metadata: { experiment: "textopt-ticket-routing" },
   toInput: (datum) => datum.text,
   toExpected: (datum) => datum.label,
 });
 
-const result = await optimize({
+const gepa = new GepaOptimizer({
+  minibatchSize: 3,
+  seed: 11,
+});
+
+const result = await gepa.optimize({
   seedCandidate: {
     system: "Classify the support ticket. Answer with one word.",
   },
@@ -136,8 +141,6 @@ const result = await optimize({
   adapter,
   reflect,
   maxMetricCalls: 150,
-  minibatchSize: 3,
-  seed: 11,
   instanceId: ({ datum }) => datum.id,
   onEvent: logEvent,
 });

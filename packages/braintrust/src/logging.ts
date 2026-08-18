@@ -1,4 +1,4 @@
-import type { Adapter } from "@ctdio/gepa";
+import type { Adapter, EvaluateArgs } from "@ctdio/textopt";
 
 export interface BraintrustEvent {
   input?: unknown;
@@ -16,8 +16,21 @@ export interface BraintrustLoggerLike {
   log(event: BraintrustEvent): unknown;
 }
 
-export interface BraintrustLoggingOptions<Datum, Traj, Out> {
-  adapter: Adapter<Datum, Traj, Out>;
+export interface BraintrustLoggingOptions<
+  Datum,
+  Traj,
+  Out,
+  K extends string,
+  Wrapped,
+> {
+  /**
+   * `Wrapped` carries whatever the adapter has beyond `evaluate` — a GEPA
+   * adapter's `makeReflectiveDataset`, say — so the decorated adapter is still
+   * accepted everywhere the undecorated one was. `K` is inferred from the
+   * adapter's own component names, so decorating one does not widen them back
+   * to `string`.
+   */
+  adapter: Wrapped & Adapter<Datum, Traj, Out, K>;
   logger: BraintrustLoggerLike;
   metadata?: Record<string, unknown>;
   toInput?: (datum: Datum) => unknown;
@@ -31,15 +44,21 @@ export interface BraintrustLoggingOptions<Datum, Traj, Out> {
  *
  * Logging never fails a rollout: an unreachable logger degrades to a warning.
  */
-export function withBraintrustLogging<Datum, Traj, Out>(
-  options: BraintrustLoggingOptions<Datum, Traj, Out>,
-): Adapter<Datum, Traj, Out> {
+export function withBraintrustLogging<
+  Datum,
+  Traj,
+  Out,
+  K extends string,
+  Wrapped,
+>(
+  options: BraintrustLoggingOptions<Datum, Traj, Out, K, Wrapped>,
+): Wrapped & Adapter<Datum, Traj, Out, K> {
   const { adapter, logger, metadata, toInput, toExpected } = options;
 
   return {
     ...adapter,
 
-    evaluate: async (args) => {
+    evaluate: async (args: EvaluateArgs<Datum, K>) => {
       const evaluation = await adapter.evaluate(args);
 
       args.batch.forEach((datum, index) => {
@@ -70,7 +89,9 @@ export function withBraintrustLogging<Datum, Traj, Out>(
         try {
           logger.log(event);
         } catch (err) {
-          console.warn("[gepa-braintrust] failed to log evaluation", { err });
+          console.warn("[textopt-braintrust] failed to log evaluation", {
+            err,
+          });
         }
       });
 

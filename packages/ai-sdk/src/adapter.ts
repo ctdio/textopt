@@ -1,12 +1,15 @@
-import { mapWithConcurrency } from "@ctdio/gepa";
+import { mapWithConcurrency } from "@ctdio/textopt";
 import type {
-  Adapter,
   Candidate,
   EvaluationBatch,
   EvaluationContext,
-  ReflectiveRecord,
   ScoreResult,
-} from "@ctdio/gepa";
+} from "@ctdio/textopt";
+import type {
+  GepaAdapter,
+  ReflectiveDataset,
+  ReflectiveRecord,
+} from "@ctdio/textopt/gepa";
 
 /**
  * Structural types matching the AI SDK's `generateText` / `generateObject`
@@ -63,6 +66,17 @@ export interface AiSdkTrace {
   error?: string;
 }
 
+/**
+ * What this adapter puts in a reflective record's `evidence` slot: the step
+ * detail a reflection model needs to diagnose a multi-step run, and the error
+ * that ended it. Only present when there is something to diagnose — a
+ * single-step run that did not fail is fully described by its output.
+ */
+export interface AiSdkEvidence {
+  trace: AiSdkTraceStep[];
+  error?: string;
+}
+
 export interface AiSdkAdapterOptions<Datum, Out> {
   /**
    * Execute the system for one dataset row. Return the AI SDK result directly:
@@ -71,6 +85,10 @@ export interface AiSdkAdapterOptions<Datum, Out> {
    * `run` (the context, not this option) says where in the optimization this
    * rollout sits. Forward it to whatever tracing the system already has, or a
    * run is thousands of indistinguishable calls.
+   *
+   * `candidate` is keyed by `string`: this factory never sees the seed
+   * candidate, so a component read here is not checked against the ones the
+   * optimizer was actually given.
    */
   run: (args: {
     candidate: Candidate;
@@ -93,6 +111,10 @@ export interface AiSdkAdapterOptions<Datum, Out> {
    * failure as the candidate's, which is the safe assumption.
    */
   isTransient?: (err: unknown) => boolean;
+  /**
+   * Replaces the default reflective record wholesale, `evidence` included.
+   * Return `ReflectiveRecord<YourEvidence>` to type your own slot.
+   */
   buildRecord?: (args: {
     datum: Datum;
     output: Out | null;
@@ -111,7 +133,7 @@ const DEFAULT_CONCURRENCY = 8;
  */
 export function createAiSdkAdapter<Datum, Out = string>(
   options: AiSdkAdapterOptions<Datum, Out>,
-): Adapter<Datum, AiSdkTrace, Out | null> {
+): GepaAdapter<Datum, AiSdkTrace, Out | null> {
   const {
     run,
     toOutput,
@@ -217,7 +239,7 @@ export function createAiSdkAdapter<Datum, Out = string>(
     },
 
     makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) => {
-      const dataset: Record<string, ReflectiveRecord[]> = {};
+      const dataset: ReflectiveDataset = {};
 
       for (const component of componentsToUpdate) {
         dataset[component] = batch.map((datum, index) => {
@@ -240,13 +262,18 @@ export function createAiSdkAdapter<Datum, Out = string>(
             });
           }
 
+          const evidence: AiSdkEvidence = {
+            trace: trace.steps,
+            ...(trace.error === undefined ? {} : { error: trace.error }),
+          };
+
           return {
             inputs: datum,
             generatedOutputs: output,
             feedback,
             score: scoreValue,
             ...(trace.steps.length > 1 || trace.error !== undefined
-              ? { trace: trace.steps, error: trace.error }
+              ? { evidence }
               : {}),
           };
         });

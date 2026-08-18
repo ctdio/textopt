@@ -1,11 +1,10 @@
-import { mapWithConcurrency } from "@ctdio/gepa";
+import { mapWithConcurrency } from "@ctdio/textopt";
+import type { Candidate, EvaluationBatch, ScoreResult } from "@ctdio/textopt";
 import type {
-  Adapter,
-  Candidate,
-  EvaluationBatch,
+  GepaAdapter,
+  ReflectiveDataset,
   ReflectiveRecord,
-  ScoreResult,
-} from "@ctdio/gepa";
+} from "@ctdio/textopt/gepa";
 import type { CallbackHandlerMethods } from "@langchain/core/callbacks/base";
 import type { Runnable } from "@langchain/core/runnables";
 
@@ -28,6 +27,11 @@ export interface LangChainTrace {
 }
 
 export type LangChainScore = ScoreResult;
+
+/** What the reflection model sees beyond the score and feedback of a run. */
+export interface LangChainEvidence {
+  trace: LangChainTraceStep[];
+}
 
 export interface LangChainAdapterOptions<Datum, Out> {
   /** Rebuild the chain with the candidate's text injected into its prompts. */
@@ -75,7 +79,7 @@ const DEFAULT_CONCURRENCY = 8;
  */
 export function createLangChainAdapter<Datum, Out>(
   options: LangChainAdapterOptions<Datum, Out>,
-): Adapter<Datum, LangChainTrace, Out | null> {
+): GepaAdapter<Datum, LangChainTrace, Out | null> {
   const {
     buildRunnable,
     score,
@@ -94,10 +98,10 @@ export function createLangChainAdapter<Datum, Out>(
       // LangSmith project full of anonymous rollouts and one you can filter
       // down to the iteration whose score moved.
       const metadata = {
-        gepa_iteration: run.iteration,
-        gepa_phase: run.phase,
-        gepa_split: run.split,
-        gepa_candidate_id: run.candidateId,
+        textopt_iteration: run.iteration,
+        textopt_phase: run.phase,
+        textopt_split: run.split,
+        textopt_candidate_id: run.candidateId,
       };
 
       const results = await mapWithConcurrency({
@@ -191,7 +195,7 @@ export function createLangChainAdapter<Datum, Out>(
     },
 
     makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) => {
-      const dataset: Record<string, ReflectiveRecord[]> = {};
+      const dataset: ReflectiveDataset = {};
 
       for (const component of componentsToUpdate) {
         dataset[component] = batch.map((datum, index) => {
@@ -219,13 +223,17 @@ export function createLangChainAdapter<Datum, Out>(
             runName: componentRunNames?.[component],
           });
 
-          return {
+          const record: ReflectiveRecord<LangChainEvidence> = {
             inputs: toInput(datum),
             generatedOutputs: output,
             feedback,
             score: scoreValue,
-            ...(componentSteps.length > 0 ? { trace: componentSteps } : {}),
+            ...(componentSteps.length > 0
+              ? { evidence: { trace: componentSteps } }
+              : {}),
           };
+
+          return record;
         });
       }
 

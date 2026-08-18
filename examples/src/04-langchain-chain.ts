@@ -6,17 +6,18 @@
  * Traces are captured through a plain callback handler, which means the same
  * events LangSmith records are available to the reflection model without a
  * LangSmith account. With LANGSMITH_TRACING=1 set, every rollout also carries
- * `gepa_iteration`, `gepa_phase`, `gepa_split` and `gepa_candidate_id`, so a
- * score that moved can be filtered back to the rollouts that moved it.
+ * `textopt_iteration`, `textopt_phase`, `textopt_split` and
+ * `textopt_candidate_id`, so a score that moved can be filtered back to the
+ * rollouts that moved it.
  *
  * This one runs on OpenAI to make the point that none of the machinery is
  * vendor-specific — the AI SDK example next door is identical in structure and
  * runs on Claude.
  *
- *   OPENAI_API_KEY=... pnpm --filter @ctdio/gepa-examples langchain
+ *   OPENAI_API_KEY=... pnpm --filter @ctdio/textopt-examples langchain
  */
-import { optimize } from "@ctdio/gepa";
-import { createLangChainAdapter } from "@ctdio/gepa-langchain";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { createLangChainAdapter } from "@ctdio/textopt-langchain";
 import { SystemMessage } from "@langchain/core/messages";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
@@ -85,19 +86,27 @@ const adapter = createLangChainAdapter<Ticket, string>({
 
   // The default record carries inputs, output, feedback and the captured trace.
   // Override it when you want the reflection model to see something specific —
-  // here, the raw model text alongside the label the scorer parsed out of it.
+  // anything beyond the four standard fields goes in `evidence`, which is the
+  // record's one adapter-owned slot.
   buildRecord: ({ datum, output, trace, score, feedback }) => ({
     inputs: datum.text,
     generatedOutputs: output,
     feedback,
     score,
-    llmCalls: trace.steps.filter((step) => step.type === "llm").length,
+    evidence: {
+      llmCalls: trace.steps.filter((step) => step.type === "llm").length,
+    },
   }),
 
   concurrency: 4,
 });
 
-const result = await optimize({
+const gepa = new GepaOptimizer({
+  minibatchSize: 3,
+  seed: 11,
+});
+
+const result = await gepa.optimize({
   seedCandidate: {
     system: "Classify the support ticket. Answer with one word.",
   },
@@ -106,8 +115,6 @@ const result = await optimize({
   adapter,
   reflect,
   maxMetricCalls: 150,
-  minibatchSize: 3,
-  seed: 11,
   instanceId: ({ datum }) => datum.id,
   onEvent: logEvent,
 });

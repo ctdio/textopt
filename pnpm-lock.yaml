@@ -32,16 +32,16 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.117.1
         version: 0.117.1(zod@4.4.3)
-      '@ctdio/gepa':
+      '@ctdio/textopt':
         specifier: workspace:*
         version: link:../packages/core
-      '@ctdio/gepa-ai-sdk':
+      '@ctdio/textopt-ai-sdk':
         specifier: workspace:*
         version: link:../packages/ai-sdk
-      '@ctdio/gepa-braintrust':
+      '@ctdio/textopt-braintrust':
         specifier: workspace:*
         version: link:../packages/braintrust
-      '@ctdio/gepa-langchain':
+      '@ctdio/textopt-langchain':
         specifier: workspace:*
         version: link:../packages/langchain
       '@langchain/anthropic':
@@ -72,7 +72,7 @@ importers:
 
   packages/ai-sdk:
     dependencies:
-      '@ctdio/gepa':
+      '@ctdio/textopt':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -82,7 +82,7 @@ importers:
 
   packages/braintrust:
     dependencies:
-      '@ctdio/gepa':
+      '@ctdio/textopt':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -94,7 +94,7 @@ importers:
 
   packages/langchain:
     dependencies:
-      '@ctdio/gepa':
+      '@ctdio/textopt':
         specifier: workspace:*
         version: link:../core
     devDependencies:

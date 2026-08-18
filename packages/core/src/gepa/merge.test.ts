@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { proposeMerge, selectMergeSubsample } from "./merge.js";
-import { createSeededRng } from "./rng.js";
-import type { Candidate, CandidateRecord } from "./types.js";
+import { createSeededRng } from "../rng.js";
+import type { Candidate } from "../types.js";
+import type { CandidateRecord } from "./types.js";
 
 function record(args: {
   id: number;

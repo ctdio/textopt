@@ -14,14 +14,14 @@
  * Runs offline — the adapter implements `proposeNewTexts`, replacing the
  * reflection LLM with a deterministic rule.
  *
- *   pnpm --filter @ctdio/gepa-examples pareto
+ *   pnpm --filter @ctdio/textopt-examples pareto
  */
-import {
-  buildInstanceFronts,
-  optimize,
-  pruneDominatedFronts,
-} from "@ctdio/gepa";
-import type { Adapter, ReflectiveRecord } from "@ctdio/gepa";
+import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import type {
+  ComponentPatch,
+  GepaAdapter,
+  ReflectiveRecord,
+} from "@ctdio/textopt/gepa";
 
 interface Ticket {
   question: string;
@@ -31,6 +31,18 @@ interface Ticket {
 
 interface TicketTrace {
   toneOk: boolean;
+  missingFacts: string[];
+}
+
+/** The two text components this system is made of. */
+type TicketComponent = "tone" | "facts";
+
+/**
+ * What `makeReflectiveDataset` hands the proposer beyond the feedback string.
+ * It travels in `ReflectiveRecord.evidence`, the one adapter-owned slot.
+ */
+interface TicketEvidence {
+  expectedTone: Ticket["tone"];
   missingFacts: string[];
 }
 
@@ -57,10 +69,13 @@ const TICKETS: Ticket[] = [
   },
 ];
 
-const adapter: Adapter<Ticket, TicketTrace, string> = {
+const adapter: GepaAdapter<Ticket, TicketTrace, string, TicketComponent> = {
+  // Naming the components in the adapter's type is what makes `candidate.tone`
+  // a checked `string` rather than an index lookup that silently yields
+  // `undefined` for a typo.
   evaluate: ({ batch, candidate }) => {
-    const tone = (candidate.tone ?? "").trim().toLowerCase();
-    const facts = (candidate.facts ?? "").toLowerCase();
+    const tone = candidate.tone.trim().toLowerCase();
+    const facts = candidate.facts.toLowerCase();
 
     const trajectories = batch.map((ticket) => ({
       toneOk: tone === ticket.tone,
@@ -68,7 +83,7 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
     }));
 
     return {
-      outputs: batch.map(() => `[${tone}] ${candidate.facts ?? ""}`),
+      outputs: batch.map(() => `[${tone}] ${candidate.facts}`),
       // Half the score is a trade-off the candidate cannot win everywhere,
       // half is knowledge it can always accumulate.
       scores: trajectories.map(
@@ -92,14 +107,18 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
   },
 
   makeReflectiveDataset: ({ batch, evaluation, componentsToUpdate }) => {
-    const records: ReflectiveRecord[] = batch.map((ticket, index) => ({
-      inputs: ticket.question,
-      generatedOutputs: evaluation.outputs[index],
-      feedback: evaluation.feedback?.[index] ?? "",
-      score: evaluation.scores[index],
-      expectedTone: ticket.tone,
-      missingFacts: evaluation.trajectories?.[index]?.missingFacts ?? [],
-    }));
+    const records: ReflectiveRecord<TicketEvidence>[] = batch.map(
+      (ticket, index) => ({
+        inputs: ticket.question,
+        generatedOutputs: evaluation.outputs[index],
+        feedback: evaluation.feedback?.[index] ?? "",
+        score: evaluation.scores[index],
+        evidence: {
+          expectedTone: ticket.tone,
+          missingFacts: evaluation.trajectories?.[index]?.missingFacts ?? [],
+        },
+      }),
+    );
 
     return Object.fromEntries(
       componentsToUpdate.map((component) => [component, records]),
@@ -109,7 +128,7 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
   // Adapters may replace the reflection call entirely. Here it is a rule, which
   // keeps the example deterministic and free.
   proposeNewTexts: ({ candidate, reflectiveDataset, componentsToUpdate }) => {
-    const patch: Record<string, string> = {};
+    const patch: ComponentPatch<TicketComponent> = {};
 
     for (const component of componentsToUpdate) {
       const records = reflectiveDataset[component] ?? [];
@@ -117,7 +136,7 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
       if (component === "tone") {
         const wanted = records
           .filter((record) => (record.score ?? 1) < 1)
-          .map((record) => String(record.expectedTone))[0];
+          .flatMap((record) => readEvidence(record)?.expectedTone ?? [])[0];
         if (wanted !== undefined && wanted !== candidate.tone) {
           patch.tone = wanted;
         }
@@ -126,10 +145,8 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
       if (component === "facts") {
         const missing = [
           ...new Set(
-            records.flatMap((record) =>
-              Array.isArray(record.missingFacts)
-                ? record.missingFacts.map(String)
-                : [],
+            records.flatMap(
+              (record) => readEvidence(record)?.missingFacts ?? [],
             ),
           ),
         ];
@@ -145,18 +162,21 @@ const adapter: Adapter<Ticket, TicketTrace, string> = {
   },
 };
 
-const result = await optimize({
-  seedCandidate: { tone: "neutral", facts: "" },
-  trainset: TICKETS,
-  adapter,
-  reflect: async () => "",
-  maxMetricCalls: 400,
+const gepa = new GepaOptimizer({
   maxIterations: 14,
   // One example per minibatch, so each lineage specializes on one ticket —
   // exactly the condition that produces a branching frontier.
   minibatchSize: 1,
   seed: 5,
   merge: { enabled: false },
+});
+
+const result = await gepa.optimize({
+  seedCandidate: { tone: "neutral", facts: "" },
+  trainset: TICKETS,
+  adapter,
+  reflect: async () => "",
+  maxMetricCalls: 400,
   instanceId: ({ datum }) => datum.question,
 });
 
@@ -189,19 +209,20 @@ TICKETS.forEach((ticket, index) => {
   console.log(`  i${index}  [${ticket.tone}] ${ticket.question}`);
 });
 
-// The same two functions the engine calls internally, run here on the finished
-// result so you can watch selection pressure being derived.
-const fronts = buildInstanceFronts({ scoreMatrix: result.scoreMatrix });
-const pruned = pruneDominatedFronts({ fronts, aggregateScores });
+// Selection pressure, derived here from the two public views of the run: the
+// score matrix says who wins each instance, and `paretoFrontier` is the set the
+// engine kept — everything else won nothing another survivor did not also win.
+const fronts = instanceWinners(result.scoreMatrix);
+const survivors = new Set(result.paretoFrontier.map((record) => record.id));
 
 console.log("\nper-instance winners (ties keep every winner):");
 fronts.forEach((front, index) => {
-  console.log(`  i${index}  ${[...front].map((id) => `#${id}`).join(", ")}`);
+  console.log(`  i${index}  ${front.map((id) => `#${id}`).join(", ")}`);
 });
 
 const wins = new Map<number, number>();
-for (const front of pruned) {
-  for (const id of front) {
+for (const front of fronts) {
+  for (const id of front.filter((candidate) => survivors.has(candidate))) {
     wins.set(id, (wins.get(id) ?? 0) + 1);
   }
 }
@@ -224,3 +245,48 @@ console.log(
   `\nbest by mean is #${result.bestCandidateId} at ${result.bestScore.toFixed(3)} —`,
   "but note it is not the only candidate kept alive.",
 );
+
+/** For each validation instance, every candidate tied for the best score on it. */
+function instanceWinners(
+  scoreMatrix: readonly (readonly (number | undefined)[])[],
+): number[][] {
+  const instanceCount = scoreMatrix[0]?.length ?? 0;
+
+  return Array.from({ length: instanceCount }, (_unused, instance) => {
+    const column = scoreMatrix.map(
+      (row) => row[instance] ?? Number.NEGATIVE_INFINITY,
+    );
+    const best = Math.max(...column);
+
+    return column.flatMap((score, id) => (score === best ? [id] : []));
+  });
+}
+
+/**
+ * `ReflectiveDataset` is not parameterized by the evidence type, so evidence
+ * this adapter wrote as `TicketEvidence` arrives back as `unknown` and has to
+ * be re-narrowed before the rule above can read it.
+ */
+function readEvidence(record: ReflectiveRecord): TicketEvidence | undefined {
+  const { evidence } = record;
+
+  if (
+    typeof evidence !== "object" ||
+    evidence === null ||
+    !("expectedTone" in evidence) ||
+    !("missingFacts" in evidence)
+  ) {
+    return undefined;
+  }
+
+  const { expectedTone, missingFacts } = evidence;
+
+  if (
+    (expectedTone !== "terse" && expectedTone !== "formal") ||
+    !Array.isArray(missingFacts)
+  ) {
+    return undefined;
+  }
+
+  return { expectedTone, missingFacts: missingFacts.map(String) };
+}

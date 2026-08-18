@@ -1,10 +1,10 @@
-import type { OptimizationResult, OptimizerEvent } from "@ctdio/gepa";
+import type { GepaEvent, GepaResult } from "@ctdio/textopt/gepa";
 
 /**
- * A live view of the search. `metricCalls` is the currency GEPA spends — every
- * line that reports it is a line reporting cost.
+ * A live view of the search. `metricCalls` is the currency the optimizer
+ * spends — every line that reports it is a line reporting cost.
  */
-export function logEvent(event: OptimizerEvent): void {
+export function logEvent(event: GepaEvent): void {
   switch (event.type) {
     case "start":
       console.log(
@@ -52,7 +52,7 @@ export function logEvent(event: OptimizerEvent): void {
   }
 }
 
-export function printResult(result: OptimizationResult): void {
+export function printResult(result: GepaResult): void {
   const seedScore = result.candidates[0]?.aggregateScore ?? 0;
 
   console.log(

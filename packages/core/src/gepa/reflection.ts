@@ -17,9 +17,9 @@ export type ReflectionPromptBuilder = (args: ReflectionPromptArgs) => string;
 
 /**
  * Ceilings on what one reflection call is allowed to carry. Traces are the one
- * input GEPA cannot bound in advance — a single failing rollout can serialize
- * to hundreds of kilobytes — and an over-long prompt fails the whole call
- * rather than degrading.
+ * input the optimizer cannot bound in advance — a single failing rollout can
+ * serialize to hundreds of kilobytes — and an over-long prompt fails the whole
+ * call rather than degrading.
  */
 export interface ReflectionLimits {
   /** Records shown per component. The worst scoring ones are kept. */
@@ -158,12 +158,12 @@ export function limitReflectiveRecords(args: {
  * coupled updates or a structured proposal format; `buildPrompt` is the
  * lighter seam for changing only the wording.
  */
-export function createDefaultProposer(
+export function createDefaultProposer<K extends string = string>(
   options: {
     buildPrompt?: ReflectionPromptBuilder;
     limits?: ReflectionLimits;
   } = {},
-): (args: ProposeArgs) => Promise<ComponentPatch> {
+): (args: ProposeArgs<K>) => Promise<ComponentPatch<K>> {
   const { buildPrompt = buildReflectionPrompt, limits = {} } = options;
 
   return async (args) => {
@@ -176,7 +176,7 @@ export function createDefaultProposer(
       signal,
     } = args;
 
-    const proposed: ComponentPatch = {};
+    const proposed: ComponentPatch<K> = {};
 
     for (const componentName of componentsToUpdate) {
       const records = reflectiveDataset[componentName];

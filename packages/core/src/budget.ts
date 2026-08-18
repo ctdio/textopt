@@ -1,9 +1,18 @@
-import type { Budget } from "./types.js";
+export interface Budget {
+  readonly maxMetricCalls: number;
+  spent(): number;
+  remaining(): number;
+  canAfford(calls: number): boolean;
+  /** Debits `calls` atomically. False when the allowance cannot cover them. */
+  reserve(calls: number): boolean;
+  /** Credits back calls a reservation did not end up spending. */
+  refund(calls: number): void;
+}
 
 /**
- * Rollouts are GEPA's currency: the paper's efficiency claim is measured in
- * metric calls, not iterations. The engine debits this budget before every
- * evaluation and stops when it can no longer afford the next one.
+ * Rollouts are the currency of prompt optimization: an optimizer's cost is
+ * measured in metric calls, not iterations. The engine debits this budget
+ * before every evaluation and stops when it can no longer afford the next one.
  *
  * Debiting happens up front, as an atomic reserve-then-refund rather than a
  * check followed by a charge: proposals evaluated concurrently would otherwise

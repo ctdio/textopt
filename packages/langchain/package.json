@@ -1,7 +1,7 @@
 {
-  "name": "@ctdio/gepa-langchain",
+  "name": "@ctdio/textopt-langchain",
   "version": "0.0.0",
-  "description": "LangChain adapter for @ctdio/gepa",
+  "description": "LangChain adapter for @ctdio/textopt",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ctdio/gepa": "workspace:*"
+    "@ctdio/textopt": "workspace:*"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.3.0 <2"

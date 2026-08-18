@@ -1,14 +1,12 @@
+import { argmax, sum } from "../math.js";
+import { componentNames } from "../types.js";
 import {
-  argmax,
   buildInstanceFronts,
   buildObjectiveFronts,
   selectParetoCandidate,
-  sum,
 } from "./pareto.js";
-import type { Rng } from "./rng.js";
 import type {
   AcceptancePolicy,
-  BatchSampler,
   CandidateRecord,
   CandidateSelector,
   ComponentSelector,
@@ -119,7 +117,8 @@ export function topKParetoSelector(args: {
  */
 export function fullEvaluationPolicy<
   Datum = unknown,
->(): ValEvaluationPolicy<Datum> {
+  K extends string = string,
+>(): ValEvaluationPolicy<Datum, K> {
   return {
     selectInstances: ({ valset }) => valset.map((_, index) => index),
     bestCandidate: bestByMeanThenCoverage,
@@ -132,9 +131,10 @@ export function fullEvaluationPolicy<
  * instances — coverage breaks ties, so a candidate cannot win by having been
  * asked fewer questions.
  */
-export function subsampledEvaluationPolicy<Datum = unknown>(args: {
-  size: number;
-}): ValEvaluationPolicy<Datum> {
+export function subsampledEvaluationPolicy<
+  Datum = unknown,
+  K extends string = string,
+>(args: { size: number }): ValEvaluationPolicy<Datum, K> {
   const { size } = args;
 
   if (!Number.isFinite(size) || size <= 0) {
@@ -160,75 +160,23 @@ export function subsampledEvaluationPolicy<Datum = unknown>(args: {
  * global iteration is what guarantees every component of a rarely-selected
  * lineage eventually gets a turn.
  */
-export function roundRobinComponentSelector(): ComponentSelector {
+export function roundRobinComponentSelector<
+  K extends string = string,
+>(): ComponentSelector<K> {
   return ({ candidate, cursor }) => {
-    const names = Object.keys(candidate);
+    const names = componentNames(candidate);
     if (names.length === 0) {
       throw new Error("Candidate has no components to update");
     }
-    return [names[cursor % names.length] as string];
+    return [names[cursor % names.length]];
   };
 }
 
 /** Update every component in a single reflection call. */
-export function allComponentsSelector(): ComponentSelector {
-  return ({ candidate }) => Object.keys(candidate);
-}
-
-/**
- * Shuffles the trainset once per epoch and walks it in fixed-size chunks, so
- * every training example is seen once before any is seen twice.
- */
-export function createEpochShuffledSampler<Datum>(args: {
-  minibatchSize: number;
-}): BatchSampler<Datum> {
-  const { minibatchSize } = args;
-
-  let shuffled: number[] = [];
-  let epoch = -1;
-  let lastTrainsetSize = -1;
-
-  const sampler: BatchSampler<Datum> = ({ trainset, iteration, rng }) => {
-    if (trainset.length === 0) {
-      throw new Error("Cannot sample a minibatch from an empty trainset");
-    }
-
-    const baseIndex = iteration * minibatchSize;
-    const currentEpoch =
-      shuffled.length === 0 ? 0 : Math.floor(baseIndex / shuffled.length);
-
-    if (
-      shuffled.length === 0 ||
-      trainset.length !== lastTrainsetSize ||
-      currentEpoch > epoch
-    ) {
-      epoch = currentEpoch;
-      lastTrainsetSize = trainset.length;
-      shuffled = buildPaddedShuffle({
-        size: trainset.length,
-        minibatchSize,
-        rng,
-      });
-    }
-
-    const start = baseIndex % shuffled.length;
-    return shuffled.slice(start, start + minibatchSize);
-  };
-
-  // The shuffle is drawn once per epoch, so it cannot be replayed from the
-  // random stream alone: a resumed run that reshuffled would walk a different
-  // epoch and re-spend minibatches the interrupted run had already seen.
-  sampler.state = () => ({ shuffled: [...shuffled], epoch, lastTrainsetSize });
-  sampler.restore = (state: unknown) => {
-    if (!isSamplerState(state)) {
-      return;
-    }
-    shuffled = [...state.shuffled];
-    epoch = state.epoch;
-    lastTrainsetSize = state.lastTrainsetSize;
-  };
-
-  return sampler;
+export function allComponentsSelector<
+  K extends string = string,
+>(): ComponentSelector<K> {
+  return ({ candidate }) => componentNames(candidate);
 }
 
 /**
@@ -249,7 +197,9 @@ export function improvementAcceptance(
  * winning a tie: a candidate measured on more instances has earned the same
  * mean against more evidence.
  */
-function bestByMeanThenCoverage(records: readonly CandidateRecord[]): number {
+function bestByMeanThenCoverage<K extends string>(
+  records: readonly CandidateRecord<K>[],
+): number {
   let bestId = 0;
   let bestScore = Number.NEGATIVE_INFINITY;
   let bestCoverage = -1;
@@ -269,47 +219,4 @@ function bestByMeanThenCoverage(records: readonly CandidateRecord[]): number {
     }
   }
   return bestId;
-}
-
-function isSamplerState(state: unknown): state is {
-  shuffled: number[];
-  epoch: number;
-  lastTrainsetSize: number;
-} {
-  if (state === null || typeof state !== "object") {
-    return false;
-  }
-  const candidate = state as Record<string, unknown>;
-  return (
-    Array.isArray(candidate.shuffled) &&
-    typeof candidate.epoch === "number" &&
-    typeof candidate.lastTrainsetSize === "number"
-  );
-}
-
-function buildPaddedShuffle(args: {
-  size: number;
-  minibatchSize: number;
-  rng: Rng;
-}): number[] {
-  const { size, minibatchSize, rng } = args;
-
-  const indices = rng.shuffle(Array.from({ length: size }, (_, i) => i));
-  const remainder = indices.length % minibatchSize;
-  const padding = remainder === 0 ? 0 : minibatchSize - remainder;
-
-  const frequencies = new Map<number, number>(
-    indices.map((index) => [index, 1]),
-  );
-  for (let i = 0; i < padding; i += 1) {
-    const leastUsed = indices.reduce((best, index) =>
-      (frequencies.get(index) as number) < (frequencies.get(best) as number)
-        ? index
-        : best,
-    );
-    indices.push(leastUsed);
-    frequencies.set(leastUsed, (frequencies.get(leastUsed) as number) + 1);
-  }
-
-  return indices;
 }

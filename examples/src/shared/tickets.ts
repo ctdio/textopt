@@ -3,9 +3,9 @@
  *
  * The rows are deliberately adversarial: several mention money but are not
  * billing, and several mention crashes but are not bugs. A one-line prompt gets
- * them wrong, which is what gives GEPA something to learn — and the `why` field
- * is the domain knowledge the reflection model has to discover and write into
- * the prompt itself.
+ * them wrong, which is what gives the optimizer something to learn — and the
+ * `why` field is the domain knowledge the reflection model has to discover and
+ * write into the prompt itself.
  */
 export interface Ticket {
   id: string;

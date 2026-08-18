@@ -1,5 +1,8 @@
-import type { EvaluationContext } from "@ctdio/gepa";
-import { KEYWORD_EXAMPLES, createKeywordAdapter } from "@ctdio/gepa/testing";
+import type { EvaluationContext } from "@ctdio/textopt";
+import {
+  KEYWORD_EXAMPLES,
+  createKeywordAdapter,
+} from "@ctdio/textopt/testing";
 import { describe, expect, test } from "vitest";
 import type { BraintrustEvent, BraintrustLoggerLike } from "./logging.js";
 import { withBraintrustLogging } from "./logging.js";
