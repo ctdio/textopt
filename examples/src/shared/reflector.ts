@@ -1,4 +1,4 @@
-import type { TextModel } from "@ctdio/textopt";
+import type { TextModel } from "textopt";
 import { generateText, type LanguageModel } from "ai";
 
 /** Vendor-specific knobs, typed off `generateText` rather than re-declared. */
@@ -49,8 +49,8 @@ export function requireApiKey(envVar: string): void {
     `${envVar} is not set.\n` +
       "This example names its models explicitly at the top of the file — edit them to use another provider.\n" +
       "The offline examples need no key at all:\n" +
-      "  pnpm --filter @ctdio/textopt-examples keyword\n" +
-      "  pnpm --filter @ctdio/textopt-examples pareto",
+      "  pnpm --filter textopt-examples keyword\n" +
+      "  pnpm --filter textopt-examples pareto",
   );
   process.exit(1);
 }

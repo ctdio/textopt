@@ -1,6 +1,6 @@
-import type { EvaluationContext } from "@ctdio/textopt";
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
-import { createKeywordReflector } from "@ctdio/textopt/testing";
+import type { EvaluationContext } from "textopt";
+import { GepaOptimizer } from "textopt/gepa";
+import { createKeywordReflector } from "textopt/testing";
 import type { CallbackManager } from "@langchain/core/callbacks/manager";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";

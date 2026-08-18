@@ -1,5 +1,5 @@
 {
-  "name": "@ctdio/textopt",
+  "name": "textopt",
   "version": "0.0.0",
   "description": "Framework-agnostic prompt optimization for TypeScript, with GEPA (Genetic-Pareto) as its first optimizer",
   "type": "module",

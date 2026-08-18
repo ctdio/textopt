@@ -1,10 +1,10 @@
-import { mapWithConcurrency } from "@ctdio/textopt";
-import type { Candidate, EvaluationBatch, ScoreResult } from "@ctdio/textopt";
+import { mapWithConcurrency } from "textopt";
+import type { Candidate, EvaluationBatch, ScoreResult } from "textopt";
 import type {
   GepaAdapter,
   ReflectiveDataset,
   ReflectiveRecord,
-} from "@ctdio/textopt/gepa";
+} from "textopt/gepa";
 import type { CallbackHandlerMethods } from "@langchain/core/callbacks/base";
 import type { Runnable } from "@langchain/core/runnables";
 

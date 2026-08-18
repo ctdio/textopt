@@ -10,11 +10,11 @@
  *
  * Merge is enabled by default whenever a candidate has more than one component.
  *
- *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/textopt-examples merge
+ *   ANTHROPIC_API_KEY=... pnpm --filter textopt-examples merge
  */
 import { anthropic } from "@ai-sdk/anthropic";
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
-import { createAiSdkAdapter } from "@ctdio/textopt-ai-sdk";
+import { GepaOptimizer } from "textopt/gepa";
+import { createAiSdkAdapter } from "@textopt/ai-sdk";
 import { generateText } from "ai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
 import { logEvent, printResult } from "./shared/report.js";

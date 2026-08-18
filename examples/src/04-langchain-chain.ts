@@ -14,10 +14,10 @@
  * vendor-specific — the AI SDK example next door is identical in structure and
  * runs on Claude.
  *
- *   OPENAI_API_KEY=... pnpm --filter @ctdio/textopt-examples langchain
+ *   OPENAI_API_KEY=... pnpm --filter textopt-examples langchain
  */
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
-import { createLangChainAdapter } from "@ctdio/textopt-langchain";
+import { GepaOptimizer } from "textopt/gepa";
+import { createLangChainAdapter } from "@textopt/langchain";
 import { SystemMessage } from "@langchain/core/messages";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";

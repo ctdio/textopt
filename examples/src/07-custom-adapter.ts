@@ -13,13 +13,13 @@
  * result of an optimization run is usually not "the big model got better" but
  * "the small model caught up once the prompt carried the domain knowledge".
  *
- *   ANTHROPIC_API_KEY=... pnpm --filter @ctdio/textopt-examples custom
+ *   ANTHROPIC_API_KEY=... pnpm --filter textopt-examples custom
  */
 import { anthropic } from "@ai-sdk/anthropic";
 import Anthropic from "@anthropic-ai/sdk";
-import { mapWithConcurrency } from "@ctdio/textopt";
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
-import type { GepaAdapter } from "@ctdio/textopt/gepa";
+import { mapWithConcurrency } from "textopt";
+import { GepaOptimizer } from "textopt/gepa";
+import type { GepaAdapter } from "textopt/gepa";
 import { openai } from "@ai-sdk/openai";
 import OpenAI from "openai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";

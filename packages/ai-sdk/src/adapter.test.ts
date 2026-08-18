@@ -1,5 +1,5 @@
-import type { EvaluationContext } from "@ctdio/textopt";
-import type { GepaAdapter } from "@ctdio/textopt/gepa";
+import type { EvaluationContext } from "textopt";
+import type { GepaAdapter } from "textopt/gepa";
 import type { generateText } from "ai";
 import { describe, expect, test } from "vitest";
 import type { AiSdkResultLike, AiSdkTrace } from "./adapter.js";

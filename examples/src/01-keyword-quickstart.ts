@@ -2,7 +2,7 @@
  * The smallest end-to-end run of the GEPA optimizer: no API keys, no network,
  * no LLM.
  *
- * `@ctdio/textopt/testing` ships a deterministic stand-in for both halves of
+ * `textopt/testing` ships a deterministic stand-in for both halves of
  * the loop — a system under optimization and a reflection model — so you can see
  * the whole mechanism before spending a single token.
  *
@@ -10,14 +10,14 @@
  * that are stateless and free of your types, and `optimize` takes one problem.
  * An optimizer holds no run state, so one instance can run any number of them.
  *
- *   pnpm --filter @ctdio/textopt-examples keyword
+ *   pnpm --filter textopt-examples keyword
  */
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { GepaOptimizer } from "textopt/gepa";
 import {
   KEYWORD_EXAMPLES,
   createKeywordAdapter,
   createKeywordReflector,
-} from "@ctdio/textopt/testing";
+} from "textopt/testing";
 
 const gepa = new GepaOptimizer({
   minibatchSize: 2,

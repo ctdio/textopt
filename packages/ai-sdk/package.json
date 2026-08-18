@@ -1,7 +1,7 @@
 {
-  "name": "@ctdio/textopt-ai-sdk",
+  "name": "@textopt/ai-sdk",
   "version": "0.0.0",
-  "description": "Vercel AI SDK adapter for @ctdio/textopt",
+  "description": "Vercel AI SDK adapter for textopt",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ctdio/textopt": "workspace:*"
+    "textopt": "workspace:*"
   },
   "devDependencies": {
     "ai": "^7.0.66"

@@ -1,4 +1,4 @@
-import type { ScoreResult } from "@ctdio/textopt";
+import type { ScoreResult } from "textopt";
 
 /** Matches the `Score` object returned by braintrust and autoevals scorers. */
 export interface BraintrustScoreLike {

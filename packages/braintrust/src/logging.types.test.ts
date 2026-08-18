@@ -1,6 +1,6 @@
-import type { TextModel } from "@ctdio/textopt";
-import type { GepaAdapter } from "@ctdio/textopt/gepa";
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import type { TextModel } from "textopt";
+import type { GepaAdapter } from "textopt/gepa";
+import { GepaOptimizer } from "textopt/gepa";
 import { describe, expect, test } from "vitest";
 import type { BraintrustEvent, BraintrustLoggerLike } from "./logging.js";
 import { withBraintrustLogging } from "./logging.js";

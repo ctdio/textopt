@@ -14,14 +14,14 @@
  * Runs offline — the adapter implements `proposeNewTexts`, replacing the
  * reflection LLM with a deterministic rule.
  *
- *   pnpm --filter @ctdio/textopt-examples pareto
+ *   pnpm --filter textopt-examples pareto
  */
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
+import { GepaOptimizer } from "textopt/gepa";
 import type {
   ComponentPatch,
   GepaAdapter,
   ReflectiveRecord,
-} from "@ctdio/textopt/gepa";
+} from "textopt/gepa";
 
 interface Ticket {
   question: string;

@@ -1,8 +1,8 @@
-import type { EvaluationContext } from "@ctdio/textopt";
+import type { EvaluationContext } from "textopt";
 import {
   KEYWORD_EXAMPLES,
   createKeywordAdapter,
-} from "@ctdio/textopt/testing";
+} from "textopt/testing";
 import { describe, expect, test } from "vitest";
 import type { BraintrustEvent, BraintrustLoggerLike } from "./logging.js";
 import { withBraintrustLogging } from "./logging.js";

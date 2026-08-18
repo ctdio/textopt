@@ -12,16 +12,16 @@
  * Without BRAINTRUST_API_KEY it prints the events instead of shipping them, so
  * the example still runs.
  *
- *   OPENAI_API_KEY=... pnpm --filter @ctdio/textopt-examples braintrust
+ *   OPENAI_API_KEY=... pnpm --filter textopt-examples braintrust
  */
 import { openai } from "@ai-sdk/openai";
-import { GepaOptimizer } from "@ctdio/textopt/gepa";
-import { createAiSdkAdapter } from "@ctdio/textopt-ai-sdk";
+import { GepaOptimizer } from "textopt/gepa";
+import { createAiSdkAdapter } from "@textopt/ai-sdk";
 import {
   createBraintrustScorer,
   withBraintrustLogging,
   type BraintrustLoggerLike,
-} from "@ctdio/textopt-braintrust";
+} from "@textopt/braintrust";
 import { generateText } from "ai";
 import { ExactMatch, Levenshtein } from "autoevals";
 import { initLogger } from "braintrust";

@@ -1,4 +1,4 @@
-import type { Adapter, EvaluateArgs } from "@ctdio/textopt";
+import type { Adapter, EvaluateArgs } from "textopt";
 
 export interface BraintrustEvent {
   input?: unknown;

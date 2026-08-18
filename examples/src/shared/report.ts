@@ -1,4 +1,4 @@
-import type { GepaEvent, GepaResult } from "@ctdio/textopt/gepa";
+import type { GepaEvent, GepaResult } from "textopt/gepa";
 
 /**
  * A live view of the search. `metricCalls` is the currency the optimizer

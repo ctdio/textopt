@@ -1,15 +1,15 @@
-import { mapWithConcurrency } from "@ctdio/textopt";
+import { mapWithConcurrency } from "textopt";
 import type {
   Candidate,
   EvaluationBatch,
   EvaluationContext,
   ScoreResult,
-} from "@ctdio/textopt";
+} from "textopt";
 import type {
   GepaAdapter,
   ReflectiveDataset,
   ReflectiveRecord,
-} from "@ctdio/textopt/gepa";
+} from "textopt/gepa";
 
 /**
  * Structural types matching the AI SDK's `generateText` / `generateObject`

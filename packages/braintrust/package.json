@@ -1,7 +1,7 @@
 {
-  "name": "@ctdio/textopt-braintrust",
+  "name": "@textopt/braintrust",
   "version": "0.0.0",
-  "description": "Braintrust scorers and experiment logging for @ctdio/textopt",
+  "description": "Braintrust scorers and experiment logging for textopt",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ctdio/textopt": "workspace:*"
+    "textopt": "workspace:*"
   },
   "devDependencies": {
     "autoevals": "^0.3.0"
