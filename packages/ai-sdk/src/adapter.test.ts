@@ -1,6 +1,9 @@
 import type { EvaluationContext } from "textopt";
 import type { GepaAdapter } from "textopt/gepa";
-import type { generateText } from "ai";
+import { GepaOptimizer } from "textopt/gepa";
+import { createKeywordReflector } from "textopt/testing";
+import { generateText } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, test } from "vitest";
 import type { AiSdkResultLike, AiSdkTrace } from "./adapter.js";
 import { createAiSdkAdapter, summarizeRun } from "./adapter.js";
@@ -522,5 +525,107 @@ describe("summarizeRun", () => {
 
     expect(trace.steps).toHaveLength(1);
     expect(trace.steps[0]?.text).toBe("the final answer");
+  });
+});
+
+/**
+ * Everything above builds its own `AiSdkResultLike`. These run the real
+ * `generateText` against the SDK's own mock provider instead, so the trace the
+ * adapter extracts is taken from what the SDK actually returns rather than
+ * from this file's idea of it.
+ */
+describe("against a real generateText call", () => {
+  function echoingModel(): MockLanguageModelV4 {
+    return new MockLanguageModelV4({
+      // The system prompt is the candidate, so echoing it back is what gives
+      // the optimizer a gradient to climb.
+      doGenerate: async ({ prompt }) => {
+        const system = prompt.find((message) => message.role === "system");
+        const content = system?.content;
+        const text =
+          typeof content === "string" ? content : JSON.stringify(content ?? "");
+
+        return {
+          content: [{ type: "text" as const, text }],
+          // Provider-level shapes, which are nested and differ from the flat
+          // ones `generateText` reports back to a caller.
+          finishReason: { unified: "stop" as const, raw: "stop" },
+          usage: {
+            inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 4, text: 4, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      },
+    });
+  }
+
+  test("traces what the SDK actually returned", async () => {
+    const adapter = createAiSdkAdapter<Question>({
+      run: ({ candidate, datum, signal }) =>
+        generateText({
+          model: echoingModel(),
+          system: candidate.system ?? "",
+          prompt: datum.question,
+          abortSignal: signal,
+        }),
+      score: ({ output }) => ({ score: output === "" ? 0 : 1 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: [QUESTIONS[0] as Question],
+      candidate: { system: "answer plainly" },
+      captureTraces: true,
+      run: RUN,
+    });
+
+    expect(evaluation.outputs[0]).toContain("answer plainly");
+    expect(evaluation.scores).toEqual([1]);
+
+    // The SDK reports these back flattened, whatever shape the provider used.
+    const trace = evaluation.trajectories?.[0];
+    expect(trace?.steps).toHaveLength(1);
+    expect(trace?.steps[0]?.finishReason).toBe("stop");
+    expect(trace?.usage).toMatchObject({
+      inputTokens: 8,
+      outputTokens: 4,
+      totalTokens: 12,
+    });
+  });
+
+  test("improves the seed candidate over a full optimization run", async () => {
+    const adapter = createAiSdkAdapter<Question>({
+      run: ({ candidate, datum }) =>
+        generateText({
+          model: echoingModel(),
+          system: candidate.instruction ?? "",
+          prompt: datum.question,
+        }),
+      score: ({ datum, output }) => {
+        const covered = (output ?? "").toLowerCase().includes(datum.answer);
+
+        return covered
+          ? { score: 1, feedback: "All required terms present." }
+          : { score: 0, feedback: `Missing required terms: ${datum.answer}` };
+      },
+    });
+
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 7,
+    }).optimize({
+      seedCandidate: { instruction: "answer the question" },
+      trainset: QUESTIONS,
+      adapter,
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    // The seed answers nothing, so a perfect score is movement rather than a
+    // starting point the run never had to earn.
+    expect(result.candidates[0]?.aggregateScore).toBe(0);
+    expect(result.bestScore).toBe(1);
+    expect(result.bestCandidate.instruction).toContain("paris");
+    expect(result.bestCandidate.instruction).toContain("tokyo");
   });
 });
