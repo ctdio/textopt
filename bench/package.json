@@ -1,0 +1,17 @@
+{
+  "name": "textopt-bench",
+  "version": "0.0.0",
+  "description": "Search-quality benchmarks for textopt, run offline across seeds",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "bench": "tsx src/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "textopt": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12"
+  }
+}
