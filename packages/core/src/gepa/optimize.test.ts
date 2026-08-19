@@ -36,7 +36,7 @@ describe("optimize", () => {
 
     const result = await gepa.optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 30,
@@ -55,7 +55,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -74,7 +74,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -89,7 +89,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 37,
@@ -108,7 +108,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length + 3,
@@ -131,7 +131,7 @@ describe("optimize", () => {
       proposals: { perIteration: 3, concurrency: 3 },
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length + 10,
@@ -150,7 +150,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: KEYWORD_EXAMPLES.length,
@@ -167,7 +167,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -188,7 +188,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -206,7 +206,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createDegradingReflector(),
       maxMetricCalls: 200,
@@ -226,7 +226,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
@@ -248,7 +248,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
@@ -271,7 +271,7 @@ describe("optimize", () => {
         seed: 7,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 150,
@@ -301,7 +301,7 @@ describe("optimize", () => {
 
       const result = await gepa.optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: (args) => {
@@ -337,7 +337,7 @@ describe("optimize", () => {
         seed: 7,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 500,
@@ -359,7 +359,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
@@ -370,15 +370,15 @@ describe("optimize", () => {
   });
 
   test("uses a separate validation set when provided", async () => {
-    const valset = KEYWORD_EXAMPLES.slice(0, 2);
+    const validationSet = KEYWORD_EXAMPLES.slice(0, 2);
 
     const result = await new GepaOptimizer({
       minibatchSize: 2,
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
-      valset,
+      trainingSet: KEYWORD_EXAMPLES,
+      validationSet,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 120,
@@ -395,7 +395,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -415,7 +415,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -443,7 +443,7 @@ describe("optimize", () => {
       merge: { enabled: true, valOverlapFloor: 3 },
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 600,
@@ -470,7 +470,7 @@ describe("optimize", () => {
       merge: { enabled: true },
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
@@ -481,7 +481,7 @@ describe("optimize", () => {
       merge: { enabled: false },
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
@@ -503,7 +503,7 @@ describe("optimize", () => {
       merge: { enabled: false },
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 600,
@@ -576,13 +576,13 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
-        valset: [],
+        trainingSet: KEYWORD_EXAMPLES,
+        validationSet: [],
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
       }),
-    ).rejects.toThrow(/valset/i);
+    ).rejects.toThrow(/validationSet/i);
   });
 
   test("rejects a minibatch size below one", () => {
@@ -612,12 +612,12 @@ describe("optimize", () => {
     );
   });
 
-  test("scores validation instances separately from trainset instances sharing an id", async () => {
+  test("scores validation instances separately from trainingSet instances sharing an id", async () => {
     // Positional instance ids are a reasonable thing for a user to write, and
     // they make train instance "0" and val instance "0" collide in the cache.
     type Instance = { split: "train" | "val" };
-    const trainset: Instance[] = [{ split: "train" }, { split: "train" }];
-    const valset: Instance[] = [{ split: "val" }];
+    const trainingSet: Instance[] = [{ split: "train" }, { split: "train" }];
+    const validationSet: Instance[] = [{ split: "val" }];
     let revision = 0;
 
     const result = await new GepaOptimizer({
@@ -625,8 +625,8 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset,
-      valset,
+      trainingSet,
+      validationSet,
       adapter: {
         // Val instances always score 1; train instances improve with each
         // revision so children actually get accepted and reach validation.
@@ -684,7 +684,7 @@ describe("optimize", () => {
         raiseOnError: false,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: (args) => {
@@ -711,7 +711,7 @@ describe("optimize", () => {
       raiseOnError: false,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         ...adapter,
         makeReflectiveDataset: () => {
@@ -742,7 +742,7 @@ describe("optimize", () => {
       candidateSelector: () => 0,
     }).optimize({
       seedCandidate: { alpha: "a", beta: "b", gamma: "c" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createDegradingReflector(),
       maxMetricCalls: 400,
@@ -762,7 +762,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map(() => ""),
@@ -804,7 +804,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           evaluate: ({ batch }) => ({
             outputs: batch.map(() => ""),
@@ -840,7 +840,7 @@ describe("optimize", () => {
         instruction:
           "hold ten seconds ticket portal thirty days billing prorated",
       },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         ...adapter,
         evaluate: async (args) => {
@@ -876,7 +876,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           evaluate: ({ batch }) => ({
             outputs: batch.map(() => ""),
@@ -914,7 +914,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: untyped,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
@@ -933,7 +933,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: untyped,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           proposeNewTexts: () => ({ instrution: "hold ten seconds" }),
@@ -953,7 +953,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -977,7 +977,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -1005,7 +1005,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -1029,7 +1029,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -1053,7 +1053,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -1076,7 +1076,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: ({ batch }) => ({
@@ -1103,7 +1103,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         ...adapter,
         evaluate: (args) => {
@@ -1132,7 +1132,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: {
           ...adapter,
           evaluate: () => {
@@ -1151,7 +1151,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -1176,7 +1176,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -1203,7 +1203,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         ...adapter,
         evaluate: async (args) => {
@@ -1234,7 +1234,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
@@ -1253,7 +1253,7 @@ describe("optimize", () => {
     });
     const task = {
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createObjectiveAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
@@ -1276,7 +1276,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -1303,7 +1303,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
@@ -1341,7 +1341,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
@@ -1368,7 +1368,7 @@ describe("optimize", () => {
       rejectedProposalMemory: 2,
     }).optimize({
       seedCandidate: { instruction: "hold ten seconds ticket portal" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
@@ -1394,7 +1394,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -1418,7 +1418,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 200,
@@ -1437,7 +1437,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -1451,7 +1451,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -1476,7 +1476,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
@@ -1488,7 +1488,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,
@@ -1509,7 +1509,7 @@ describe("optimize", () => {
     });
     const task = {
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -1533,7 +1533,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -1546,7 +1546,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 400,
@@ -1606,7 +1606,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "Something else entirely." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
@@ -1618,7 +1618,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
@@ -1634,8 +1634,8 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
-      valset: KEYWORD_EXAMPLES.slice(0, 2),
+      trainingSet: KEYWORD_EXAMPLES,
+      validationSet: KEYWORD_EXAMPLES.slice(0, 2),
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
@@ -1647,7 +1647,7 @@ describe("optimize", () => {
         seed: 1,
       }).optimize({
         seedCandidate: SEED,
-        trainset: KEYWORD_EXAMPLES,
+        trainingSet: KEYWORD_EXAMPLES,
         adapter: createKeywordAdapter(),
         reflect: createKeywordReflector(),
         maxMetricCalls: 100,
@@ -1663,7 +1663,7 @@ describe("optimize", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 300,
@@ -1740,7 +1740,7 @@ describe("optimize proposals", () => {
   };
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 2000,
@@ -1955,7 +1955,7 @@ describe("optimize proposals", () => {
         proposals: { perIteration: 2, concurrency: 2 },
       }).optimize({
         seedCandidate: { instruction: "" },
-        trainset: MARK_EXAMPLES,
+        trainingSet: MARK_EXAMPLES,
         adapter: createMarkAdapter(),
         reflect: createMarkReflector(pace),
         maxMetricCalls: 1000,
@@ -2037,7 +2037,7 @@ describe("optimize reflection budget", () => {
   };
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 2000,
@@ -2157,7 +2157,7 @@ describe("optimize outputs", () => {
   };
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
@@ -2185,7 +2185,7 @@ describe("optimize outputs", () => {
 });
 
 /**
- * Selection pressure is applied to the valset for the whole run, so the
+ * Selection pressure is applied to the validation set for the whole run, so the
  * winner's score on it is partly fitted to those instances. The held-out sweep
  * is the only number in a result that no candidate was ever selected against.
  */
@@ -2193,7 +2193,7 @@ describe("optimize held-out evaluation", () => {
   const config = { maxIterations: 4, minibatchSize: 2, seed: 1 };
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
@@ -2205,7 +2205,7 @@ describe("optimize held-out evaluation", () => {
     { question: "held out, unsatisfiable", required: ["zzz-never-proposed"] },
   ];
 
-  test("omits the held-out score when no testset is given", async () => {
+  test("omits the held-out score when no testSet is given", async () => {
     const result = await new GepaOptimizer(config).optimize(task);
 
     expect(result.testScore).toBeUndefined();
@@ -2215,7 +2215,7 @@ describe("optimize held-out evaluation", () => {
   test("scores the best candidate on instances the search never saw", async () => {
     const result = await new GepaOptimizer(config).optimize({
       ...task,
-      testset: TESTSET,
+      testSet: TESTSET,
     });
 
     expect(result.testScore).toBe(0.5);
@@ -2225,7 +2225,7 @@ describe("optimize held-out evaluation", () => {
     const searchOnly = await new GepaOptimizer(config).optimize(task);
     const withHoldout = await new GepaOptimizer(config).optimize({
       ...task,
-      testset: TESTSET,
+      testSet: TESTSET,
     });
 
     expect(withHoldout.metricCalls).toBe(searchOnly.metricCalls);
@@ -2247,7 +2247,7 @@ describe("optimize held-out evaluation", () => {
           return adapter.evaluate(args);
         },
       },
-      testset: TESTSET,
+      testSet: TESTSET,
     });
 
     for (const question of TESTSET.map((datum) => datum.question)) {
@@ -2260,7 +2260,7 @@ describe("optimize held-out evaluation", () => {
 
     await new GepaOptimizer(config).optimize({
       ...task,
-      testset: TESTSET,
+      testSet: TESTSET,
       onEvent: (event) => {
         if (event.type === "evaluation" && event.phase === "test") {
           phases.push({
@@ -2282,7 +2282,7 @@ describe("optimize held-out evaluation", () => {
 
     const result = await new GepaOptimizer(config).optimize({
       ...task,
-      testset: TESTSET,
+      testSet: TESTSET,
       onEvent: (event) => {
         if (event.type === "finish") {
           finished = event;
@@ -2293,10 +2293,10 @@ describe("optimize held-out evaluation", () => {
     expect(finished?.testScore).toBe(result.testScore);
   });
 
-  test("refuses an empty testset rather than reporting a meaningless zero", async () => {
+  test("refuses an empty testSet rather than reporting a meaningless zero", async () => {
     await expect(
-      new GepaOptimizer(config).optimize({ ...task, testset: [] }),
-    ).rejects.toThrow(/testset/);
+      new GepaOptimizer(config).optimize({ ...task, testSet: [] }),
+    ).rejects.toThrow(/testSet/);
   });
 });
 
@@ -2307,7 +2307,7 @@ describe("optimize checkpoint fidelity", () => {
   };
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,
@@ -2324,7 +2324,7 @@ describe("optimize checkpoint fidelity", () => {
       maxIterations: 1,
     }).optimize({
       ...task,
-      trainset: large,
+      trainingSet: large,
       maxMetricCalls: 1000,
     });
 
@@ -2374,7 +2374,7 @@ async function recordMinibatches(args: {
     seed: 1,
   }).optimize({
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: {
       ...adapter,
       evaluate: (evaluateArgs) => {
@@ -2411,7 +2411,7 @@ function mergeRunwayConfig() {
 function mergeRunwayTask() {
   return {
     seedCandidate: { alpha: "", beta: "", gamma: "" },
-    trainset: PART_TASKS,
+    trainingSet: PART_TASKS,
     adapter: createPartAdapter(),
     reflect: createAppendingReflector(),
     maxMetricCalls: 5000,
@@ -2478,7 +2478,7 @@ function resumeConfig(args: { maxIterations: number }) {
 function resumeTask() {
   return {
     seedCandidate: { alpha: "a", beta: "b", gamma: "c" },
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createAlternatingReflector(),
     maxMetricCalls: 400,
@@ -2578,9 +2578,12 @@ function countProposals(
 }
 
 /** Wraps an adapter to observe how many evaluations are ever in flight at once. */
-function withOverlapTracking<Datum, Traj, Out>(
-  adapter: GepaAdapter<Datum, Traj, Out>,
-): { adapter: GepaAdapter<Datum, Traj, Out>; maxInFlight: () => number } {
+function withOverlapTracking<Datum, Trajectory, Output>(
+  adapter: GepaAdapter<Datum, Trajectory, Output>,
+): {
+  adapter: GepaAdapter<Datum, Trajectory, Output>;
+  maxInFlight: () => number;
+} {
   let inFlight = 0;
   let peak = 0;
 
@@ -2615,7 +2618,7 @@ async function recordRunContexts(args: {
     seed: 1,
   }).optimize({
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: {
       ...adapter,
       evaluate: (evaluateArgs) => {
@@ -2661,7 +2664,7 @@ function createObjectiveAdapter(): GepaAdapter<
 describe("optimize proposal strategies", () => {
   const task = {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: createKeywordAdapter(),
     reflect: createKeywordReflector(),
     maxMetricCalls: 400,

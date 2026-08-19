@@ -211,8 +211,8 @@ const result = await gepa.optimize({
     instruction:
       "Extract the vendor, amount and currency from the invoice line.",
   },
-  trainset: TRAIN,
-  valset: VAL,
+  trainingSet: TRAIN,
+  validationSet: VAL,
   adapter,
   reflect,
   maxMetricCalls: 120,

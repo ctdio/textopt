@@ -21,7 +21,7 @@ function baseAdapter(): Adapter<
 }
 
 /**
- * "spiky" scores 0.5 over the whole valset but reads a perfect 1.0 whenever a
+ * "spiky" scores 0.5 over the whole validation set but reads a perfect 1.0 whenever a
  * minibatch lands on instances 0-1. "steady" is worth 0.75 on every instance.
  * Screening on a single lucky reading therefore rates the worse candidate
  * higher, and a bar that only ever rises locks the better one out for good.
@@ -40,7 +40,7 @@ function noisyAdapter(): Adapter<{ id: number }, unknown, string> {
   };
 }
 
-/** Half the trainset scores perfectly, so bootstrapping has something to keep. */
+/** Half the trainingSet scores perfectly, so bootstrapping has something to keep. */
 function demoAdapter(): Adapter<
   { id: number; good: boolean },
   unknown,
@@ -85,7 +85,7 @@ function pairingAdapter(): Adapter<{ format: string }, unknown, string> {
 function jointTask() {
   return {
     seedCandidate: { alpha: "", beta: "" },
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: baseAdapter(),
     reflect: UNUSED_REFLECT,
     componentOptions: JOINT_OPTIONS,
@@ -163,7 +163,7 @@ describe("MiproOptimizer", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { alpha: "", beta: "" },
-      trainset: Array.from({ length: 4 }, () => ({ format: "json" })),
+      trainingSet: Array.from({ length: 4 }, () => ({ format: "json" })),
       adapter: pairingAdapter(),
       reflect: UNUSED_REFLECT,
       componentOptions: {
@@ -185,7 +185,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { alpha: "" },
-      trainset: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }],
+      trainingSet: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }],
       adapter: noisyAdapter(),
       reflect: UNUSED_REFLECT,
       componentOptions: { alpha: ["spiky", "steady"] },
@@ -205,7 +205,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: demoAdapter(),
       reflect: async () => "```\nproposal\n```",
       demoComponents: ["demos"],
@@ -221,7 +221,7 @@ describe("MiproOptimizer", () => {
     expect(result.reflectionCalls).toBe(2);
   });
 
-  test("re-runs the trainset for each demo set", async () => {
+  test("re-runs the trainingSet for each demo set", async () => {
     // A stochastic system does not give the same verdict twice. Here nothing
     // succeeds on first sight and everything succeeds on second, so a single
     // harvesting pass comes back empty and only an independent pass per set
@@ -237,7 +237,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map((datum) => `answer ${datum.id}`),
@@ -272,7 +272,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map(() => "wrong"),
@@ -302,7 +302,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "seeded block" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: demoAdapter(),
       reflect: async () => "```\nproposal\n```",
       demoComponents: ["demos"],
@@ -321,7 +321,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: demoAdapter(),
       reflect: async () => "```\nproposal\n```",
       demoComponents: ["demos"],
@@ -338,7 +338,7 @@ describe("MiproOptimizer", () => {
     await expect(
       new MiproOptimizer({ maxTrials: 1, minibatchSize: 2 }).optimize({
         seedCandidate: { demos: "" },
-        trainset: DEMO_TRAINSET,
+        trainingSet: DEMO_TRAINSET,
         adapter: demoAdapter(),
         reflect: UNUSED_REFLECT,
         demoComponents: ["demos"],
@@ -360,7 +360,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map((datum) => `answer ${datum.id}`),
@@ -389,7 +389,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer.", demos: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: demoAdapter(),
       reflect: async () => "```\nproposal\n```",
       demoComponents: ["demos"],
@@ -413,7 +413,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { first: "", second: "" },
-      trainset: DEMO_TRAINSET,
+      trainingSet: DEMO_TRAINSET,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map((datum) => `answer ${datum.id}`),
@@ -448,7 +448,7 @@ describe("MiproOptimizer", () => {
       seed: 2,
     }).optimize({
       seedCandidate: { a: "", b: "", c: "", d: "", e: "" },
-      trainset: Array.from({ length: 4 }, (_, n) => ({ n })),
+      trainingSet: Array.from({ length: 4 }, (_, n) => ({ n })),
       adapter: {
         evaluate: ({ batch, candidate }) => {
           const parts = names.map((name) => candidate[name] as string);
@@ -492,7 +492,7 @@ describe("MiproOptimizer", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { a: "", b: "", c: "", d: "" },
-      trainset: Array.from({ length: 4 }, (_, n) => ({ n })),
+      trainingSet: Array.from({ length: 4 }, (_, n) => ({ n })),
       adapter: {
         evaluate: ({ batch, candidate }) => {
           const seeded = names.every((name) => candidate[name] === "");
@@ -532,8 +532,8 @@ describe("MiproOptimizer", () => {
         seed,
       }).optimize({
         seedCandidate: { a: "" },
-        trainset: Array.from({ length: 6 }, (_, n) => ({ n })),
-        valset: Array.from({ length: 6 }, (_, n) => ({ n: n + 100 })),
+        trainingSet: Array.from({ length: 6 }, (_, n) => ({ n })),
+        validationSet: Array.from({ length: 6 }, (_, n) => ({ n: n + 100 })),
         adapter: {
           evaluate: ({ batch, candidate }) => ({
             outputs: batch.map(() => ""),
@@ -581,7 +581,7 @@ describe("MiproOptimizer", () => {
         retriever: "Find the relevant passage.",
         writer: "Answer in one sentence.",
       },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: baseAdapter(),
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
@@ -611,7 +611,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       seedCandidate: { instruction: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: baseAdapter(),
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
@@ -636,7 +636,7 @@ describe("MiproOptimizer", () => {
       instructionsPerComponent: 3,
     }).optimize({
       seedCandidate: { instruction: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: baseAdapter(),
       // The first call writes the dataset summary, so proposals start at one.
       reflect: async ({ prompt }) => {
@@ -669,7 +669,7 @@ describe("MiproOptimizer", () => {
       exemplars: 2,
     }).optimize({
       seedCandidate: { instruction: "Answer." },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: baseAdapter(),
       reflect: async ({ prompt }) => {
         prompts.push(prompt);
@@ -720,7 +720,7 @@ describe("MiproOptimizer", () => {
   });
 
   test("stops once no full sweep is affordable", async () => {
-    // A twenty-instance valset against single-instance minibatches: after the
+    // A twenty-instance validation set against single-instance minibatches: after the
     // seed sweep the allowance still covers plenty of readings but never
     // another sweep, so nothing found from here could be promoted and the
     // incumbent is already decided. Spending the rest on readings nobody can
@@ -731,7 +731,7 @@ describe("MiproOptimizer", () => {
       seed: 5,
     }).optimize({
       ...jointTask(),
-      trainset: Array.from({ length: 20 }, () => KEYWORD_EXAMPLES[0]!),
+      trainingSet: Array.from({ length: 20 }, () => KEYWORD_EXAMPLES[0]!),
       maxMetricCalls: 25,
     });
 
@@ -751,13 +751,13 @@ describe("MiproOptimizer", () => {
     }
   });
 
-  test("scores the winner on a held-out testset", async () => {
+  test("scores the winner on a held-out testSet", async () => {
     const result = await new MiproOptimizer({
       maxTrials: 4,
       minibatchSize: 2,
     }).optimize({
       ...jointTask(),
-      testset: [
+      testSet: [
         { question: "held out, satisfied", required: ["hold"] },
         { question: "held out, unsatisfiable", required: ["zzz-never"] },
       ],

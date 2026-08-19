@@ -77,7 +77,7 @@ export interface AiSdkEvidence {
   error?: string;
 }
 
-export interface AiSdkAdapterOptions<Datum, Out> {
+export interface AiSdkAdapterOptions<Datum, Output> {
   /**
    * Execute the system for one dataset row. Return the AI SDK result directly:
    * `run: ({ candidate, datum }) => generateText({ model, system: candidate.system, prompt: datum.q })`
@@ -97,10 +97,10 @@ export interface AiSdkAdapterOptions<Datum, Out> {
     signal?: AbortSignal;
   }) => Promise<AiSdkResultLike>;
   /** Defaults to `result.text`. Required when optimizing structured output. */
-  toOutput?: (result: AiSdkResultLike) => Out;
+  toOutput?: (result: AiSdkResultLike) => Output;
   score: (args: {
     datum: Datum;
-    output: Out | null;
+    output: Output | null;
     result: AiSdkResultLike | null;
     trace: AiSdkTrace;
   }) => ScoreResult | Promise<ScoreResult>;
@@ -117,7 +117,7 @@ export interface AiSdkAdapterOptions<Datum, Out> {
    */
   buildRecord?: (args: {
     datum: Datum;
-    output: Out | null;
+    output: Output | null;
     trace: AiSdkTrace;
     score: number;
     feedback: string;
@@ -131,9 +131,9 @@ const DEFAULT_CONCURRENCY = 8;
  * Optimizes the text components of a Vercel AI SDK call — system prompts, tool
  * descriptions, output instructions — by re-running `run` with each candidate.
  */
-export function createAiSdkAdapter<Datum, Out = string>(
-  options: AiSdkAdapterOptions<Datum, Out>,
-): GepaAdapter<Datum, AiSdkTrace, Out | null> {
+export function createAiSdkAdapter<Datum, Output = string>(
+  options: AiSdkAdapterOptions<Datum, Output>,
+): GepaAdapter<Datum, AiSdkTrace, Output | null> {
   const {
     run,
     toOutput,
@@ -144,7 +144,7 @@ export function createAiSdkAdapter<Datum, Out = string>(
   } = options;
 
   const extractOutput =
-    toOutput ?? ((result: AiSdkResultLike) => (result.text ?? "") as Out);
+    toOutput ?? ((result: AiSdkResultLike) => (result.text ?? "") as Output);
 
   return {
     evaluate: async ({
@@ -213,7 +213,7 @@ export function createAiSdkAdapter<Datum, Out = string>(
         signal,
       });
 
-      const evaluation: EvaluationBatch<AiSdkTrace, Out | null> = {
+      const evaluation: EvaluationBatch<AiSdkTrace, Output | null> = {
         outputs: results.map((result) => result.output),
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),

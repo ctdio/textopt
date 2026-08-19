@@ -120,7 +120,8 @@ export function fullEvaluationPolicy<
   K extends string = string,
 >(): ValEvaluationPolicy<Datum, K> {
   return {
-    selectInstances: ({ valset }) => valset.map((_, index) => index),
+    selectInstances: ({ validationSet }) =>
+      validationSet.map((_, index) => index),
     bestCandidate: bestByMeanThenCoverage,
   };
 }
@@ -144,9 +145,9 @@ export function subsampledEvaluationPolicy<
   }
 
   return {
-    selectInstances: ({ valset, rng }) =>
+    selectInstances: ({ validationSet, rng }) =>
       rng.sample(
-        valset.map((_, index) => index),
+        validationSet.map((_, index) => index),
         size,
       ),
     bestCandidate: bestByMeanThenCoverage,

@@ -9,20 +9,20 @@ import type { Adapter, Candidate } from "./types.js";
  * that the output is one the system actually produced and the metric actually
  * rewarded.
  */
-export interface Demo<Datum = unknown, Out = unknown> {
+export interface Demo<Datum = unknown, Output = unknown> {
   input: Datum;
-  output: Out;
+  output: Output;
   /** Present on harvested demos, absent on ones recovered from a block. */
   score?: number;
 }
 
-export type DemoRenderer<Datum = unknown, Out = unknown> = (args: {
-  demo: Demo<Datum, Out>;
+export type DemoRenderer<Datum = unknown, Output = unknown> = (args: {
+  demo: Demo<Datum, Output>;
   index: number;
 }) => string;
 
-export interface BootstrapResult<Datum, Out> {
-  demos: Demo<Datum, Out>[];
+export interface BootstrapResult<Datum, Output> {
+  demos: Demo<Datum, Output>[];
   /** The demos as a candidate component, ready to seed a run with. */
   block: string;
   /** Rollouts this cost. Bootstrapping is cheap, not free. */
@@ -39,7 +39,7 @@ const DEFAULT_MAX_DEMOS = 4;
 const DEFAULT_MIN_SCORE = 1;
 
 /**
- * Harvest demonstrations by running a candidate over the trainset and keeping
+ * Harvest demonstrations by running a candidate over the training set and keeping
  * the rollouts the metric rewarded.
  *
  * The cheapest signal in the whole library: a rollout that scored well is
@@ -51,14 +51,14 @@ const DEFAULT_MIN_SCORE = 1;
  */
 export async function bootstrapDemos<
   Datum,
-  Traj,
-  Out,
+  Trajectory,
+  Output,
   K extends string = string,
 >(args: {
-  adapter: Adapter<Datum, Traj, Out, K>;
+  adapter: Adapter<Datum, Trajectory, Output, K>;
   /** The candidate to run. Usually the seed, sometimes a run's winner. */
   candidate: Candidate<K>;
-  trainset: readonly Datum[];
+  trainingSet: readonly Datum[];
   /** Score a rollout must reach to be kept. Default 1. */
   minScore?: number;
   /** Demos to collect before stopping. Default 4. */
@@ -68,41 +68,41 @@ export async function bootstrapDemos<
    * enough demos exist, at the cost of less concurrency inside the adapter.
    */
   batchSize?: number;
-  /** Ceiling on rollouts. Defaults to one pass over the trainset. */
+  /** Ceiling on rollouts. Defaults to one pass over the trainingSet. */
   maxMetricCalls?: number;
-  /** Shuffles the trainset first, so demos are not all drawn from its head. */
+  /** Shuffles the trainingSet first, so demos are not all drawn from its head. */
   rng?: Rng;
-  renderDemo?: DemoRenderer<Datum, Out>;
+  renderDemo?: DemoRenderer<Datum, Output>;
   signal?: AbortSignal;
-}): Promise<BootstrapResult<Datum, Out>> {
+}): Promise<BootstrapResult<Datum, Output>> {
   const {
     adapter,
     candidate,
-    trainset,
+    trainingSet,
     minScore = DEFAULT_MIN_SCORE,
     maxDemos = DEFAULT_MAX_DEMOS,
     batchSize = maxDemos,
-    maxMetricCalls = trainset.length,
+    maxMetricCalls = trainingSet.length,
     rng,
     renderDemo,
     signal,
   } = args;
 
-  if (trainset.length === 0) {
-    throw new Error("bootstrapDemos requires a non-empty trainset");
+  if (trainingSet.length === 0) {
+    throw new Error("bootstrapDemos requires a non-empty trainingSet");
   }
 
   const budget = createBudget({ maxMetricCalls });
   // Uncached on purpose: the cache stores scores, and a demo needs the output
   // the rollout produced, which a cache hit cannot return.
-  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
     ...(signal === undefined ? {} : { signal }),
   });
 
-  const order = rng === undefined ? [...trainset] : rng.shuffle(trainset);
-  const demos: Demo<Datum, Out>[] = [];
+  const order = rng === undefined ? [...trainingSet] : rng.shuffle(trainingSet);
+  const demos: Demo<Datum, Output>[] = [];
   let attempted = 0;
 
   for (let start = 0; start < order.length; start += batchSize) {
@@ -138,7 +138,7 @@ export async function bootstrapDemos<
       }
       demos.push({
         input: batch[index] as Datum,
-        output: evaluation.outputs[index] as Out,
+        output: evaluation.outputs[index] as Output,
         score,
       });
     }
@@ -163,9 +163,9 @@ export async function bootstrapDemos<
  * parsed can only be replaced wholesale, throwing away every example found
  * before it.
  */
-export function formatDemos<Datum, Out>(
-  demos: readonly Demo<Datum, Out>[],
-  options: { render?: DemoRenderer<Datum, Out> } = {},
+export function formatDemos<Datum, Output>(
+  demos: readonly Demo<Datum, Output>[],
+  options: { render?: DemoRenderer<Datum, Output> } = {},
 ): string {
   const { render = renderDefault } = options;
 
@@ -202,8 +202,8 @@ export function parseDemos(text: string): Demo[] {
   return demos;
 }
 
-function renderDefault<Datum, Out>(args: {
-  demo: Demo<Datum, Out>;
+function renderDefault<Datum, Output>(args: {
+  demo: Demo<Datum, Output>;
   index: number;
 }): string {
   const { demo } = args;

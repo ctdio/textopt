@@ -24,7 +24,7 @@ describe("candidateHash", () => {
 });
 
 describe("evaluationCacheKey", () => {
-  test("separates train and val instances that share an id", () => {
+  test("separates training and validation instances that share an id", () => {
     const hash = candidateHash({ a: "one" });
 
     expect(

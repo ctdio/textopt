@@ -611,7 +611,7 @@ describe("createLangChainAdapter driven by GepaOptimizer", () => {
     const gepa = new GepaOptimizer({ minibatchSize: 2, seed: 7 });
     const result = await gepa.optimize({
       seedCandidate: { instruction: "classify" },
-      trainset: TICKETS,
+      trainingSet: TICKETS,
       adapter,
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,

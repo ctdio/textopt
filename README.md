@@ -1,8 +1,8 @@
 # textopt
 
-Framework-agnostic prompt optimization for TypeScript. Four search algorithms behind one contract, so the choice of optimizer is a line of code rather than a rewrite.
+Prompt optimization for TypeScript, with GEPA, OPRO, MIPRO, and random search behind a shared interface.
 
-You give it a seed candidate (a map of named text components), a dataset, and a way to score a rollout with _textual feedback_. It searches for text that scores better, reading the feedback to write each proposal instead of mutating blindly.
+A run takes a seed candidate, a dataset, and an adapter that evaluates each rollout. Reflective optimizers use the adapter's textual feedback to propose better candidates.
 
 ```ts
 const result = await new GepaOptimizer({ minibatchSize: 3, seed: 11 }).optimize(
@@ -10,8 +10,8 @@ const result = await new GepaOptimizer({ minibatchSize: 3, seed: 11 }).optimize(
     seedCandidate: {
       system: "Classify the support ticket. Answer with one word.",
     },
-    trainset,
-    valset,
+    trainingSet,
+    validationSet,
     adapter, // how to run and score your system
     reflect, // any text-in, text-out model
     maxMetricCalls: 150,
@@ -21,13 +21,11 @@ const result = await new GepaOptimizer({ minibatchSize: 3, seed: 11 }).optimize(
 result.bestCandidate; // { system: "..." }, same keys as the seed, checked at compile time
 ```
 
-Nothing about the loop is prompt-specific. A candidate component is any named string the system reads: a system prompt, a tool description, a routing rule, a few-shot block, a regex, a config blob.
-
-Swapping `GepaOptimizer` for `OproOptimizer`, `MiproOptimizer`, or `RandomSearchOptimizer` changes nothing else about the call.
+A candidate is a record of named strings. Components can be system prompts, tool descriptions, routing rules, few-shot blocks, regexes, or configuration. All four optimizers use the same call shape.
 
 ## Status
 
-Pre-release. The packages are `private` and not published to npm yet; use the workspace, or vendor the source. 400+ tests, none of which need a network.
+Pre-release. The packages are private and not yet published to npm. The test suite has more than 400 tests and runs without network access.
 
 ## Choosing an optimizer
 
@@ -40,13 +38,13 @@ All four implement the same `Optimizer` interface, take the same adapter, and ac
 | `MiproOptimizer`        | a **scalar** score                | components interact, and the right text for one depends on what the others say.               |
 | `RandomSearchOptimizer` | a **scalar** score                | you want to know whether any of the above is earning its cost.                                |
 
-The distinction that matters most is the first one. GEPA's advantage over ordinary prompt search is that it reads a paragraph explaining each failure and writes the next proposal from it — so a metric that emits only `0.0` gives its reflection step nothing to reason about, and the machinery goes on costing what it costs. That regime is what OPRO is for: it shows the model its own past attempts ordered by score and asks for one that scores higher, which needs no feedback at all.
+Use GEPA when the metric can explain failures in text. A scalar such as `0.0` gives its reflection step little useful information. OPRO only needs scalar scores: its prompt lists previous attempts by score and asks the model to improve on them.
 
-MIPRO answers a different question. GEPA and OPRO both improve components one update at a time and screen each in isolation, which cannot see a pairing that only works as a pair. MIPRO builds a menu of candidate texts per component and searches over **joint configurations** with a Tree-structured Parzen Estimator, scoring most of them on cheap minibatches and promoting only the promising ones to a full sweep.
+GEPA and OPRO update components separately. MIPRO instead searches combinations of per-component options, which lets it find options that work well only together. It screens configurations on minibatches and evaluates promising ones against the full validation set.
 
-The joint part runs all the way down. Configurations are drawn, scored, and promoted as whole units, and the surrogate steering those draws models them as whole units too: its densities are mixtures of kernels centred on observed configurations rather than a histogram per component, so "B works only alongside A" survives into the next proposal instead of flattening into "B tends to appear in good trials". That is Optuna's multivariate sampler, which is what MIPROv2 turns on. Set `multivariate: false` for the independent model, which generalizes from fewer trials when the components really are separate.
+MIPRO's default multivariate TPE models complete configurations. Set `multivariate: false` to model each component independently; that usually needs fewer observations but cannot model interactions between components.
 
-`RandomSearchOptimizer` is deliberately the dumb one: it paraphrases components with no knowledge of how anything scored. It exists to be a control. Reflection costs frontier-model calls, and on an easy task an uninformed paraphrase sometimes matches it — the honest way to find out is to run both.
+`RandomSearchOptimizer` paraphrases components without using their scores. Run it as a baseline to check whether reflection improves enough to justify its model calls.
 
 ```ts
 import { OproOptimizer } from "textopt/opro";
@@ -56,18 +54,18 @@ import { RandomSearchOptimizer } from "textopt/random-search";
 
 ## How GEPA works
 
-GEPA keeps a pool of candidates and a **Pareto frontier taken over validation instances**, not over objectives. `scoreMatrix[candidate][instance]` is the whole selection state: a candidate survives if it is best on at least one instance, even when its mean is mediocre, and parents are sampled in proportion to how many instances they win. That is what stops the search collapsing onto a single local optimum.
+GEPA maintains a pool of candidates and a **Pareto frontier over validation instances**, not objectives. A candidate remains on the frontier while it has the best score for at least one instance. Parent sampling is weighted by the number of instances each candidate wins, preserving candidates with useful strengths even when their mean score is lower.
 
 Each iteration:
 
 1. **Select** a parent from the frontier, and one or more of its components to update.
 2. **Evaluate** the parent on a fresh minibatch, capturing traces.
-3. **Reflect**: the adapter turns the scored batch into per-component evidence (inputs, outputs, feedback, scores), and a reflection model writes new text from it. Proposals already tried and rejected get shown back, so the run stops re-deriving dead ends.
-4. **Screen** the child on the same minibatch. It has to beat its parent there before it costs anything more.
-5. **Sweep** the survivors over the validation set and record them on the frontier.
-6. **Merge**, periodically: when two lineages improved different components, system-aware merge recombines them without re-running the search. Enabled by default for multi-component candidates.
+3. **Reflect** on per-component evidence from the scored batch: inputs, outputs, feedback, and scores. Recent rejected proposals are included to reduce repetition.
+4. **Screen** the child on the same minibatch. Only improvements proceed.
+5. **Sweep** accepted children over the validation set and update the frontier.
+6. **Merge** lineages that improved different components. Merge is enabled by default for multi-component candidates.
 
-The budget is denominated in metric calls (`maxMetricCalls`); cached rollouts are free. Reflection is bounded separately, since it is often the expensive part and no metric budget covers it.
+`maxMetricCalls` limits scored rollouts; cache hits do not count. Reflection calls have a separate limit.
 
 Based on _GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning_.
 
@@ -101,7 +99,7 @@ const gepa = new GepaOptimizer({ minibatchSize: 2, seed: 7 });
 
 const result = await gepa.optimize({
   seedCandidate: { instruction: "Answer the customer's question." },
-  trainset: KEYWORD_EXAMPLES,
+  trainingSet: KEYWORD_EXAMPLES,
   adapter: createKeywordAdapter(),
   reflect: createKeywordReflector(),
   maxMetricCalls: 120,
@@ -121,26 +119,26 @@ The constructor takes settings that are stateless and free of your types; `optim
 
 ## The adapter
 
-The adapter is the only integration seam. Two methods make any system optimizable:
+The adapter connects an optimizer to the system being evaluated:
 
 ```ts
-interface GepaAdapter<Datum, Traj, Out, K extends string> {
-  evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Traj, Out>>;
+interface GepaAdapter<Datum, Trajectory, Output, K extends string> {
+  evaluate(
+    args: EvaluateArgs<Datum, K>,
+  ): Promise<EvaluationBatch<Trajectory, Output>>;
   makeReflectiveDataset(
-    args: MakeReflectiveDatasetArgs<Datum, Traj, Out, K>,
+    args: MakeReflectiveDatasetArgs<Datum, Trajectory, Output, K>,
   ): ReflectiveDataset<K>;
   proposeNewTexts?(args: ProposeArgs<K>): ComponentPatch<K>; // replaces the reflection LLM entirely
 }
 ```
 
-Every method may be sync or async; the signatures above are shown in one form for brevity.
+Methods may be synchronous or asynchronous; the example shows the asynchronous form.
 
-`evaluate` returns one score per instance plus, ideally, one paragraph of feedback per instance. A number tells the search how wrong a candidate was. The feedback tells the reflection model what was wrong, which is the difference between GEPA and random prompt search.
+`evaluate` returns one score per instance and may include textual feedback. GEPA uses that feedback during reflection.
 
-Two things worth wiring up:
-
-- **`args.run`** says where a rollout sits in the optimization (`iteration`, `phase`, `split`, `candidateId`). Forward it to whatever tracing you already have, or your traces are thousands of indistinguishable calls.
-- **`transient`** marks a score produced by a rate limit or a 5xx rather than by the candidate. Transient scores are never cached, so an outage doesn't pin a good candidate to a permanent zero.
+- **`args.run`** identifies the rollout's `iteration`, `phase`, `split`, and `candidateId`. Forward it to your tracing system.
+- **`transient`** marks scores caused by infrastructure failures such as rate limits or 5xx responses. Transient scores are not cached.
 
 ### Vercel AI SDK
 
@@ -183,7 +181,7 @@ const adapter = createLangChainAdapter<Ticket, string>({
 });
 ```
 
-The candidate is injected by rebuilding the runnable, so anything downstream that reads candidate text is optimizable. LLM, tool, and retriever spans land in the trace (chain spans too, behind `includeChainSteps`), and every rollout carries `textopt_iteration` / `textopt_phase` / `textopt_split` / `textopt_candidate_id` metadata, so a LangSmith project can be filtered down to the iteration whose score moved.
+The adapter rebuilds the runnable for each candidate. Traces include LLM, tool, and retriever spans; set `includeChainSteps` to include chain spans. Each rollout also includes `textopt_iteration`, `textopt_phase`, `textopt_split`, and `textopt_candidate_id` metadata for filtering in LangSmith.
 
 ### Braintrust
 
@@ -205,7 +203,7 @@ const adapter = withBraintrustLogging({
 });
 ```
 
-The scorer carries each scorer's rationale through as feedback and each scorer's number through as `objectiveScores`. Logging is a decorator, so it composes with the AI SDK adapter, the LangChain one, or your own.
+The scorer maps scorer rationales to feedback and individual scores to `objectiveScores`. The logging decorator works with the AI SDK adapter, the LangChain adapter, or a custom adapter.
 
 ## The reflection model
 
@@ -221,13 +219,13 @@ const reflect: TextModel = async ({ prompt, signal }) => {
 };
 ```
 
-A LangChain chat model, a raw vendor SDK call, a local model, or a hand-written rule are each an equally valid `TextModel`. An adapter that implements `proposeNewTexts` writes proposals itself and never calls this one, though `reflect` is still required by the type, so pass a stub the way the `pareto` example does.
+A LangChain chat model, vendor SDK call, local model, or deterministic function can implement `TextModel`. If the adapter implements `proposeNewTexts`, it generates proposals without calling `reflect`; the type still requires `reflect`, so pass a stub as shown in the `pareto` example.
 
-One choice worth making on purpose: the system under optimization wants the cheap model, since it is the thing being made better, while reflection wants a frontier model, since it is the part doing the reasoning about failure.
+The model under optimization is usually cheaper than the reflection model, which must analyze failures and revise the candidate.
 
 ### Proposal strategies
 
-By default every proposal is written by the same prompt: show the model the failures, ask for better text. Run that four times against one parent and you tend to get four versions of one idea, because the prompt frames the problem the same way each time.
+By default, every proposal uses the same reflection prompt. Multiple calls against one parent can therefore produce similar revisions.
 
 `reflection.strategies` rotates over several framings instead, one per proposal slot:
 
@@ -240,15 +238,15 @@ new GepaOptimizer({
 });
 ```
 
-The shipped rotation is the standard reflection prompt, plus one that **simplifies** (prompts accrete instructions as a run goes on, and the shortest version that still scores is usually the one that generalizes), one that **generalizes** away from the specific failures in the batch, and one that **rewrites** from scratch to break out of a lineage that has stopped moving. Each is exported on its own — `buildReflectionPrompt`, `buildSimplifyPrompt`, `buildGeneralizePrompt`, `buildRewritePrompt` — and any `ReflectionPromptBuilder` you write drops into the same list.
+The included rotation alternates the standard prompt with prompts that simplify, generalize, or rewrite the candidate. The builders are exported as `buildReflectionPrompt`, `buildSimplifyPrompt`, `buildGeneralizePrompt`, and `buildRewritePrompt`; custom `ReflectionPromptBuilder` functions use the same interface.
 
-This is opt-in. The default remains the single published GEPA prompt.
+This behavior is opt-in. The default is the prompt from the GEPA reference implementation.
 
 ## Few-shot demos
 
-A demo block is just another component, so the search optimizes it like any other string. What is worth having is a way to fill it with examples the system actually got right, rather than hand-writing them.
+Few-shot examples can be stored in a candidate component and optimized with the other text. textopt can populate that component from successful training rollouts.
 
-**Before a run**, `bootstrapDemos` runs your seed candidate over the trainset and keeps the rollouts that scored well:
+**Before a run**, `bootstrapDemos` runs your seed candidate over the trainingSet and keeps the rollouts that scored well:
 
 ```ts
 import { bootstrapDemos } from "textopt";
@@ -256,7 +254,7 @@ import { bootstrapDemos } from "textopt";
 const { block, demos, metricCalls } = await bootstrapDemos({
   adapter,
   candidate: seedCandidate,
-  trainset,
+  trainingSet,
   minScore: 0.9,
   maxDemos: 4,
 });
@@ -280,7 +278,7 @@ const adapter = {
 };
 ```
 
-A proposal appends to the block its parent already holds rather than replacing it, so examples accumulate along the accepted lineage — a demo persists only if the candidate carrying it beat its parent, the same bar every other component is held to.
+Each proposal appends demos to its parent's block. A demo remains in the lineage only when the candidate containing it is accepted.
 
 ## Configuring GEPA
 
@@ -303,9 +301,9 @@ new GepaOptimizer({
 });
 ```
 
-`GepaTask` (per call) carries the problem, its data, and its IO: `seedCandidate`, `trainset`, `adapter`, `reflect`, `maxMetricCalls`, an optional `valset` that defaults to the trainset, an optional held-out `testset`, plus `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, `resumeFrom`, `signal`.
+`GepaTask` (per call) carries the problem, its data, and its IO: `seedCandidate`, `trainingSet`, `adapter`, `reflect`, `maxMetricCalls`, an optional `validationSet` that defaults to the trainingSet, an optional held-out `testSet`, plus `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, `resumeFrom`, `signal`.
 
-Component names are inferred from `seedCandidate` and every other position is `NoInfer`, so a misspelled component is a compile error rather than a silent no-op.
+Component names are inferred from `seedCandidate`. Other positions use `NoInfer`, so misspelled component names fail type checking.
 
 Swappable strategies ship in `textopt/gepa`: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `fullEvaluationPolicy`, `subsampledEvaluationPolicy`.
 
@@ -323,8 +321,8 @@ const result = await new OproOptimizer({
   seed: 11,
 }).optimize({
   seedCandidate,
-  trainset,
-  valset,
+  trainingSet,
+  validationSet,
   adapter,
   reflect,
   maxMetricCalls: 300,
@@ -333,9 +331,9 @@ const result = await new OproOptimizer({
 result.trajectory; // every candidate scored, in the order it was tried
 ```
 
-By default every proposal is scored on the whole `valset`. Set `scoringSetSize` and proposals are screened instead on a fixed slice of the trainset, with the incumbent swept in full every `fullEvalInterval` rounds — the paper's economics, and what makes a valset large enough to trust affordable. On a 30-instance valset, screening on 12 halved the rollouts and cost nothing in quality.
+By default, every proposal is scored on the full `validationSet`. With `scoringSetSize`, proposals are screened on a fixed subset of `trainingSet`, and the incumbent receives a full sweep every `fullEvalInterval` rounds. In a 30-instance validation set, screening on 12 instances halved rollout count without reducing the measured best score.
 
-The meta-prompt carries the strongest attempts so far with their scores, in **ascending** order, and asks for one that scores higher. The ordering is load-bearing rather than cosmetic — the best attempt sits closest to the request, where the model attends to it most. Scores are scaled to integers (`scoreScale`, default 100) for the same reason: models discriminate 41 from 68 far more reliably than 0.41 from 0.68.
+The meta-prompt lists the strongest attempts in ascending score order, placing the best attempt nearest the request. `scoreScale` converts scores to integers (100 by default), because models distinguish values such as 41 and 68 more reliably than 0.41 and 0.68.
 
 ### MIPRO
 
@@ -347,11 +345,11 @@ const result = await new MiproOptimizer({
   seed: 11,
 }).optimize({
   seedCandidate,
-  trainset,
-  valset,
+  trainingSet,
+  validationSet,
   adapter,
   reflect,
-  demoComponents: ["demos"], // menu bootstrapped from the trainset
+  demoComponents: ["demos"], // menu bootstrapped from the training set
   maxMetricCalls: 600,
 });
 
@@ -359,11 +357,11 @@ result.menu; // the space that was searched, per component
 result.observations; // every configuration tried, and which earned a full sweep
 ```
 
-It first builds a menu per component — the seed text, plus instructions written by `reflect` against varied style hints so the menu spreads over approaches instead of rewording one idea. Then it searches configurations of that menu with a TPE surrogate: model where the good trials live versus the rest, sample from the good density, take the best of the batch. Trials are scored on cheap minibatches, and only the configurations that screen well there are promoted to a full validation sweep, so the expensive measurement is spent on the candidates that earned it.
+MIPRO first builds a menu for each component from the seed text and variants generated by `reflect`. A TPE surrogate then proposes configurations from those menus. Trials run on minibatches; selected configurations receive a full validation sweep.
 
-`componentOptions` supplies menu entries verbatim, with no reflection call. `demoComponents` goes further and bootstraps a component's menu from the trainset, which is MIPROv2's other half — instructions and demonstrations searched together rather than instructions alone. Demos are harvested, not authored, so no reflection model ever sees them.
+`componentOptions` adds menu entries without reflection calls. `demoComponents` builds menus of few-shot blocks from successful training rollouts, allowing instructions and demonstrations to be searched together.
 
-Promotion follows MIPROv2's cadence rather than a running bar: every `fullEvalInterval` trials, the configuration with the best **average** minibatch reading that has not been swept yet earns a full evaluation. Averaging matters — a single minibatch is a noisy reading, and promoting on one alone lets a lucky draw decide the run.
+Every `fullEvalInterval` trials, MIPRO fully evaluates the unswept configuration with the highest average minibatch score. Averaging repeated observations reduces the effect of a lucky minibatch.
 
 ### Random search
 
@@ -373,48 +371,48 @@ const result = await new RandomSearchOptimizer({
   seed: 11,
 }).optimize({
   seedCandidate,
-  trainset,
-  valset,
+  trainingSet,
+  validationSet,
   adapter,
   reflect,
   maxMetricCalls: 300,
 });
 ```
 
-It paraphrases one component per round and keeps whatever scores best. The paraphrase prompt states outright that it has no information about how the current text performed — the ablation is the point. Compare its `bestScore` against a reflective run on the same budget: that difference is what reflection bought on _your_ task, and it is the only way to know whether it was worth the frontier-model calls.
+Random search paraphrases one component per round and keeps the highest-scoring candidate. Its prompt receives no performance data. Compare it with a reflective optimizer under the same metric budget to measure the benefit of reflection.
 
 ## Measuring honestly
 
-Selection pressure is applied to the valset for the entire run: candidates are kept because they win on it, and the winner is the one that won there most. So `bestScore` is fitted to the valset by construction, and reporting it as the improvement overstates the improvement by an amount nobody can see from the number itself.
+The optimizer selects candidates against `validationSet`, so `bestScore` is fitted to that set and may overstate performance on unseen data.
 
-Pass a `testset` and the winner is scored on it once, after the search is over:
+Pass a `testSet` and the winner is scored on it once, after the search is over:
 
 ```ts
 const result = await optimizer.optimize({
   seedCandidate,
-  trainset,
-  valset,
-  testset, // never seen by the search
+  trainingSet,
+  validationSet,
+  testSet, // never seen by the search
   adapter,
   reflect,
   maxMetricCalls: 300,
 });
 
-result.bestScore; // on the valset — the search selected for this
+result.bestScore; // on the validation set — the search selected for this
 result.testScore; // on instances no candidate was ever selected against
 result.testMetricCalls; // charged separately, not against maxMetricCalls
 ```
 
-A gap between the two is the overfitting, quantified. The held-out sweep is measurement rather than search, so it does not come out of `maxMetricCalls` and is reported on its own; and the resume fingerprint deliberately ignores the testset, so adding one to an existing run is not treated as a different problem.
+The gap between `bestScore` and `testScore` estimates validation overfitting. Test rollouts are reported separately and do not count against `maxMetricCalls`. The resume fingerprint ignores `testSet`, so it can be added when resuming a run.
 
-Every optimizer supports this — it is on the shared `OptimizerTask` and `OptimizerResult`, not on GEPA.
+All optimizers expose these fields through `OptimizerTask` and `OptimizerResult`.
 
 ## Budget, caching, resume
 
-- **Caching.** Scores are cached per split + candidate text + instance id, and hits are not charged to the budget: a sweep is priced against the cache before it runs. The key covers the _whole_ candidate, so a child never reuses its parent's scores. Hits come from re-scoring the same candidate. The common case is a merged candidate screened on a validation subsample and then swept in full, along with partial `valEvaluationPolicy` sweeps and resumed runs replaying against a checkpointed cache. Instance ids default to a content hash of the datum, falling back to its position when it will not serialize, so pass `instanceId` for non-serializable data or for ids you can read in a trace. Pass `cache: false` to disable.
-- **Checkpoints.** `onCheckpoint` fires after the seed is scored and after every iteration with a plain-JSON `GepaSnapshot`: the candidate pool, budget spent, RNG position, sampler state, rejected proposals, merge bookkeeping, and by default the cached scores. Hand it back as `resumeFrom` and the run continues on the same trajectory it would have taken uninterrupted. Every snapshot is fingerprinted against its seed candidate, instance ids, and seed, so resuming against a different setup is refused rather than silently mis-scored.
-- **Events.** `onEvent` emits a typed stream: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with why), `error`, `finish`.
-- **Result.** Beyond `bestCandidate` / `bestScore`: the held-out `testScore` and `testMetricCalls` when a testset was given, the full `candidates` pool with lineage, the `paretoFrontier`, the `scoreMatrix`, `perObjectiveBest`, `metricCalls`, `reflectionCalls`, `cacheHits`, `stopReason`, and the final `snapshot`.
+- **Caching.** Cache keys include the split, complete candidate, and instance ID. Cache hits do not count against the metric budget. Instance IDs default to a content hash, with the row position as a fallback for values that cannot be serialized. Provide `instanceId` for non-serializable data or readable trace IDs. Set `cache: false` to disable caching.
+- **Checkpoints.** `onCheckpoint` runs after seed evaluation and each iteration. Its `GepaSnapshot` contains the candidate pool, budgets, RNG and sampler state, rejected proposals, merge state, and cached scores. Resume with `resumeFrom`. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed.
+- **Events.** `onEvent` receives `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected`, `error`, and `finish` events.
+- **Result.** The result includes scores, held-out test results, candidate lineage, the Pareto frontier, score matrix, per-objective best candidates, call counts, stop reason, and final snapshot.
 
 ## Examples
 

@@ -18,8 +18,8 @@ export interface BraintrustLoggerLike {
 
 export interface BraintrustLoggingOptions<
   Datum,
-  Traj,
-  Out,
+  Trajectory,
+  Output,
   K extends string,
   Wrapped,
 > {
@@ -30,7 +30,7 @@ export interface BraintrustLoggingOptions<
    * adapter's own component names, so decorating one does not widen them back
    * to `string`.
    */
-  adapter: Wrapped & Adapter<Datum, Traj, Out, K>;
+  adapter: Wrapped & Adapter<Datum, Trajectory, Output, K>;
   logger: BraintrustLoggerLike;
   metadata?: Record<string, unknown>;
   toInput?: (datum: Datum) => unknown;
@@ -46,13 +46,13 @@ export interface BraintrustLoggingOptions<
  */
 export function withBraintrustLogging<
   Datum,
-  Traj,
-  Out,
+  Trajectory,
+  Output,
   K extends string,
   Wrapped,
 >(
-  options: BraintrustLoggingOptions<Datum, Traj, Out, K, Wrapped>,
-): Wrapped & Adapter<Datum, Traj, Out, K> {
+  options: BraintrustLoggingOptions<Datum, Trajectory, Output, K, Wrapped>,
+): Wrapped & Adapter<Datum, Trajectory, Output, K> {
   const { adapter, logger, metadata, toInput, toExpected } = options;
 
   return {

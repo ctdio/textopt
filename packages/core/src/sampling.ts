@@ -1,7 +1,7 @@
 import type { Rng } from "./rng.js";
 
 export type BatchSampler<Datum> = ((args: {
-  trainset: readonly Datum[];
+  trainingSet: readonly Datum[];
   /**
    * Position in the sequence of minibatches drawn so far, not the loop
    * iteration. Draws made concurrently within one iteration arrive as
@@ -21,7 +21,7 @@ export type BatchSampler<Datum> = ((args: {
 };
 
 /**
- * Shuffles the trainset once per epoch and walks it in fixed-size chunks, so
+ * Shuffles the training set once per epoch and walks it in fixed-size chunks, so
  * every training example is seen once before any is seen twice.
  */
 export function createEpochShuffledSampler<Datum>(args: {
@@ -33,9 +33,9 @@ export function createEpochShuffledSampler<Datum>(args: {
   let epoch = -1;
   let lastTrainsetSize = -1;
 
-  const sampler: BatchSampler<Datum> = ({ trainset, iteration, rng }) => {
-    if (trainset.length === 0) {
-      throw new Error("Cannot sample a minibatch from an empty trainset");
+  const sampler: BatchSampler<Datum> = ({ trainingSet, iteration, rng }) => {
+    if (trainingSet.length === 0) {
+      throw new Error("Cannot sample a minibatch from an empty trainingSet");
     }
 
     const baseIndex = iteration * minibatchSize;
@@ -44,13 +44,13 @@ export function createEpochShuffledSampler<Datum>(args: {
 
     if (
       shuffled.length === 0 ||
-      trainset.length !== lastTrainsetSize ||
+      trainingSet.length !== lastTrainsetSize ||
       currentEpoch > epoch
     ) {
       epoch = currentEpoch;
-      lastTrainsetSize = trainset.length;
+      lastTrainsetSize = trainingSet.length;
       shuffled = buildPaddedShuffle({
-        size: trainset.length,
+        size: trainingSet.length,
         minibatchSize,
         rng,
       });

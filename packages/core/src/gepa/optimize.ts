@@ -77,7 +77,7 @@ export interface GepaConfig {
      * Validation instances two lineages must share before they may be merged.
      * Default 5, GEPA's `val_overlap_floor`. A merge is judged only on
      * instances both parents were scored on, so below this the gate deciding
-     * whether to keep the child is reading noise. A valset smaller than the
+     * whether to keep the child is reading noise. A validation set smaller than the
      * floor can never merge.
      */
     valOverlapFloor?: number;
@@ -162,17 +162,17 @@ export interface GepaConfig {
  * One run: what is being optimized, over what data, with what run-scoped state
  * and IO.
  *
- * `seedCandidate` and `trainset` are the inference sites for the component
+ * `seedCandidate` and `trainingSet` are the inference sites for the component
  * names and the datum type; every other position is `NoInfer`, so it is checked
  * against them instead of widening them.
  */
 export interface GepaTask<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
-> extends OptimizerTask<Datum, Traj, Out, K> {
-  adapter: GepaAdapter<Datum, Traj, Out, NoInfer<K>>;
+> extends OptimizerTask<Datum, Trajectory, Output, K> {
+  adapter: GepaAdapter<Datum, Trajectory, Output, NoInfer<K>>;
   reflect: TextModel;
   componentSelector?: ComponentSelector<NoInfer<K>>;
   batchSampler?: BatchSampler<NoInfer<Datum>>;
@@ -197,8 +197,8 @@ export interface GepaTask<
 
 export interface GepaResult<
   K extends string = string,
-  Out = unknown,
-> extends OptimizerResult<K, GepaStopReason, Out> {
+  Output = unknown,
+> extends OptimizerResult<K, GepaStopReason, Output> {
   bestCandidateId: number;
   candidates: CandidateRecord<K>[];
   paretoFrontier: CandidateRecord<K>[];
@@ -216,11 +216,11 @@ export interface GepaResult<
   snapshot: GepaSnapshot;
 }
 
-/** A scored batch spread over the whole valset, with gaps where it was not. */
-interface EvaluatedBatch<Out> {
+/** A scored batch spread over the whole validationSet, with gaps where it was not. */
+interface EvaluatedBatch<Output> {
   scores: (number | undefined)[];
   objectiveScores: (Record<string, number> | undefined)[];
-  outputs: (Out | undefined)[];
+  outputs: (Output | undefined)[];
 }
 
 /** One mutation an iteration intends to make, drawn before any of them runs. */
@@ -276,18 +276,20 @@ export class GepaOptimizer implements Optimizer<GepaStopReason> {
 
   async optimize<
     Datum,
-    Traj = unknown,
-    Out = unknown,
+    Trajectory = unknown,
+    Output = unknown,
     const K extends string = string,
-  >(task: GepaTask<Datum, Traj, Out, K>): Promise<GepaResult<K, Out>> {
+  >(
+    task: GepaTask<Datum, Trajectory, Output, K>,
+  ): Promise<GepaResult<K, Output>> {
     return runGepa({ config: this.#config, task });
   }
 }
 
-async function runGepa<Datum, Traj, Out, K extends string>(args: {
+async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   config: GepaConfig;
-  task: GepaTask<Datum, Traj, Out, K>;
-}): Promise<GepaResult<K, Out>> {
+  task: GepaTask<Datum, Trajectory, Output, K>;
+}): Promise<GepaResult<K, Output>> {
   const { config, task } = args;
 
   const {
@@ -313,9 +315,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   // share the state of the first.
   const {
     seedCandidate,
-    trainset,
-    valset = trainset,
-    testset,
+    trainingSet,
+    validationSet = trainingSet,
+    testSet,
     adapter,
     reflect,
     maxMetricCalls,
@@ -342,12 +344,12 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   const proposalConcurrency = proposals?.concurrency ?? 1;
   const survivorsPerIteration = keepCount(proposals?.selection ?? "all");
 
-  if (trainset.length === 0) {
-    throw new Error("optimize requires a non-empty trainset");
+  if (trainingSet.length === 0) {
+    throw new Error("optimize requires a non-empty trainingSet");
   }
-  if (valset.length === 0) {
+  if (validationSet.length === 0) {
     throw new Error(
-      "optimize requires a non-empty valset; the Pareto frontier is tracked over validation instances",
+      "optimize requires a non-empty validationSet; the Pareto frontier is tracked over validation instances",
     );
   }
   if (seedComponents.length === 0) {
@@ -355,12 +357,12 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       "optimize requires a seed candidate with at least one component",
     );
   }
-  // Omitting the testset means "do not measure"; passing an empty one means a
+  // Omitting the test set means "do not measure"; passing an empty one means a
   // split was computed and came out empty, which would report a mean over
   // nothing as a held-out score of 0.
-  if (testset !== undefined && testset.length === 0) {
+  if (testSet !== undefined && testSet.length === 0) {
     throw new Error(
-      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+      "optimize requires a non-empty testSet when one is given; omit it to skip held-out evaluation",
     );
   }
 
@@ -385,15 +387,19 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       },
     });
 
-  const trainIds = trainset.map((datum, index) => instanceId({ datum, index }));
-  const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const trainingIds = trainingSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
+  const validationIds = validationSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
   const testIds =
-    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
+    testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
   const fingerprint = runFingerprint({
     seedCandidate,
-    trainIds,
-    valIds,
+    trainingIds,
+    validationIds,
     seed,
   });
   if (resumeFrom !== undefined && resumeFrom.fingerprint !== fingerprint) {
@@ -439,7 +445,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   const seenCandidates = new Set(
     records.map((record) => candidateFingerprint(record.candidate)),
   );
-  const outputsByCandidate = new Map<number, (Out | undefined)[]>();
+  const outputsByCandidate = new Map<number, (Output | undefined)[]>();
   const rejectedProposals = restoreRejections({
     rejections: resumeFrom?.rejectedProposals ?? {},
     components: seedComponents,
@@ -496,7 +502,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     await onCheckpoint(takeSnapshot());
   }
 
-  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
@@ -521,7 +527,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     phase: EvaluationPhase;
     candidateId: number | null;
     charge?: boolean;
-  }): Promise<ScoredBatch<Out>> {
+  }): Promise<ScoredBatch<Output>> {
     return evaluator.evaluate({ ...args, iteration });
   }
 
@@ -536,23 +542,27 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     instances: readonly number[];
     phase: EvaluationPhase;
     candidateId: number | null;
-  }): Promise<EvaluatedBatch<Out>> {
+  }): Promise<EvaluatedBatch<Output>> {
     const { candidate, instances, phase, candidateId } = args;
 
     const dense = await evaluateCached({
       candidate,
-      batch: instances.map((index) => valset[index] as Datum),
-      ids: instances.map((index) => valIds[index] as string),
+      batch: instances.map((index) => validationSet[index] as Datum),
+      ids: instances.map((index) => validationIds[index] as string),
       split: "val",
       phase,
       candidateId,
     });
 
-    const scores = new Array<number | undefined>(valset.length).fill(undefined);
+    const scores = new Array<number | undefined>(validationSet.length).fill(
+      undefined,
+    );
     const objectiveScores = new Array<Record<string, number> | undefined>(
-      valset.length,
+      validationSet.length,
     ).fill(undefined);
-    const outputs = new Array<Out | undefined>(valset.length).fill(undefined);
+    const outputs = new Array<Output | undefined>(validationSet.length).fill(
+      undefined,
+    );
 
     instances.forEach((instance, position) => {
       // A transient row measured the infrastructure, not the candidate, and
@@ -573,7 +583,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   /** The validation instances this candidate should be scored on. */
   function selectValInstances(candidate: Candidate<K>): number[] {
     const selected = valEvaluationPolicy.selectInstances({
-      valset,
+      validationSet,
       candidate,
       records,
       iteration,
@@ -591,7 +601,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   function addCandidate(args: {
     candidate: Candidate<K>;
     parentIds: number[];
-    evaluation: EvaluatedBatch<Out>;
+    evaluation: EvaluatedBatch<Output>;
     source: CandidateRecord["source"];
     updatedComponents: K[];
   }): CandidateRecord<K> {
@@ -663,7 +673,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   emit({
     type: "start",
     components: seedComponents,
-    valsetSize: valset.length,
+    validationSetSize: validationSet.length,
   });
 
   // A resumed run already has its seed scored; re-scoring it would charge the
@@ -733,7 +743,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     }
 
     const unique = [...new Set(subsample)];
-    const uniqueIds = unique.map((index) => valIds[index] as string);
+    const uniqueIds = unique.map((index) => validationIds[index] as string);
     if (
       !budget.canAfford(
         evaluator.countUncached({
@@ -763,7 +773,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
 
     const uniqueEvaluation = await evaluateCached({
       candidate: proposal.candidate,
-      batch: unique.map((index) => valset[index] as Datum),
+      batch: unique.map((index) => validationSet[index] as Datum),
       ids: uniqueIds,
       split: "val",
       phase: "minibatch",
@@ -802,7 +812,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       !budget.canAfford(
         evaluator.countUncached({
           candidate: proposal.candidate,
-          ids: mergeInstances.map((index) => valIds[index] as string),
+          ids: mergeInstances.map((index) => validationIds[index] as string),
           split: "val",
         }),
       )
@@ -862,7 +872,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
         candidateSelector({ state, rng })
       ] as CandidateRecord<K>;
       const batchIndices = batchSampler({
-        trainset,
+        trainingSet,
         // Each proposal takes the next minibatch in the sampler's schedule, so
         // siblings in one iteration diagnose different failures.
         iteration: iteration * proposalsPerIteration + slot,
@@ -885,8 +895,8 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
 
       plans.push({
         parent,
-        batch: batchIndices.map((index) => trainset[index] as Datum),
-        batchIds: batchIndices.map((index) => trainIds[index] as string),
+        batch: batchIndices.map((index) => trainingSet[index] as Datum),
+        batchIds: batchIndices.map((index) => trainingIds[index] as string),
         componentsToUpdate,
         attempt: iteration * proposalsPerIteration + slot,
       });
@@ -975,7 +985,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       return { status: "skipped" };
     }
 
-    let childEvaluation: ScoredBatch<Out>;
+    let childEvaluation: ScoredBatch<Output>;
     try {
       childEvaluation = await evaluateCached({
         candidate: child,
@@ -1095,7 +1105,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       const instances = selectValInstances(outcome.child);
       const uncached = evaluator.countUncached({
         candidate: outcome.child,
-        ids: instances.map((index) => valIds[index] as string),
+        ids: instances.map((index) => validationIds[index] as string),
         split: "val",
       });
 
@@ -1202,7 +1212,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     // screened, and discarding a child that already earned its place.
     if (
       !budget.canAfford(
-        proposalsPerIteration * minibatchSize * 2 + valset.length,
+        proposalsPerIteration * minibatchSize * 2 + validationSet.length,
       )
     ) {
       stopReason = "budgetExhausted";
@@ -1289,13 +1299,13 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   // Run after the winner is chosen, never before: an evaluation the selection
   // could read would make the held-out set another validation set.
   const testScore =
-    testset === undefined
+    testSet === undefined
       ? undefined
       : mean(
           (
             await evaluateCached({
               candidate: best.candidate,
-              batch: testset,
+              batch: testSet,
               ids: testIds,
               split: "test",
               phase: "test",
@@ -1613,25 +1623,25 @@ function collectDominatorIds(records: readonly CandidateRecord[]): number[] {
  * corrupt the frontier, so the mismatch is refused instead.
  */
 /**
- * Identifies a run by everything the search trajectory depends on. The testset
+ * Identifies a run by everything the search trajectory depends on. The test set
  * is deliberately absent: it never touches selection, so adding one to a
  * resumed run changes nothing about what that run would have done.
  */
 function runFingerprint(args: {
   seedCandidate: Candidate;
-  trainIds: readonly string[];
-  valIds: readonly string[];
+  trainingIds: readonly string[];
+  validationIds: readonly string[];
   seed: number;
 }): string {
-  const { seedCandidate, trainIds, valIds, seed } = args;
+  const { seedCandidate, trainingIds, validationIds, seed } = args;
 
   // Hashed, not embedded: this goes into every snapshot, and only ever gets
   // compared for equality.
   return stableHash({
     seed,
     seedCandidate: candidateFingerprint(seedCandidate),
-    trainIds,
-    valIds,
+    trainingIds,
+    validationIds,
   });
 }
 

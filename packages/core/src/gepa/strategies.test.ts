@@ -91,7 +91,7 @@ describe("fullEvaluationPolicy", () => {
   test("selects every validation instance", () => {
     expect(
       policy.selectInstances({
-        valset: ["a", "b", "c"],
+        validationSet: ["a", "b", "c"],
         candidate: { instruction: "x" },
         records: [],
         iteration: 0,
@@ -122,7 +122,7 @@ describe("fullEvaluationPolicy", () => {
 describe("subsampledEvaluationPolicy", () => {
   test("selects no more instances than the requested size", () => {
     const selected = subsampledEvaluationPolicy({ size: 2 }).selectInstances({
-      valset: ["a", "b", "c", "d"],
+      validationSet: ["a", "b", "c", "d"],
       candidate: { instruction: "x" },
       records: [],
       iteration: 0,
@@ -133,9 +133,9 @@ describe("subsampledEvaluationPolicy", () => {
     expect(new Set(selected).size).toBe(2);
   });
 
-  test("selects every instance when the valset is smaller than the size", () => {
+  test("selects every instance when the validationSet is smaller than the size", () => {
     const selected = subsampledEvaluationPolicy({ size: 5 }).selectInstances({
-      valset: ["a", "b"],
+      validationSet: ["a", "b"],
       candidate: { instruction: "x" },
       records: [],
       iteration: 0,

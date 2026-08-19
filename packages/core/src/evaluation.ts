@@ -27,11 +27,11 @@ export interface EvaluationEvent {
 }
 
 /** Scores plus, when the adapter reports them, their per-objective breakdown. */
-export interface ScoredBatch<Out> {
+export interface ScoredBatch<Output> {
   scores: number[];
   objectiveScores: (Record<string, number> | undefined)[];
   /** Populated only under `trackOutputs`, and only for fresh rollouts. */
-  outputs: (Out | undefined)[];
+  outputs: (Output | undefined)[];
   /** Per instance: the score came from an infrastructure failure, not the candidate. */
   transient: boolean[];
 }
@@ -67,8 +67,8 @@ export interface EvaluateTracedArgs<Datum, K extends string> {
  * package shares it, so caching, budgeting, transient-failure handling and
  * cost reporting behave identically whichever algorithm is running.
  */
-export interface Evaluator<Datum, Traj, Out, K extends string> {
-  evaluate(args: EvaluateBatchArgs<Datum, K>): Promise<ScoredBatch<Out>>;
+export interface Evaluator<Datum, Trajectory, Output, K extends string> {
+  evaluate(args: EvaluateBatchArgs<Datum, K>): Promise<ScoredBatch<Output>>;
   /**
    * A rollout with traces captured, always fresh. Reflection reads the traces,
    * and the cache stores scores rather than trajectories, so a cached instance
@@ -80,7 +80,7 @@ export interface Evaluator<Datum, Traj, Out, K extends string> {
    */
   evaluateTraced(
     args: EvaluateTracedArgs<Datum, K>,
-  ): Promise<EvaluationBatch<Traj, Out> | null>;
+  ): Promise<EvaluationBatch<Trajectory, Output> | null>;
   /**
    * How many of `ids` this candidate has not been scored on yet — what a sweep
    * would actually cost. Lets a caller price an evaluation before committing
@@ -108,8 +108,13 @@ export interface Evaluator<Datum, Traj, Out, K extends string> {
  */
 export class BudgetExhausted extends Error {}
 
-export function createEvaluator<Datum, Traj, Out, K extends string>(args: {
-  adapter: Adapter<Datum, Traj, Out, K>;
+export function createEvaluator<
+  Datum,
+  Trajectory,
+  Output,
+  K extends string,
+>(args: {
+  adapter: Adapter<Datum, Trajectory, Output, K>;
   budget: Budget;
   /** Omit to run uncached; every instance is then a fresh rollout. */
   cache?: EvaluationCache;
@@ -119,7 +124,7 @@ export function createEvaluator<Datum, Traj, Out, K extends string>(args: {
   signal?: AbortSignal;
   /** Resumed counters, so a continued run reports totals rather than deltas. */
   cacheHits?: number;
-}): Evaluator<Datum, Traj, Out, K> {
+}): Evaluator<Datum, Trajectory, Output, K> {
   const {
     adapter,
     budget,
@@ -158,7 +163,7 @@ export function createEvaluator<Datum, Traj, Out, K extends string>(args: {
         return null;
       }
 
-      let evaluation: EvaluationBatch<Traj, Out>;
+      let evaluation: EvaluationBatch<Trajectory, Output>;
       try {
         evaluation = await adapter.evaluate({
           batch,
@@ -203,7 +208,9 @@ export function createEvaluator<Datum, Traj, Out, K extends string>(args: {
       const objectiveScores = new Array<Record<string, number> | undefined>(
         batch.length,
       );
-      const outputs = new Array<Out | undefined>(batch.length).fill(undefined);
+      const outputs = new Array<Output | undefined>(batch.length).fill(
+        undefined,
+      );
       const transient = new Array<boolean>(batch.length).fill(false);
       const pendingIndices: number[] = [];
 
@@ -233,7 +240,7 @@ export function createEvaluator<Datum, Traj, Out, K extends string>(args: {
           unchargedCalls += pendingIndices.length;
         }
 
-        let evaluation: EvaluationBatch<Traj, Out>;
+        let evaluation: EvaluationBatch<Trajectory, Output>;
         try {
           evaluation = await adapter.evaluate({
             batch: pendingIndices.map((index) => batch[index] as Datum),

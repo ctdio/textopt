@@ -33,9 +33,9 @@ export interface LangChainEvidence {
   trace: LangChainTraceStep[];
 }
 
-export interface LangChainAdapterOptions<Datum, Out> {
+export interface LangChainAdapterOptions<Datum, Output> {
   /** Rebuild the chain with the candidate's text injected into its prompts. */
-  buildRunnable: (candidate: Candidate) => Runnable<never, Out>;
+  buildRunnable: (candidate: Candidate) => Runnable<never, Output>;
   /**
    * Per-instance score plus the textual feedback the reflection model reads.
    * Feedback is what separates GEPA from blind search — say what went wrong,
@@ -43,7 +43,7 @@ export interface LangChainAdapterOptions<Datum, Out> {
    */
   score: (args: {
     datum: Datum;
-    output: Out | null;
+    output: Output | null;
     trace: LangChainTrace;
   }) => LangChainScore | Promise<LangChainScore>;
   /** Map a dataset row to the chain's input. Defaults to the row itself. */
@@ -61,7 +61,7 @@ export interface LangChainAdapterOptions<Datum, Out> {
   isTransient?: (err: unknown) => boolean;
   buildRecord?: (args: {
     datum: Datum;
-    output: Out | null;
+    output: Output | null;
     trace: LangChainTrace;
     score: number;
     feedback: string;
@@ -77,9 +77,9 @@ const DEFAULT_CONCURRENCY = 8;
  * anything that reads candidate text — prompts, tool descriptions, routing
  * instructions — is optimizable.
  */
-export function createLangChainAdapter<Datum, Out>(
-  options: LangChainAdapterOptions<Datum, Out>,
-): GepaAdapter<Datum, LangChainTrace, Out | null> {
+export function createLangChainAdapter<Datum, Output>(
+  options: LangChainAdapterOptions<Datum, Output>,
+): GepaAdapter<Datum, LangChainTrace, Output | null> {
   const {
     buildRunnable,
     score,
@@ -110,7 +110,7 @@ export function createLangChainAdapter<Datum, Out>(
         task: async (datum) => {
           const collector = createTraceCollector({ includeChainSteps });
           const startedAt = Date.now();
-          let output: Out | null = null;
+          let output: Output | null = null;
           let failure: string | undefined;
           let transient = false;
 
@@ -169,7 +169,7 @@ export function createLangChainAdapter<Datum, Out>(
         signal,
       });
 
-      const evaluation: EvaluationBatch<LangChainTrace, Out | null> = {
+      const evaluation: EvaluationBatch<LangChainTrace, Output | null> = {
         outputs: results.map((result) => result.output),
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),

@@ -2,7 +2,7 @@
 
 Framework-agnostic prompt optimization for TypeScript: GEPA, OPRO, MIPRO, and a random-search baseline behind one `Optimizer` contract.
 
-Zero dependencies. This is the API reference for the package. For what each algorithm is, how the searches work, and which to reach for, see the [project README](../../README.md).
+This package has no runtime dependencies. For an overview of the algorithms and guidance on choosing one, see the [project README](../../README.md).
 
 ## Entry points
 
@@ -56,47 +56,47 @@ import type {
 
 ### Contracts
 
-**`Candidate<K extends string>`** is `Record<K, string>`: the unit of optimization, a map of named text components. `K` is inferred from the seed candidate, so a misspelled component is a compile error.
+**`Candidate<K extends string>`** is a `Record<K, string>` containing the text components to optimize. `K` is inferred from the seed candidate, so misspelled component names fail type checking.
 
-**`Adapter<Datum, Traj, Out, K>`** is the single integration seam. One method:
+**`Adapter<Datum, Trajectory, Output, K>`** connects an optimizer to the evaluated system:
 
 ```ts
-evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Traj, Out>> | EvaluationBatch<Traj, Out>
+evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Output>> | EvaluationBatch<Trajectory, Output>
 ```
 
-`EvaluateArgs` carries the `batch`, the `candidate`, a `captureTraces` flag, an `EvaluationContext` under `run` (`iteration`, `phase`, `split`, `candidateId`) to forward into your own tracing, and an optional `signal`.
+`EvaluateArgs` contains the `batch`, `candidate`, `captureTraces`, an optional abort `signal`, and a `run` context with `iteration`, `phase`, `split`, and `candidateId`. The run context can be forwarded to a tracing system.
 
-`EvaluationBatch` returns `outputs` and `scores`, one per instance, higher is better. Optional alongside them: `feedback`, `trajectories`, `objectiveScores`, `transient`. Feedback is what a reflective optimizer reads, and without it the search is blind.
+`EvaluationBatch` contains one output and score per instance. Higher scores are better. It may also include `feedback`, `trajectories`, `objectiveScores`, and `transient` flags. Reflective optimizers use `feedback` to generate revisions.
 
-**`ScoreResult`** is what a per-instance scorer returns: `score`, plus optional `feedback`, `objectiveScores`, and `transient`. It is shared across adapters, so a scorer written for one works in another.
+**`ScoreResult`** is the common return type for per-instance scorers: `score`, with optional `feedback`, `objectiveScores`, and `transient`.
 
-**`transient`** marks a score caused by infrastructure rather than by the candidate: a rate limit, a 5xx, a network blip. Transient scores are never cached, so an outage cannot pin a candidate to a permanent zero.
+**`transient`** marks scores caused by infrastructure failures such as rate limits, 5xx responses, or network errors. Transient scores are not cached.
 
-**`Optimizer<Stop extends string>`** has exactly one method, `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` is the run-level input every optimizer needs (`seedCandidate`, `trainset`, `valset`, `testset`, `adapter`, `maxMetricCalls`, `signal`). `OptimizerResult` is what every optimizer reports (`bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `testScore`, `testMetricCalls`, `stopReason`). An optimizer's own task and result types extend these.
+**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `testScore`, `testMetricCalls`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
 
-**`testset`** is held out of the search entirely and scored once, on the winner, after the run ends. Selection pressure is applied to the valset throughout, so `bestScore` is partly fitted to it; `testScore` is the only number in a result that no candidate was ever selected against. Those rollouts are measurement rather than search, so they are reported as `testMetricCalls` and are not charged against `maxMetricCalls`.
+**`testSet`** is excluded from search and evaluated once against the winner. Because candidates are selected on `validationSet`, `bestScore` may be fitted to it. `testScore` measures held-out performance. Test rollouts are reported as `testMetricCalls` and do not count against `maxMetricCalls`.
 
-**`TextModel`** is `({ prompt, signal }) => Promise<string>`, the whole provider seam.
+**`TextModel`** is the provider-independent interface `({ prompt, signal }) => Promise<string>`.
 
 ### Values
 
-**`createMemoryCache({ maxEntries = 100_000, entries })`** returns an in-memory `EvaluationCache`. `entries` restores a previous run's checkpointed scores. Eviction is oldest-first once `maxEntries` is reached.
+**`createMemoryCache({ maxEntries = 100_000, entries })`** returns an in-memory `EvaluationCache`. Pass `entries` to restore checkpointed scores. When full, the cache evicts the oldest entry.
 
-To back the cache with Redis, SQLite, or a file, implement **`EvaluationCache`** yourself: `get(key)`, `set(key, cached)`, and optionally `entries()`. Leave `entries()` off a store that is already durable and has nothing to checkpoint.
+For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with `get(key)`, `set(key, cached)`, and optional `entries()`. A durable store does not need `entries()`.
 
-**`mapWithConcurrency({ items, limit, task, signal })`** is an order-preserving map with a concurrency limit. Adapters use it to fan a batch across a bounded number of in-flight model calls. Work already running settles before a failure propagates, so a rejected run does not keep spending budget in the background.
+**`mapWithConcurrency({ items, limit, task, signal })`** maps items in order while limiting concurrent tasks. Running tasks settle before an error is propagated.
 
-**`componentNames(candidate)`** is `Object.keys` that preserves the component union instead of widening it back to `string`.
+**`componentNames(candidate)`** returns `Object.keys(candidate)` while preserving the component-name union.
 
-**`createEvaluator({ adapter, budget, cache, trackOutputs, onEvaluation, signal })`** is the engine every optimizer in this package runs on: it dispatches to the adapter, prices batches against the cache before spending, charges the budget, drops transient scores, and emits an `EvaluationEvent` per batch. `evaluate` returns a `ScoredBatch`; `evaluateTraced` returns the traced `EvaluationBatch`, or `null` when the budget cannot cover it. `BudgetExhausted` is thrown when a charged batch outruns the remaining calls. Writing an optimizer against this is what keeps budget accounting and caching identical across all four.
+**`createEvaluator({ adapter, budget, cache, trackOutputs, onEvaluation, signal })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
-**`bootstrapDemos({ adapter, candidate, trainset, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** runs a candidate over the trainset and keeps the rollouts that scored at or above `minScore`, returning the `demos`, a formatted `block` ready to drop into a candidate, and what it spent. It always evaluates fresh, because the cache stores scores and this needs outputs.
+**`bootstrapDemos({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps rollouts scoring at least `minScore`. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
 
-**`formatDemos(demos, { render })`** and **`parseDemos(text)`** are the two halves of the block format (`<demo>`, `<input>`, `<output>`), so a demo component survives a round trip through a candidate and back.
+**`formatDemos(demos, { render })`** and **`parseDemos(text)`** write and read the `<demo>`, `<input>`, and `<output>` block format.
 
-**`parseProposedText(text)`** pulls the proposal out of a reflection response, tolerating fenced blocks and surrounding commentary. Shared by every optimizer that asks a model for text.
+**`parseProposedText(text)`** extracts a proposal from a reflection response, including responses with fenced blocks or surrounding commentary.
 
-**`BatchSampler<Datum>`** and **`Rng`** are exported as types only. Both default implementations are internal, so replacing one means implementing the interface.
+**`BatchSampler<Datum>`** and **`Rng`** are type-only exports. Their default implementations are internal.
 
 ## `textopt/gepa`
 
@@ -107,11 +107,11 @@ const gepa = new GepaOptimizer(config); // GepaConfig: stateless, reusable
 const result = await gepa.optimize(task); // GepaTask: one problem
 ```
 
-An optimizer holds no run state, so one instance can run any number of problems.
+Optimizer instances do not retain state between runs.
 
 ### `GepaConfig`
 
-How the search runs. Free of your types, and safe to share across runs.
+These options control search behavior and can be reused across runs.
 
 | Option                     | Default                   | Effect                                                                                                                                  |
 | -------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -122,7 +122,7 @@ How the search runs. Free of your types, and safe to share across runs.
 | `acceptance`               | `improvementAcceptance()` | Whether a screened child beats its parent.                                                                                              |
 | `merge.enabled`            | components > 1            | System-aware merge of two lineages.                                                                                                     |
 | `merge.maxInvocations`     | `5`                       | Ceiling on merges attempted per run.                                                                                                    |
-| `merge.valOverlapFloor`    | `5`                       | Validation instances two lineages must share to be eligible. A valset smaller than this never merges.                                   |
+| `merge.valOverlapFloor`    | `5`                       | Validation instances two lineages must share to be eligible. A validationSet smaller than this never merges.                            |
 | `skipPerfectScore`         | `true`                    | Skip reflection when the parent already scores perfectly on the minibatch.                                                              |
 | `perfectScore`             | `1`                       | The per-instance score treated as leaving no room.                                                                                      |
 | `rejectedProposalMemory`   | `3`                       | Rejected texts per component shown back to reflection. `0` disables it. An extension: not in the paper, and the only one on by default. |
@@ -142,12 +142,12 @@ How the search runs. Free of your types, and safe to share across runs.
 
 One problem, its data, and its IO. Extends `OptimizerTask`.
 
-Required: `seedCandidate`, `trainset`, `adapter` (a `GepaAdapter`), `reflect` (a `TextModel`), and `maxMetricCalls`.
+Required: `seedCandidate`, `trainingSet`, `adapter` (a `GepaAdapter`), `reflect` (a `TextModel`), and `maxMetricCalls`.
 
 | Option                | Default                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------ |
-| `valset`              | the trainset                                                                         |
-| `testset`             | none. Held out of the search and scored once, on the winner                          |
+| `validationSet`       | the trainingSet                                                                      |
+| `testSet`             | none. Held out of the search and scored once, on the winner                          |
 | `componentSelector`   | `roundRobinComponentSelector()`                                                      |
 | `batchSampler`        | an epoch-shuffled sampler over `minibatchSize`                                       |
 | `valEvaluationPolicy` | `fullEvaluationPolicy()`                                                             |
@@ -156,20 +156,20 @@ Required: `seedCandidate`, `trainset`, `adapter` (a `GepaAdapter`), `reflect` (a
 
 `onEvent`, `onCheckpoint`, `resumeFrom`, and `signal` have no defaults.
 
-`seedCandidate` and `trainset` are the inference sites for the component names and the datum type. Every other position is `NoInfer`, so it gets checked against them rather than widening them.
+TypeScript infers component names and the datum type from `seedCandidate` and `trainingSet`. Other fields use `NoInfer` and are checked against those inferred types.
 
 ### `GepaAdapter`
 
 Extends `Adapter` with what reflection needs:
 
 ```ts
-makeReflectiveDataset(args: MakeReflectiveDatasetArgs<Datum, Traj, Out, K>): ReflectiveDataset<K>
+makeReflectiveDataset(args: MakeReflectiveDatasetArgs<Datum, Trajectory, Output, K>): ReflectiveDataset<K>
 proposeNewTexts?(args: ProposeArgs<K>): ComponentPatch<K>   // optional
 ```
 
-Both may be sync or async. `ReflectiveDataset` is a partial map of component name to `ReflectiveRecord[]`, each record holding `inputs`, `generatedOutputs`, `feedback`, `score`, and a typed `evidence` slot for whatever else the reflection model should read. It is partial because an adapter only fills the components it was asked to update.
+Both methods may be synchronous or asynchronous. `ReflectiveDataset` is a partial map from component names to `ReflectiveRecord[]`. Each record contains `inputs`, `generatedOutputs`, `feedback`, `score`, and a typed `evidence` field. Adapters only need to return records for the requested components.
 
-Implementing `proposeNewTexts` replaces the reflection call entirely, which is how a run goes fully offline. `reflect` is still required by the type, so pass a stub.
+When `proposeNewTexts` is implemented, the adapter generates proposals without calling `reflect`. The task type still requires `reflect`, so offline runs can pass a stub.
 
 ### Strategies
 
@@ -185,7 +185,7 @@ Implementing `proposeNewTexts` replaces the reflection call entirely, which is h
 | `fullEvaluationPolicy`        | none                                     | Scores every validation instance per accepted candidate.                                      |
 | `subsampledEvaluationPolicy`  | `{ size }`                               | Scores `size` instances, trading frontier fidelity for rollouts.                              |
 
-Each is a factory. The first three return a `CandidateSelector`, `ComponentSelector`, or `AcceptancePolicy`, so those seams take a plain function of your own instead. A `ValEvaluationPolicy` is an object with two methods, `selectInstances` and `bestCandidate`.
+Each export is a factory. Selector and acceptance interfaces accept custom functions. A `ValEvaluationPolicy` is an object with `selectInstances` and `bestCandidate` methods.
 
 ### Reflection prompts
 
@@ -197,7 +197,7 @@ Each is a factory. The first three return a `CandidateSelector`, `ComponentSelec
 | `buildRewritePrompt`          | A fresh attempt, for a lineage that has stopped moving.                       |
 | `diverseReflectionStrategies` | All four as a rotation, for `reflection.strategies`.                          |
 
-Each is a `ReflectionPromptBuilder` — `(args: ReflectionPromptArgs) => string` — so your own drops into the same list.
+Each implements `ReflectionPromptBuilder`, defined as `(args: ReflectionPromptArgs) => string`.
 
 ### `createDemoProposer`
 
@@ -205,17 +205,17 @@ Each is a `ReflectionPromptBuilder` — `(args: ReflectionPromptArgs) => string`
 createDemoProposer({ components, minScore, maxDemos, render, fallback });
 ```
 
-A `proposeNewTexts` implementation that fills the named components with few-shot examples harvested from the reflective dataset the adapter already built. Because the records carry `inputs`, `generatedOutputs`, and `score`, this costs no extra rollouts and no reflection call. Examples are deduped by input and appended to the block the parent already holds, so they accumulate along the accepted lineage. `fallback` handles every other component.
+This `proposeNewTexts` implementation fills selected components with few-shot examples from the reflective dataset. It uses existing record inputs, outputs, and scores, so it requires no additional rollouts or reflection calls. Examples are deduplicated by input and appended to the parent's block. `fallback` handles components not listed in `components`.
 
 ### Results, events, and resuming
 
-**`GepaResult`** extends `OptimizerResult` with `bestCandidateId`, the full `candidates` pool (each a `CandidateRecord` with lineage, per-instance scores, and provenance), the `paretoFrontier`, the `scoreMatrix`, `perObjectiveBest`, `iterations`, `reflectionCalls`, `cacheHits`, and the final `snapshot`.
+**`GepaResult`** extends `OptimizerResult` with `bestCandidateId`, the complete candidate pool, lineage and per-instance scores, `paretoFrontier`, `scoreMatrix`, `perObjectiveBest`, `iterations`, `reflectionCalls`, `cacheHits`, and the final `snapshot`.
 
 **`stopReason`** is one of `"budgetExhausted"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxIterations"`.
 
 **`onEvent`** receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`.
 
-**`onCheckpoint`** fires after the seed is scored and after every iteration, with a plain-JSON `GepaSnapshot`. Hand it back as `resumeFrom` to continue. Every snapshot is fingerprinted against its seed candidate, instance ids, and seed, so resuming against a different setup throws instead of silently scoring old candidates against new data.
+**`onCheckpoint`** runs after seed evaluation and each iteration with a JSON-serializable `GepaSnapshot`. Pass it as `resumeFrom` to continue. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed.
 
 ## `textopt/opro`
 
@@ -225,40 +225,40 @@ import { OproOptimizer, buildOproPrompt } from "textopt/opro";
 
 Takes the base `Adapter`, not `GepaAdapter`. `OproTask` adds `reflect`, and optionally `renderDatum`, `instanceId`, `cache`, and `onEvent`.
 
-| Option               | Default           | Effect                                                  |
-| -------------------- | ----------------- | ------------------------------------------------------- |
-| `proposalsPerRound`  | `8`               | Instructions drawn per round.                           |
-| `concurrency`        | `1`               | How many may be in flight at once.                      |
-| `maxRounds`          | `Infinity`        | Round ceiling.                                          |
-| `maxReflectionCalls` | unbounded         | Bounded separately; no metric budget covers reflection. |
-| `historySize`        | `20`              | Scored attempts the prompt carries, strongest kept.     |
-| `exemplars`          | `3`               | Task inputs shown for grounding.                        |
-| `scoringSetSize`     | unset             | Instances drawn once from the trainset to screen on.    |
-| `fullEvalInterval`   | `3`               | Rounds between full valset sweeps of the incumbent.     |
-| `scoreScale`         | `100`             | What scores are multiplied by before being shown.       |
-| `seed`               | `0`               | Seeds the run's random stream.                          |
-| `buildPrompt`        | `buildOproPrompt` | Replaces the meta-prompt template.                      |
+| Option               | Default           | Effect                                                     |
+| -------------------- | ----------------- | ---------------------------------------------------------- |
+| `proposalsPerRound`  | `8`               | Instructions drawn per round.                              |
+| `concurrency`        | `1`               | How many may be in flight at once.                         |
+| `maxRounds`          | `Infinity`        | Round ceiling.                                             |
+| `maxReflectionCalls` | unbounded         | Bounded separately; no metric budget covers reflection.    |
+| `historySize`        | `20`              | Scored attempts the prompt carries, strongest kept.        |
+| `exemplars`          | `3`               | Task inputs shown for grounding.                           |
+| `scoringSetSize`     | unset             | Instances drawn once from the trainingSet to screen on.    |
+| `fullEvalInterval`   | `3`               | Rounds between full validationSet sweeps of the incumbent. |
+| `scoreScale`         | `100`             | What scores are multiplied by before being shown.          |
+| `seed`               | `0`               | Seeds the run's random stream.                             |
+| `buildPrompt`        | `buildOproPrompt` | Replaces the meta-prompt template.                         |
 
-`scoringSetSize` is the paper's economics. By default every proposal is measured on the whole `valset`, which is the reliable reading and the expensive one — eight proposals against a 500-instance valset is 4000 rollouts before anything is learned. Set it and proposals are screened on a slice of the trainset drawn **once** and never resampled, since the meta-prompt asks the model to read a gradient across scores and a gradient across different instances is not one. Every `fullEvalInterval` rounds the incumbent is swept on the full valset.
+By default, every proposal is evaluated against the full `validationSet`; eight proposals on 500 instances require 4,000 rollouts. When `scoringSetSize` is set, proposals are screened on one fixed subset of `trainingSet`. The subset is not resampled because OPRO compares scores across proposals. Every `fullEvalInterval` rounds, the incumbent is evaluated on the full validation set.
 
 Measured on 30 training and 30 validation instances over 8 rounds of 4 proposals, averaged across 10 seeds:
 
-| `scoringSetSize`     | Best score | Rollouts |
-| -------------------- | ---------- | -------- |
-| unset (whole valset) | 1.000      | 738      |
-| 12                   | 1.000      | 383      |
-| 6                    | 0.950      | 217      |
-| 3                    | 0.862      | 137      |
+| `scoringSetSize`             | Best score | Rollouts |
+| ---------------------------- | ---------- | -------- |
+| unset (whole validation set) | 1.000      | 738      |
+| 12                           | 1.000      | 383      |
+| 6                            | 0.950      | 217      |
+| 3                            | 0.862      | 137      |
 
-Screening on 12 of 30 instances costs half as much and gives up nothing; screening on 3 gives up a great deal. The knob is the trade, and it is unset by default because a run that screens on too little converges confidently on the wrong thing.
+In this sweep, 12 screening instances cut rollout count by 48% without changing the best score. Three instances reduced cost further but also reduced mean quality. Full-set scoring remains the default.
 
-One deliberate difference in _reporting_, not search. The paper's search picks its winner by training-subset score; this reports the best candidate a full sweep has actually seen, so `bestScore` is always a number the valset produced and never drops below `seedScore`. A candidate that screens well and sweeps badly still steers the search — it just cannot be handed back as the answer.
+The reference implementation selects its winner by training-subset score. textopt instead returns the best candidate evaluated on the full validation set, so `bestScore` never falls below `seedScore`. Screening scores still guide the search but cannot determine the returned winner.
 
 `OproResult` adds `seedScore`, `rounds`, `trajectory` (every candidate scored, in order), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxRounds"`.
 
-The history is rendered in **ascending** score order, so the strongest attempt sits closest to the request. Scores are scaled to integers because models discriminate between 41 and 68 far more reliably than between 0.41 and 0.68.
+History is sorted by ascending score so the strongest attempt appears nearest the request. Scores are shown as integers because models distinguish 41 from 68 more reliably than 0.41 from 0.68.
 
-Generalizing OPRO past a single string needs one guard the paper does not: an attempt is recorded with the text of every _other_ component at the time it was scored, and only attempts measured in the current context are shown. Without that, a score earned before another component moved sits in the list beside current ones, and the gradient the model is asked to read spans measurements that were never comparable. With a one-component candidate — the paper's case — nothing is ever filtered.
+For multi-component candidates, each attempt records the other components present when it was scored. The prompt only includes attempts from the current component context, avoiding comparisons between scores obtained with different companion text. Single-component candidates require no filtering.
 
 ## `textopt/mipro`
 
@@ -282,34 +282,34 @@ Takes the base `Adapter`. `MiproTask` adds `reflect` and `componentOptions`, plu
 | `surrogateSamples`         | `24`               | Configurations drawn per trial, best of batch proposed.                                                               |
 | `multivariate`             | `true`             | Model components jointly rather than one at a time.                                                                   |
 | `exemplars`                | `3`                | Task inputs shown when generating instructions.                                                                       |
-| `datasetSummary`           | `true`             | Summarize the trainset once and show it to the proposer. One reflection call.                                         |
+| `datasetSummary`           | `true`             | Summarize the trainingSet once and show it to the proposer. One reflection call.                                      |
 | `summaryExamples`          | `10`               | Trainset entries the summary is written from.                                                                         |
 | `tips`                     | built-in           | Style hints, so a menu spreads over approaches.                                                                       |
 | `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                                                       |
 
-The proposer is grounded the way MIPROv2's is, rather than being handed a component's text in isolation. It sees the other components' current text, so an instruction is written to sit alongside its neighbours instead of duplicating or contradicting them; it sees a summary of the trainset written by one reflection call over more entries than the exemplars can fit, so it can aim at the task rather than at three instances of it; and it sees the exemplars themselves. The summary call is skipped when every menu was supplied and nothing needs proposing. Not covered: dspy also shows the proposer the program's source, which has no generic analogue here.
+The proposer receives the current text of other components, a generated summary of `trainingSet`, and task exemplars. The summary uses one reflection call and is skipped when all menus are supplied through `componentOptions`. Unlike DSPy's MIPROv2 implementation, textopt does not include program source because the adapter interface has no generic representation for it.
 
 `componentOptions` supplies menu entries **verbatim**, with no reflection call. The menu for a component is always its seed text followed by its options.
 
-`demoComponents` names the components holding few-shot blocks, and their menus are bootstrapped from the trainset instead of written by `reflect` — this is MIPROv2's second search dimension, instructions and demonstrations optimized together. Each set gets its own harvesting pass over a freshly shuffled trainset, at sizes spanning one demo up to `maxDemos`; the zero-shot option is always kept on the menu, since demos can hurt. Independent passes only matter when the system is stochastic — a second pass can turn a previously failing example into a demo — and cost rollouts for nothing when it is not, which is the trade MIPROv2 makes. Those rollouts are charged to `maxMetricCalls` and reported separately as `bootstrapMetricCalls`.
+`demoComponents` identifies components that contain few-shot blocks. Their menus are bootstrapped from successful `trainingSet` rollouts instead of generated by `reflect`. Each demo set uses a separate shuffled pass and a size between one and `maxDemos`; the zero-shot option is always included. Separate passes can produce different demos for stochastic systems but add redundant work for deterministic systems, matching MIPROv2's behavior. Bootstrap rollouts count against `maxMetricCalls` and are also reported as `bootstrapMetricCalls`.
 
-Supply `goldOutput` and every demo component also keeps a labels-only set on its menu, which is MIPROv2's `LabeledFewShot` candidate. It is the one demo set that costs nothing — the output is known rather than produced — and it is the only one a system too weak to bootstrap from can still offer. Only the caller can provide it; nothing generic can tell which part of a datum is the answer.
+When `goldOutput` is supplied, each demo component also includes a labels-only `LabeledFewShot` option. It requires no rollout because the expected output is provided by the caller, and remains available when the seed system cannot produce successful bootstrap examples.
 
-Promotion follows MIPROv2's cadence: every `fullEvalInterval` trials the configuration with the best **average** minibatch reading that has not been swept yet is evaluated in full, plus a final sweep when the run ends. Averaging repeated readings is the point — screening on a single minibatch lets one lucky draw decide the run.
+Every `fullEvalInterval` trials, the unswept configuration with the highest average minibatch score receives a full evaluation. A final sweep runs when the search ends. Averaging repeated minibatch scores reduces sensitivity to individual samples.
 
-The surrogate hears full sweeps as well as minibatch readings, as dspy's does. The seed's sweep is registered before the first trial, so the search starts from a measured reference point rather than buying one, and every promoted configuration's full score is added when it lands. That last part is a smaller correction than it sounds: across ten seeds it cut how often a swept-and-disproved configuration came back from 21 draws to 10, but a configuration that reads high on _every_ minibatch and low on the valset keeps being proposed regardless — one authoritative score does not outvote a dozen misleading ones.
+The surrogate includes both minibatch and full-evaluation observations, matching DSPy. The seed's full score is registered before the first trial. In a ten-seed sweep, adding promoted configurations' full scores reduced repeat proposals of disproved configurations from 21 to 10. Repeated high minibatch scores can still outweigh one low validation score.
 
-One deliberate gap against MIPROv2: it pads bootstrapped sets with labelled examples to a combined size, where this keeps the labelled set separate on the menu so the search can tell the two apart.
+One difference from MIPROv2 is that textopt keeps labelled demo sets as separate menu options; MIPROv2 pads bootstrapped sets with labelled examples.
 
 `MiproResult` adds `seedScore`, `trials`, `menu` (the space actually searched), `observations`, `fullEvaluations`, `bootstrapMetricCalls`, `reflectionCalls`, and `cacheHits`. Only a full validation sweep can move the incumbent; minibatch readings decide what is worth sweeping.
 
 **`proposeConfiguration({ observations, menuSizes, gamma, samples, startupTrials, multivariate, rng })`** is the surrogate on its own: it splits the observations into good and rest, models the density of each, samples from the good one and ranks the draws by the log ratio.
 
-Under `multivariate` — the default, and what MIPROv2 turns on in Optuna — each density is a mixture with one kernel centred on each observed configuration. A kernel keeps a configuration's components together, so "this option works, but only beside that one" survives into the proposal. Turning it off models each component with its own smoothed histogram instead: evidence about a component then generalizes across every combination it appears in, which converges from far fewer trials but cannot express a dependency at all.
+With `multivariate: true`, each density is a mixture of kernels centered on observed configurations. This preserves dependencies between component options. With `multivariate: false`, each component uses an independent smoothed histogram, which learns from fewer trials but cannot represent interactions.
 
-Which is better depends on how much of the space a run can cover. Measured on five components of five options — 3125 configurations against 60 trials — the joint model reaches a mean best of 0.87 and solves 8 runs in 15, where the independent one reaches 0.78 and solves 5. On a 16-configuration space that 30 trials nearly enumerate, the ordering reverses: independent lands on the best configuration in 16 runs of 20 against 14. Joint is the default because the case it loses is the case that needed a surrogate least.
+In a measured space of 3,125 configurations with 60 trials, the joint model reached a mean best score of 0.87 and solved 8 of 15 runs; the independent model reached 0.78 and solved 5. In a 16-configuration space with 30 trials, the independent model found the optimum in 16 of 20 runs, compared with 14 for the joint model. The multivariate model is the default because it performs better when the space cannot be nearly enumerated.
 
-Below `startupTrials`, or while every observation carries the same score, it samples uniformly instead — a good/bad split presumes the scores rank the observations, and acting on that presumption when they do not locks the search onto configurations it has already measured. Neither published TPE nor Optuna guards the tie; this one is a deliberate departure.
+Before `startupTrials`, or when all observations have the same score, sampling is uniform. TPE's good/bad split requires ranked observations; using it on tied scores can repeatedly select configurations already evaluated. This tie handling differs from published TPE and Optuna.
 
 ## `textopt/random-search`
 
@@ -327,11 +327,11 @@ import { RandomSearchOptimizer } from "textopt/random-search";
 
 `RandomSearchResult` adds `seedScore`, `rounds`, `variantsEvaluated`, `reflectionCalls`, and `cacheHits`.
 
-The paraphrase prompt states outright that it has no information about how the current text scored. That ablation is the point: run it on the same budget as a reflective optimizer and the difference is what reflection bought.
+The paraphrase prompt receives no score or feedback. Compare random search with a reflective optimizer under the same metric budget to measure the effect of reflection.
 
 ## `textopt/testing`
 
-A keyword-coverage task with a deterministic gradient, plus reflection models to match. No network, milliseconds per run.
+Deterministic keyword-coverage fixtures for testing optimizers and adapters without network access.
 
 | Export                          | What it is                                                                                              |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- |

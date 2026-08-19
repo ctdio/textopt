@@ -54,20 +54,20 @@ export interface OproConfig {
   /** Task inputs shown for grounding. Default 3. */
   exemplars?: number;
   /**
-   * Instances drawn once from the trainset to screen proposals on. Unset means
-   * every proposal is measured on the whole valset, which is the reliable
+   * Instances drawn once from the training set to screen proposals on. Unset means
+   * every proposal is measured on the whole validation set, which is the reliable
    * reading and the expensive one: a round of eight proposals against a
-   * 500-instance valset costs 4000 rollouts before anything is learned.
+   * 500-instance validation set costs 4000 rollouts before anything is learned.
    *
-   * The paper screens on a small fixed slice of the trainset and checks the
-   * full set periodically, which is what lets the valset be large enough to
+   * The paper screens on a small fixed slice of the training set and checks the
+   * full set periodically, which is what lets the validation set be large enough to
    * trust. The slice is drawn once and never resampled — the meta-prompt ranks
    * attempts against each other, so they have to be measured on the same
    * instances or the ranking is noise.
    */
   scoringSetSize?: number;
   /**
-   * Rounds between full valset sweeps of the incumbent. Default 3, the paper's
+   * Rounds between full validation set sweeps of the incumbent. Default 3, the paper's
    * `eval_interval`. Only used when `scoringSetSize` is set; without it every
    * proposal is already a full sweep.
    */
@@ -84,15 +84,15 @@ export interface OproConfig {
 
 export interface OproTask<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
-> extends OptimizerTask<Datum, Traj, Out, K> {
+> extends OptimizerTask<Datum, Trajectory, Output, K> {
   /**
    * The base adapter, not `GepaAdapter`: this search reads scores only, so it
    * never asks for traces or a reflective dataset.
    */
-  adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  adapter: Adapter<Datum, Trajectory, Output, NoInfer<K>>;
   reflect: TextModel;
   /** Renders a task input for the prompt. Defaults to JSON. */
   renderDatum?: (datum: NoInfer<Datum>) => string;
@@ -106,7 +106,7 @@ export type OproStopReason =
   "budgetExhausted" | "reflectionBudgetExhausted" | "maxRounds" | "aborted";
 
 export type OproEvent<K extends string = string> =
-  | { type: "start"; components: K[]; valsetSize: number }
+  | { type: "start"; components: K[]; validationSetSize: number }
   | { type: "roundStart"; round: number; component: K; historySize: number }
   | ({ type: "evaluation" } & EvaluationEvent)
   | {
@@ -134,8 +134,8 @@ export interface OproAttempt<K extends string = string> {
 
 export interface OproResult<
   K extends string = string,
-  Out = unknown,
-> extends OptimizerResult<K, OproStopReason, Out> {
+  Output = unknown,
+> extends OptimizerResult<K, OproStopReason, Output> {
   /** The seed's score, so the lift the search bought is readable directly. */
   seedScore: number;
   rounds: number;
@@ -177,10 +177,12 @@ export class OproOptimizer implements Optimizer<OproStopReason> {
 
   async optimize<
     Datum,
-    Traj = unknown,
-    Out = unknown,
+    Trajectory = unknown,
+    Output = unknown,
     const K extends string = string,
-  >(task: OproTask<Datum, Traj, Out, K>): Promise<OproResult<K, Out>> {
+  >(
+    task: OproTask<Datum, Trajectory, Output, K>,
+  ): Promise<OproResult<K, Output>> {
     return runOpro({ config: this.#config, task });
   }
 }
@@ -239,10 +241,10 @@ export function buildOproPrompt(args: {
   ].join("\n");
 }
 
-async function runOpro<Datum, Traj, Out, K extends string>(args: {
+async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   config: OproConfig;
-  task: OproTask<Datum, Traj, Out, K>;
-}): Promise<OproResult<K, Out>> {
+  task: OproTask<Datum, Trajectory, Output, K>;
+}): Promise<OproResult<K, Output>> {
   const { config, task } = args;
 
   const {
@@ -262,9 +264,9 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
 
   const {
     seedCandidate,
-    trainset,
-    valset = trainset,
-    testset,
+    trainingSet,
+    validationSet = trainingSet,
+    testSet,
     adapter,
     reflect,
     maxMetricCalls,
@@ -277,30 +279,32 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
 
   const components = componentNames(seedCandidate);
 
-  if (trainset.length === 0) {
-    throw new Error("optimize requires a non-empty trainset");
+  if (trainingSet.length === 0) {
+    throw new Error("optimize requires a non-empty trainingSet");
   }
-  if (valset.length === 0) {
-    throw new Error("optimize requires a non-empty valset");
+  if (validationSet.length === 0) {
+    throw new Error("optimize requires a non-empty validationSet");
   }
   if (components.length === 0) {
     throw new Error(
       "optimize requires a seed candidate with at least one component",
     );
   }
-  if (testset !== undefined && testset.length === 0) {
+  if (testSet !== undefined && testSet.length === 0) {
     throw new Error(
-      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+      "optimize requires a non-empty testSet when one is given; omit it to skip held-out evaluation",
     );
   }
 
-  const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const validationIds = validationSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
   const testIds =
-    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
+    testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
   const rng = createSeededRng(seed);
   const budget = createBudget({ maxMetricCalls });
-  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
     ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
@@ -310,7 +314,7 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
   });
 
   const shown = rng
-    .sample(trainset, Math.min(exemplars, trainset.length))
+    .sample(trainingSet, Math.min(exemplars, trainingSet.length))
     .map(renderDatum);
 
   // Drawn once. Every attempt is screened on these same instances, because the
@@ -320,12 +324,14 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
     scoringSetSize === undefined
       ? undefined
       : rng.sample(
-          trainset.map((_, index) => index),
-          Math.min(scoringSetSize, trainset.length),
+          trainingSet.map((_, index) => index),
+          Math.min(scoringSetSize, trainingSet.length),
         );
-  const scoringSet = scoringIndices?.map((index) => trainset[index] as Datum);
+  const scoringSet = scoringIndices?.map(
+    (index) => trainingSet[index] as Datum,
+  );
   const scoringIds = scoringIndices?.map((index) =>
-    instanceId({ datum: trainset[index] as Datum, index }),
+    instanceId({ datum: trainingSet[index] as Datum, index }),
   );
 
   // Per component: every text tried for it and what it scored. Kept apart
@@ -358,13 +364,17 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
   let reflectionCalls = 0;
   let stopReason: OproStopReason = "maxRounds";
 
-  onEvent?.({ type: "start", components, valsetSize: valset.length });
+  onEvent?.({
+    type: "start",
+    components,
+    validationSetSize: validationSet.length,
+  });
 
   async function sweep(candidate: Candidate<K>, phase: "seed" | "validation") {
     return evaluator.evaluate({
       candidate,
-      batch: valset,
-      ids: valIds,
+      batch: validationSet,
+      ids: validationIds,
       split: "val",
       phase,
       candidateId: null,
@@ -373,8 +383,8 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
   }
 
   /**
-   * Screens a candidate. With a scoring set that is a slice of the trainset;
-   * without one it is the full valset, and screening and reporting are the
+   * Screens a candidate. With a scoring set that is a slice of the training set;
+   * without one it is the full validation set, and screening and reporting are the
    * same measurement.
    */
   async function screen(candidate: Candidate<K>, phase: "seed" | "validation") {
@@ -406,20 +416,20 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
 
   // What the search compares against. The same number as `bestScore` until a
   // scoring set splits the two apart: the search then runs on the subset while
-  // the reported result stays a full-valset measurement.
+  // the reported result stays a full-validation set measurement.
   let bestSearchScore = seedScore;
   if (scoringSet !== undefined) {
     bestSearchScore = mean((await screen(seedCandidate, "seed")).scores);
   }
 
   /**
-   * Measures the incumbent on the whole valset. The search chooses by subset
+   * Measures the incumbent on the whole validation set. The search chooses by subset
    * score and can therefore chase something that only works on the subset, so
    * what gets reported is the best candidate a full sweep has actually seen —
-   * never a subset number wearing a valset label.
+   * never a subset number wearing a validation set label.
    */
   async function refreshIncumbent(): Promise<"ok" | "stop"> {
-    if (best === lastSwept || !budget.canAfford(valset.length)) {
+    if (best === lastSwept || !budget.canAfford(validationSet.length)) {
       return "ok";
     }
     try {
@@ -463,7 +473,7 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
       stopReason = "reflectionBudgetExhausted";
       break;
     }
-    if (!budget.canAfford(valset.length)) {
+    if (!budget.canAfford(validationSet.length)) {
       stopReason = "budgetExhausted";
       break;
     }
@@ -601,13 +611,13 @@ async function runOpro<Datum, Traj, Out, K extends string>(args: {
   }
 
   const testScore =
-    testset === undefined
+    testSet === undefined
       ? undefined
       : mean(
           (
             await evaluator.evaluate({
               candidate: best,
-              batch: testset,
+              batch: testSet,
               ids: testIds,
               split: "test",
               phase: "test",

@@ -15,11 +15,11 @@ export type Candidate<K extends string = string> = Record<K, string>;
  * better. `feedback` is a per-instance textual diagnosis of what went wrong,
  * which a reflective optimizer reads to write a better candidate.
  */
-export interface EvaluationBatch<Traj = unknown, Out = unknown> {
-  outputs: Out[];
+export interface EvaluationBatch<Trajectory = unknown, Output = unknown> {
+  outputs: Output[];
   scores: number[];
   feedback?: string[];
-  trajectories?: Traj[];
+  trajectories?: Trajectory[];
   objectiveScores?: Record<string, number>[];
   /**
    * Per-instance: true when the score reflects an infrastructure failure
@@ -89,13 +89,15 @@ export type EvaluationSplit = "train" | "val" | "test";
  */
 export interface Adapter<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
 > {
   evaluate(
     args: EvaluateArgs<Datum, K>,
-  ): Promise<EvaluationBatch<Traj, Out>> | EvaluationBatch<Traj, Out>;
+  ):
+    | Promise<EvaluationBatch<Trajectory, Output>>
+    | EvaluationBatch<Trajectory, Output>;
 }
 
 /** Provider-agnostic text model: text in, text out. */

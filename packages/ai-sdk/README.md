@@ -2,9 +2,9 @@
 
 Vercel AI SDK adapter for [textopt](../../README.md).
 
-Optimizes the text components of an AI SDK call (system prompts, tool descriptions, output instructions) by re-running your `generateText` or `generateObject` call with each candidate. Multi-step agent runs keep their tool calls and results in the trace, which is what the reflection model reads when it diagnoses a failure.
+The adapter evaluates candidate system prompts, tool descriptions, and output instructions by rerunning a `generateText` or `generateObject` call. Traces from multi-step runs include tool calls and results for use during reflection.
 
-This package does not depend on `ai` at runtime, and does not declare it as a peer. The SDK result types are matched structurally, so the adapter tolerates version drift.
+The package matches AI SDK result types structurally and does not depend on `ai` at runtime or declare it as a peer dependency.
 
 ## Usage
 
@@ -33,14 +33,14 @@ const adapter = createAiSdkAdapter<Ticket>({
 
 const result = await new GepaOptimizer().optimize({
   seedCandidate: { system: "Classify the support ticket." },
-  trainset,
+  trainingSet,
   adapter,
   reflect,
   maxMetricCalls: 150,
 });
 ```
 
-`score` returns a `ScoreResult`, and its `feedback` is the load-bearing field. A number tells the search how wrong a candidate was; the feedback tells the reflection model what was wrong.
+`score` returns a `ScoreResult`. GEPA uses its optional `feedback` field to revise the candidate; a scalar score alone only indicates relative performance.
 
 ## Options
 
@@ -53,13 +53,13 @@ const result = await new GepaOptimizer().optimize({
 | `isTransient` | every failure is the candidate's                          | Classifies a thrown error as infrastructure, so its zero is not cached.     |
 | `buildRecord` | a record, with step evidence on multi-step or failed runs | Replaces the reflective record wholesale, `evidence` included.              |
 
-`run` also receives the `EvaluationContext` under `run`, holding `iteration`, `phase`, `split`, and `candidateId`. Forward it into whatever tracing the call already has, or the run becomes thousands of indistinguishable rollouts.
+`run` also receives an `EvaluationContext` containing `iteration`, `phase`, `split`, and `candidateId`. Forward these fields to your tracing system to identify each rollout.
 
-The `candidate` passed to `run` is keyed by `string`, since this factory never sees the seed candidate. A component read here is not checked against the ones the optimizer was given.
+The `candidate` passed to `run` is keyed by `string` because the adapter factory does not receive the seed candidate. Component names accessed here are therefore not checked against the optimizer's candidate type.
 
 ## Also exported
 
-`summarizeRun(result)` flattens an AI SDK result into the compact `AiSdkTrace` the adapter builds internally: per-step text, finish reasons, tool calls, tool results, and usage. Useful when scoring wants the step detail rather than just the final text. It leaves `durationMs` at `0`, since only the adapter times the rollout.
+`summarizeRun(result)` converts an AI SDK result to `AiSdkTrace`, including per-step text, finish reasons, tool calls, tool results, and usage. Use it when scoring needs step data. `durationMs` is `0` because timing is only available when the adapter runs the rollout.
 
 Types: `AiSdkAdapterOptions`, `AiSdkTrace`, `AiSdkTraceStep`, `AiSdkEvidence`, `AiSdkResultLike`, `AiSdkStepLike`, `AiSdkUsageLike`, `AiSdkToolCallLike`, `AiSdkToolResultLike`.
 

@@ -63,7 +63,7 @@ describe("bootstrapDemos", () => {
       adapter: adapter(),
       // Answers two of the four instances perfectly and neither of the others.
       candidate: { instruction: "hold ten seconds ticket portal" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       minScore: 1,
     });
 
@@ -77,7 +77,7 @@ describe("bootstrapDemos", () => {
     const result = await bootstrapDemos({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       minScore: 1,
     });
 
@@ -92,7 +92,7 @@ describe("bootstrapDemos", () => {
         instruction:
           "hold ten seconds ticket portal thirty days billing prorated",
       },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       minScore: 1,
       maxDemos: 2,
       batchSize: 1,
@@ -107,7 +107,7 @@ describe("bootstrapDemos", () => {
     const result = await bootstrapDemos({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
     });
 
     expect(result.metricCalls).toBe(KEYWORD_EXAMPLES.length);
@@ -118,7 +118,7 @@ describe("bootstrapDemos", () => {
     const result = await bootstrapDemos({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       maxMetricCalls: 2,
       batchSize: 1,
     });
@@ -130,20 +130,20 @@ describe("bootstrapDemos", () => {
     const result = await bootstrapDemos({
       adapter: adapter(),
       candidate: { instruction: "hold ten seconds" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       minScore: 1,
     });
 
     expect(parseDemos(result.block)).toHaveLength(result.demos.length);
   });
 
-  test("samples the trainset in a reproducible order when given an rng", async () => {
+  test("samples the trainingSet in a reproducible order when given an rng", async () => {
     const run = async () =>
       (
         await bootstrapDemos({
           adapter: adapter(),
           candidate: { instruction: "hold ten seconds ticket portal" },
-          trainset: KEYWORD_EXAMPLES,
+          trainingSet: KEYWORD_EXAMPLES,
           minScore: 1,
           maxDemos: 1,
           batchSize: 1,
@@ -154,13 +154,13 @@ describe("bootstrapDemos", () => {
     expect(await run()).toEqual(await run());
   });
 
-  test("refuses an empty trainset", async () => {
+  test("refuses an empty trainingSet", async () => {
     await expect(
       bootstrapDemos({
         adapter: adapter(),
         candidate: { instruction: "x" },
-        trainset: [],
+        trainingSet: [],
       }),
-    ).rejects.toThrow(/trainset/);
+    ).rejects.toThrow(/trainingSet/);
   });
 });

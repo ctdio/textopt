@@ -34,13 +34,13 @@ export type ReflectiveDataset<K extends string = string> = Partial<
 
 export interface MakeReflectiveDatasetArgs<
   Datum,
-  Traj,
-  Out,
+  Trajectory,
+  Output,
   K extends string = string,
 > {
   candidate: Candidate<K>;
   batch: readonly Datum[];
-  evaluation: EvaluationBatch<Traj, Out>;
+  evaluation: EvaluationBatch<Trajectory, Output>;
   componentsToUpdate: readonly K[];
 }
 
@@ -85,12 +85,12 @@ export interface ProposeArgs<K extends string = string> {
  */
 export interface GepaAdapter<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
-> extends Adapter<Datum, Traj, Out, K> {
+> extends Adapter<Datum, Trajectory, Output, K> {
   makeReflectiveDataset(
-    args: MakeReflectiveDatasetArgs<Datum, Traj, Out, K>,
+    args: MakeReflectiveDatasetArgs<Datum, Trajectory, Output, K>,
   ): Promise<ReflectiveDataset<K>> | ReflectiveDataset<K>;
 
   proposeNewTexts?(
@@ -169,7 +169,7 @@ export interface ValEvaluationPolicy<
   K extends string = string,
 > {
   selectInstances(args: {
-    valset: readonly Datum[];
+    validationSet: readonly Datum[];
     candidate: Candidate<K>;
     records: readonly CandidateRecord<K>[];
     iteration: number;
@@ -182,7 +182,7 @@ export type GepaStopReason =
   "budgetExhausted" | "reflectionBudgetExhausted" | "aborted" | "maxIterations";
 
 export type GepaEvent<K extends string = string> =
-  | { type: "start"; components: K[]; valsetSize: number }
+  | { type: "start"; components: K[]; validationSetSize: number }
   | { type: "iterationStart"; iteration: number; parentIds: number[] }
   | {
       type: "evaluation";
@@ -229,7 +229,7 @@ export type GepaEvent<K extends string = string> =
       reason: GepaStopReason;
       bestCandidateId: number;
       metricCalls: number;
-      /** The winner's held-out score, when a testset was given. */
+      /** The winner's held-out score, when a testSet was given. */
       testScore?: number;
     };
 

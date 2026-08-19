@@ -2,7 +2,7 @@
 
 LangChain adapter for [textopt](../../README.md).
 
-Runs a LangChain runnable, chain, agent, or LangGraph graph as the system under optimization. The candidate is injected by rebuilding the runnable, so anything downstream that reads candidate text is optimizable: prompts, tool descriptions, routing instructions.
+The adapter rebuilds a LangChain runnable, chain, agent, or LangGraph graph for each candidate. Candidate components can supply prompts, tool descriptions, routing instructions, or other text read by the runnable.
 
 `@langchain/core` is a peer dependency (`>=0.3.0 <2`).
 
@@ -36,14 +36,14 @@ const adapter = createLangChainAdapter<Ticket, string>({
 
 const result = await new GepaOptimizer().optimize({
   seedCandidate: { system: "Classify the support ticket." },
-  trainset,
+  trainingSet,
   adapter,
   reflect,
   maxMetricCalls: 150,
 });
 ```
 
-`score` returns a `ScoreResult`, and its `feedback` is the load-bearing field. Say what went wrong, not just how wrong it was.
+`score` returns a `ScoreResult`. GEPA uses its optional `feedback` field during reflection, so include a description of the failure when possible.
 
 ## Options
 
@@ -60,11 +60,11 @@ const result = await new GepaOptimizer().optimize({
 
 ## Tracing
 
-Every rollout carries `textopt_iteration`, `textopt_phase`, `textopt_split`, and `textopt_candidate_id` in its LangChain metadata. This is inert without a tracer configured, and it is the difference between a LangSmith project full of anonymous rollouts and one you can filter down to the iteration whose score moved.
+Each rollout includes `textopt_iteration`, `textopt_phase`, `textopt_split`, and `textopt_candidate_id` in its LangChain metadata. With a tracer configured, these fields can filter and group runs in LangSmith.
 
-Traces collect LLM, tool, and retriever spans by default, each carrying its `runId`, `parentRunId`, inputs, outputs, and error. Chain spans join them behind `includeChainSteps`.
+Traces include LLM, tool, and retriever spans with run IDs, parent run IDs, inputs, outputs, and errors. Set `includeChainSteps` to include chain spans.
 
-The callbacks are only attached when the optimizer asks for traces, which it does on the minibatch it reflects over. On a validation sweep `score` receives a trace with no steps, so score on the output there rather than on the trace.
+Tracing callbacks are attached only when the optimizer requests traces, typically for reflection minibatches. During validation sweeps, `score` receives a trace with no steps and should score the output directly.
 
 Types: `LangChainAdapterOptions`, `LangChainTrace`, `LangChainTraceStep`, `LangChainStepType`, `LangChainEvidence`, `LangChainScore`.
 

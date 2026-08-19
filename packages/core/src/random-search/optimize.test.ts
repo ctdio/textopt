@@ -24,7 +24,7 @@ function baseAdapter(): Adapter<
 function task() {
   return {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: baseAdapter(),
     reflect: createSamplingReflector(),
     maxMetricCalls: 200,
@@ -116,13 +116,13 @@ describe("RandomSearchOptimizer", () => {
     }
   });
 
-  test("scores the winner on a held-out testset", async () => {
+  test("scores the winner on a held-out testSet", async () => {
     const result = await new RandomSearchOptimizer({
       variants: 2,
       maxRounds: 2,
     }).optimize({
       ...task(),
-      testset: [
+      testSet: [
         { question: "held out, satisfied", required: ["answer"] },
         { question: "held out, unsatisfiable", required: ["zzz-never"] },
       ],

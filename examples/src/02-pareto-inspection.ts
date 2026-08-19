@@ -173,7 +173,7 @@ const gepa = new GepaOptimizer({
 
 const result = await gepa.optimize({
   seedCandidate: { tone: "neutral", facts: "" },
-  trainset: TICKETS,
+  trainingSet: TICKETS,
   adapter,
   reflect: async () => "",
   maxMetricCalls: 400,
@@ -184,7 +184,9 @@ const aggregateScores = result.candidates.map(
   (candidate) => candidate.aggregateScore,
 );
 
-console.log("score matrix (rows = candidates, columns = val instances)\n");
+console.log(
+  "score matrix (rows = candidates, columns = validation instances)\n",
+);
 console.log(
   [
     "cand".padEnd(6),

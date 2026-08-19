@@ -8,7 +8,7 @@ export function logEvent(event: GepaEvent): void {
   switch (event.type) {
     case "start":
       console.log(
-        `optimizing [${event.components.join(", ")}] over ${event.valsetSize} val instances`,
+        `optimizing [${event.components.join(", ")}] over ${event.validationSetSize} validation instances`,
       );
       break;
     case "evaluation":

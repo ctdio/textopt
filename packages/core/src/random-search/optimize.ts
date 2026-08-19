@@ -41,15 +41,15 @@ export interface RandomSearchConfig {
 
 export interface RandomSearchTask<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
-> extends OptimizerTask<Datum, Traj, Out, K> {
+> extends OptimizerTask<Datum, Trajectory, Output, K> {
   /**
    * The base adapter, not `GepaAdapter`: this search never reflects, so it has
    * no use for a reflective dataset and does not ask for one.
    */
-  adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  adapter: Adapter<Datum, Trajectory, Output, NoInfer<K>>;
   /** Rewrites a component's text. Sees the text and nothing else. */
   reflect: TextModel;
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
@@ -62,7 +62,7 @@ export type RandomSearchStopReason =
   "budgetExhausted" | "maxRounds" | "aborted";
 
 export type RandomSearchEvent<K extends string = string> =
-  | { type: "start"; components: K[]; valsetSize: number }
+  | { type: "start"; components: K[]; validationSetSize: number }
   | { type: "roundStart"; round: number; component: K }
   | ({ type: "evaluation" } & EvaluationEvent)
   | {
@@ -82,8 +82,8 @@ export type RandomSearchEvent<K extends string = string> =
 
 export interface RandomSearchResult<
   K extends string = string,
-  Out = unknown,
-> extends OptimizerResult<K, RandomSearchStopReason, Out> {
+  Output = unknown,
+> extends OptimizerResult<K, RandomSearchStopReason, Output> {
   /** The seed's score, so the lift the search bought is readable directly. */
   seedScore: number;
   rounds: number;
@@ -114,12 +114,12 @@ export class RandomSearchOptimizer implements Optimizer<RandomSearchStopReason> 
 
   async optimize<
     Datum,
-    Traj = unknown,
-    Out = unknown,
+    Trajectory = unknown,
+    Output = unknown,
     const K extends string = string,
   >(
-    task: RandomSearchTask<Datum, Traj, Out, K>,
-  ): Promise<RandomSearchResult<K, Out>> {
+    task: RandomSearchTask<Datum, Trajectory, Output, K>,
+  ): Promise<RandomSearchResult<K, Output>> {
     return runRandomSearch({ config: this.#config, task });
   }
 }
@@ -151,10 +151,15 @@ export function buildParaphrasePrompt(args: {
   ].join("\n");
 }
 
-async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
+async function runRandomSearch<
+  Datum,
+  Trajectory,
+  Output,
+  K extends string,
+>(args: {
   config: RandomSearchConfig;
-  task: RandomSearchTask<Datum, Traj, Out, K>;
-}): Promise<RandomSearchResult<K, Out>> {
+  task: RandomSearchTask<Datum, Trajectory, Output, K>;
+}): Promise<RandomSearchResult<K, Output>> {
   const { config, task } = args;
 
   const {
@@ -167,9 +172,9 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
 
   const {
     seedCandidate,
-    trainset,
-    valset = trainset,
-    testset,
+    trainingSet,
+    validationSet = trainingSet,
+    testSet,
     adapter,
     reflect,
     maxMetricCalls,
@@ -181,29 +186,31 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
 
   const components = componentNames(seedCandidate);
 
-  if (trainset.length === 0) {
-    throw new Error("optimize requires a non-empty trainset");
+  if (trainingSet.length === 0) {
+    throw new Error("optimize requires a non-empty trainingSet");
   }
-  if (valset.length === 0) {
-    throw new Error("optimize requires a non-empty valset");
+  if (validationSet.length === 0) {
+    throw new Error("optimize requires a non-empty validationSet");
   }
   if (components.length === 0) {
     throw new Error(
       "optimize requires a seed candidate with at least one component",
     );
   }
-  if (testset !== undefined && testset.length === 0) {
+  if (testSet !== undefined && testSet.length === 0) {
     throw new Error(
-      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+      "optimize requires a non-empty testSet when one is given; omit it to skip held-out evaluation",
     );
   }
 
-  const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const validationIds = validationSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
   const testIds =
-    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
+    testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
   const budget = createBudget({ maxMetricCalls });
-  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
     ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
@@ -217,7 +224,11 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
   let reflectionCalls = 0;
   let stopReason: RandomSearchStopReason = "maxRounds";
 
-  onEvent?.({ type: "start", components, valsetSize: valset.length });
+  onEvent?.({
+    type: "start",
+    components,
+    validationSetSize: validationSet.length,
+  });
 
   async function sweep(args: {
     candidate: Candidate<K>;
@@ -225,8 +236,8 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
   }) {
     return evaluator.evaluate({
       candidate: args.candidate,
-      batch: valset,
-      ids: valIds,
+      batch: validationSet,
+      ids: validationIds,
       split: "val",
       phase: args.phase,
       candidateId: null,
@@ -252,7 +263,7 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
     // A round is only worth starting if every variant in it can be both
     // proposed and scored: a half-funded round spends rollouts on variants
     // that can never be compared against the rest.
-    if (!budget.canAfford(variants * valset.length)) {
+    if (!budget.canAfford(variants * validationSet.length)) {
       stopReason = "budgetExhausted";
       break;
     }
@@ -335,13 +346,13 @@ async function runRandomSearch<Datum, Traj, Out, K extends string>(args: {
   }
 
   const testScore =
-    testset === undefined
+    testSet === undefined
       ? undefined
       : mean(
           (
             await evaluator.evaluate({
               candidate: best,
-              batch: testset,
+              batch: testSet,
               ids: testIds,
               split: "test",
               phase: "test",

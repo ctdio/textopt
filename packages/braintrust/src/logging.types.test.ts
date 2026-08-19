@@ -66,7 +66,7 @@ describe("withBraintrustLogging under a real optimization run", () => {
       seed: 1,
     }).optimize({
       seedCandidate: SEED,
-      trainset: TICKETS,
+      trainingSet: TICKETS,
       adapter: withBraintrustLogging({
         adapter: createTicketAdapter(),
         logger,

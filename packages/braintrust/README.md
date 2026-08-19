@@ -2,12 +2,12 @@
 
 Braintrust scorers and experiment logging for [textopt](../../README.md).
 
-Two independent pieces, usable together or apart:
+The package provides two independent integrations:
 
-- `createBraintrustScorer` turns autoevals (or braintrust) scorers into the optimizer's metric.
-- `withBraintrustLogging` decorates any adapter so every rollout lands in Braintrust.
+- `createBraintrustScorer` adapts autoevals or Braintrust scorers to textopt's metric interface.
+- `withBraintrustLogging` decorates an adapter and logs its rollouts to Braintrust.
 
-`autoevals` and `braintrust` are yours to install; this package only matches their shapes structurally.
+Install `autoevals` or `braintrust` separately. This package matches their interfaces structurally.
 
 ## Scoring
 
@@ -24,9 +24,9 @@ const result = await score({ output, expected });
 // { score, feedback, objectiveScores: { ExactMatch, Levenshtein } }
 ```
 
-The returned function produces a `ScoreResult`, so an adapter's `score` can await it directly. Map your own row to its arguments at the call site: the scorer wants a non-null `output` and the `expected` value to compare against.
+The returned function produces a `ScoreResult` and can be called directly from an adapter's `score` function. It requires a non-null `output` and the `expected` value for comparison.
 
-The number is the weighted mean, but the more useful output is the rest. Each scorer's metadata (an LLM judge's rationale, a diff, a validation error) is carried through as `feedback`, which is what the reflection model actually reads, and each scorer's own number is carried through as `objectiveScores`, which is what a per-objective frontier is built from.
+The aggregate score is a weighted mean. Scorer metadata, such as judge rationales, diffs, and validation errors, becomes reflection `feedback`. Individual scores are returned as `objectiveScores` for per-objective Pareto selection.
 
 | Option          | Default                          | Effect                                                                 |
 | --------------- | -------------------------------- | ---------------------------------------------------------------------- |
@@ -35,7 +35,7 @@ The number is the weighted mean, but the more useful output is the rest. Each sc
 | `buildFeedback` | one line per scorer              | Overrides how scorer output becomes reflection feedback.               |
 | `isTransient`   | every failure is the candidate's | Classifies a thrown scorer error as infrastructure.                    |
 
-Two scorers reporting the same name throws, since the blended score would count both while `objectiveScores` kept only the last. When a scorer fails and `isTransient` says the cause was infrastructure, the composite is computed from whichever scorers survived and the whole result is marked `transient`, so it is never cached.
+Duplicate scorer names throw because `objectiveScores` can store only one value per name. If `isTransient` classifies a scorer failure as infrastructure-related, the aggregate uses the remaining scorers and is marked `transient`, preventing it from being cached.
 
 ## Logging
 
@@ -50,9 +50,9 @@ const adapter = withBraintrustLogging({
 });
 ```
 
-Because it decorates the adapter rather than replacing it, this composes with [`@textopt/ai-sdk`](../ai-sdk), [`@textopt/langchain`](../langchain), or an adapter you wrote yourself. Extra methods survive the wrapping, so a `GepaAdapter` stays a `GepaAdapter`, and the component names stay narrow instead of widening back to `string`.
+The decorator works with [`@textopt/ai-sdk`](../ai-sdk), [`@textopt/langchain`](../langchain), and custom adapters. It preserves additional methods and generic component names, so wrapping a `GepaAdapter` returns a `GepaAdapter` with the same component type.
 
-Every logged event carries the candidate, the instance feedback, and the `iteration`, `phase`, `split`, and `candidateId` it came from, so an experiment can be grouped by where in the run each rollout sits.
+Logged events include the candidate, instance feedback, `iteration`, `phase`, `split`, and `candidateId` for grouping rollouts by their place in the optimization run.
 
 | Option       | Default        | Effect                                                                                |
 | ------------ | -------------- | ------------------------------------------------------------------------------------- |
@@ -62,7 +62,7 @@ Every logged event carries the candidate, the instance feedback, and the `iterat
 | `toInput`    | the row itself | Maps a dataset row to the logged input.                                               |
 | `toExpected` | omitted        | Maps a dataset row to the logged expected value.                                      |
 
-Logging never fails a rollout. An unreachable logger degrades to a warning.
+Logger failures emit a warning and do not fail the rollout.
 
 Types: `BraintrustScorerOptions`, `BraintrustScorerFn`, `BraintrustScorerArgs`, `BraintrustScoreLike`, `BraintrustLoggingOptions`, `BraintrustLoggerLike`, `BraintrustEvent`.
 

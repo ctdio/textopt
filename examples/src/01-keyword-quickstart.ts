@@ -30,7 +30,7 @@ const result = await gepa.optimize({
   seedCandidate: {
     instruction: "Answer the customer's question.",
   },
-  trainset: KEYWORD_EXAMPLES,
+  trainingSet: KEYWORD_EXAMPLES,
   adapter: createKeywordAdapter(),
   reflect: createKeywordReflector(),
   maxMetricCalls: 120,

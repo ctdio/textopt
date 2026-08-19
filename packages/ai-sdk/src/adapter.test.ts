@@ -615,7 +615,7 @@ describe("against a real generateText call", () => {
       seed: 7,
     }).optimize({
       seedCandidate: { instruction: "answer the question" },
-      trainset: QUESTIONS,
+      trainingSet: QUESTIONS,
       adapter,
       reflect: createKeywordReflector(),
       maxMetricCalls: 60,

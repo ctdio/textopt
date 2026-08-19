@@ -95,8 +95,8 @@ const result = await gepa.optimize({
   seedCandidate: {
     system: "Classify the support ticket. Answer with one word.",
   },
-  trainset: TRAIN_TICKETS,
-  valset: VAL_TICKETS,
+  trainingSet: TRAIN_TICKETS,
+  validationSet: VAL_TICKETS,
   adapter,
   reflect,
   maxMetricCalls: 150,

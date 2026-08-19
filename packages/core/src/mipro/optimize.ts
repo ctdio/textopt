@@ -78,7 +78,7 @@ export interface MiproConfig {
   /** Task inputs shown when generating instructions. Default 3. */
   exemplars?: number;
   /**
-   * Summarize the trainset with one reflection call and show that summary to
+   * Summarize the training set with one reflection call and show that summary to
    * the proposer, as MIPROv2's grounded proposer does. Default true. The
    * summary reads more data than the exemplars can fit, so it describes the
    * task rather than a few instances of it. Costs one reflection call, and is
@@ -98,15 +98,15 @@ export interface MiproConfig {
 
 export interface MiproTask<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
-> extends OptimizerTask<Datum, Traj, Out, K> {
+> extends OptimizerTask<Datum, Trajectory, Output, K> {
   /**
    * The base adapter, not `GepaAdapter`: the surrogate reads scores only, so
    * this search never asks for traces or a reflective dataset.
    */
-  adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  adapter: Adapter<Datum, Trajectory, Output, NoInfer<K>>;
   /** Generates the menu for components no menu was supplied for. */
   reflect: TextModel;
   /**
@@ -117,13 +117,13 @@ export interface MiproTask<
   componentOptions?: Partial<Record<NoInfer<K>, readonly string[]>>;
   /**
    * Components holding few-shot demo blocks. Their menus are bootstrapped from
-   * the trainset rather than written by `reflect` — MIPROv2 searches
+   * the trainingSet rather than written by `reflect` — MIPROv2 searches
    * instructions and demonstrations together, and a demo is evidence a rollout
    * actually produced, which asking a model to author would destroy.
    */
   demoComponents?: readonly NoInfer<K>[];
   /** Renders a harvested rollout as demo text. Defaults to JSON. */
-  renderDemo?: DemoRenderer<NoInfer<Datum>, NoInfer<Out>>;
+  renderDemo?: DemoRenderer<NoInfer<Datum>, NoInfer<Output>>;
   /**
    * The gold output for a training datum, where the caller has labels. Supply
    * it and every demo component keeps a labels-only set on its menu, as
@@ -132,7 +132,7 @@ export interface MiproTask<
    * datum. Nothing generic can infer this: only the caller knows which part of
    * a datum is the answer.
    */
-  goldOutput?: (datum: NoInfer<Datum>) => NoInfer<Out> | undefined;
+  goldOutput?: (datum: NoInfer<Datum>) => NoInfer<Output> | undefined;
   /** Renders a task input for the proposal prompt. Defaults to JSON. */
   renderDatum?: (datum: NoInfer<Datum>) => string;
   batchSampler?: BatchSampler<NoInfer<Datum>>;
@@ -145,7 +145,7 @@ export interface MiproTask<
 export type MiproStopReason = "budgetExhausted" | "maxTrials" | "aborted";
 
 export type MiproEvent<K extends string = string> =
-  | { type: "start"; components: K[]; valsetSize: number }
+  | { type: "start"; components: K[]; validationSetSize: number }
   | { type: "menu"; menu: Record<K, string[]>; reflectionCalls: number }
   | ({ type: "evaluation" } & EvaluationEvent)
   | {
@@ -181,8 +181,8 @@ export interface MiproObservation {
 
 export interface MiproResult<
   K extends string = string,
-  Out = unknown,
-> extends OptimizerResult<K, MiproStopReason, Out> {
+  Output = unknown,
+> extends OptimizerResult<K, MiproStopReason, Output> {
   /** The seed's full validation score, so the lift is readable directly. */
   seedScore: number;
   trials: number;
@@ -251,10 +251,12 @@ export class MiproOptimizer implements Optimizer<MiproStopReason> {
 
   async optimize<
     Datum,
-    Traj = unknown,
-    Out = unknown,
+    Trajectory = unknown,
+    Output = unknown,
     const K extends string = string,
-  >(task: MiproTask<Datum, Traj, Out, K>): Promise<MiproResult<K, Out>> {
+  >(
+    task: MiproTask<Datum, Trajectory, Output, K>,
+  ): Promise<MiproResult<K, Output>> {
     return runMipro({ config: this.#config, task });
   }
 }
@@ -266,7 +268,7 @@ export function buildMiproPrompt(args: {
   tip: string;
   /** The other components' current text, so the proposal fits the system. */
   siblings?: Readonly<Record<string, string>>;
-  /** What the trainset looks like as a whole, beyond the exemplars. */
+  /** What the trainingSet looks like as a whole, beyond the exemplars. */
   datasetSummary?: string;
 }): string {
   const {
@@ -339,10 +341,10 @@ function buildDatasetSummaryPrompt(examples: readonly string[]): string {
   ].join("\n");
 }
 
-async function runMipro<Datum, Traj, Out, K extends string>(args: {
+async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   config: MiproConfig;
-  task: MiproTask<Datum, Traj, Out, K>;
-}): Promise<MiproResult<K, Out>> {
+  task: MiproTask<Datum, Trajectory, Output, K>;
+}): Promise<MiproResult<K, Output>> {
   const { config, task } = args;
 
   const {
@@ -369,9 +371,9 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
 
   const {
     seedCandidate,
-    trainset,
-    valset = trainset,
-    testset,
+    trainingSet,
+    validationSet = trainingSet,
+    testSet,
     adapter,
     reflect,
     componentOptions,
@@ -389,20 +391,20 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
 
   const components = componentNames(seedCandidate);
 
-  if (trainset.length === 0) {
-    throw new Error("optimize requires a non-empty trainset");
+  if (trainingSet.length === 0) {
+    throw new Error("optimize requires a non-empty trainingSet");
   }
-  if (valset.length === 0) {
-    throw new Error("optimize requires a non-empty valset");
+  if (validationSet.length === 0) {
+    throw new Error("optimize requires a non-empty validationSet");
   }
   if (components.length === 0) {
     throw new Error(
       "optimize requires a seed candidate with at least one component",
     );
   }
-  if (testset !== undefined && testset.length === 0) {
+  if (testSet !== undefined && testSet.length === 0) {
     throw new Error(
-      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+      "optimize requires a non-empty testSet when one is given; omit it to skip held-out evaluation",
     );
   }
 
@@ -414,14 +416,18 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     }
   }
 
-  const trainIds = trainset.map((datum, index) => instanceId({ datum, index }));
-  const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const trainingIds = trainingSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
+  const validationIds = validationSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
   const testIds =
-    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
+    testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
   const rng = createSeededRng(seed);
   const budget = createBudget({ maxMetricCalls });
-  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
     ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
@@ -430,10 +436,14 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
   });
 
-  onEvent?.({ type: "start", components, valsetSize: valset.length });
+  onEvent?.({
+    type: "start",
+    components,
+    validationSetSize: validationSet.length,
+  });
 
   const shown = rng
-    .sample(trainset, Math.min(exemplars, trainset.length))
+    .sample(trainingSet, Math.min(exemplars, trainingSet.length))
     .map(renderDatum);
 
   let reflectionCalls = 0;
@@ -447,13 +457,13 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
   );
 
   let summary: string | undefined;
-  if (datasetSummary && proposing && trainset.length > 0) {
+  if (datasetSummary && proposing && trainingSet.length > 0) {
     reflectionCalls += 1;
     summary = parseProposedText(
       await reflect({
         prompt: buildDatasetSummaryPrompt(
           rng
-            .sample(trainset, Math.min(summaryExamples, trainset.length))
+            .sample(trainingSet, Math.min(summaryExamples, trainingSet.length))
             .map(renderDatum),
         ),
         ...(signal === undefined ? {} : { signal }),
@@ -466,7 +476,7 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
   /**
    * Builds a demo component's menu from rollouts the metric rewarded.
    *
-   * Each set gets its own harvesting pass over a freshly shuffled trainset, as
+   * Each set gets its own harvesting pass over a freshly shuffled training set, as
    * MIPROv2 does. Drawing every set from a single pool would be cheaper and
    * identical under deterministic scoring, but a system that answers at
    * temperature does not give the same verdict twice: a second pass can turn a
@@ -486,10 +496,10 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     // needs no rollout and survives a system too weak to bootstrap from.
     if (goldOutput !== undefined) {
       const labelled = rng
-        .shuffle(trainset)
+        .shuffle(trainingSet)
         .map((datum) => ({ input: datum, output: goldOutput(datum) }))
         .filter((demo) => demo.output !== undefined)
-        .slice(0, maxDemos) as Demo<Datum, Out>[];
+        .slice(0, maxDemos) as Demo<Datum, Output>[];
 
       if (labelled.length > 0) {
         blocks.push(
@@ -508,8 +518,8 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
       // score has nothing to report. Re-checked per pass, so a run that can
       // afford two sets builds two rather than failing on the third.
       const affordable = Math.min(
-        trainset.length,
-        budget.remaining() - valset.length,
+        trainingSet.length,
+        budget.remaining() - validationSet.length,
       );
       if (affordable < 1) {
         break;
@@ -522,10 +532,10 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
           ? maxDemos
           : Math.round(1 + (index * (maxDemos - 1)) / (demoSets - 1));
 
-      const harvest = await bootstrapDemos<Datum, Traj, Out, K>({
+      const harvest = await bootstrapDemos<Datum, Trajectory, Output, K>({
         adapter,
         candidate: seedCandidate,
-        trainset,
+        trainingSet,
         minScore: demoMinScore,
         maxDemos: requested,
         maxMetricCalls: affordable,
@@ -633,8 +643,8 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
   ) {
     return evaluator.evaluate({
       candidate,
-      batch: valset,
-      ids: valIds,
+      batch: validationSet,
+      ids: validationIds,
       split: "val",
       phase,
       candidateId: null,
@@ -687,7 +697,7 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     if (bestKey === undefined) {
       return "none";
     }
-    if (!budget.canAfford(valset.length)) {
+    if (!budget.canAfford(validationSet.length)) {
       return "unaffordable";
     }
 
@@ -713,7 +723,7 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     // A sweep is a far better measurement of this configuration than the
     // minibatch readings that earned it one, so the surrogate hears it too.
     // Without this a lucky reading keeps pulling proposals toward a
-    // configuration the full valset has already ruled out.
+    // configuration the full validation set has already ruled out.
     surrogateInput.push({ choices, score });
     for (const observation of observations) {
       if (observation.choices.join(",") === bestKey) {
@@ -744,7 +754,7 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
     // allowance cannot cover a sweep, no configuration can be promoted and the
     // incumbent is settled, so further trials would spend the rest of the
     // budget on measurements that can change nothing.
-    if (!budget.canAfford(valset.length)) {
+    if (!budget.canAfford(validationSet.length)) {
       stopReason = "budgetExhausted";
       break;
     }
@@ -759,14 +769,14 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
       rng,
     });
     const candidate = candidateFor(choices);
-    const batchIndices = batchSampler({ trainset, iteration: trial, rng });
+    const batchIndices = batchSampler({ trainingSet, iteration: trial, rng });
 
     let minibatchScore: number;
     try {
       const evaluation = await evaluator.evaluate({
         candidate,
-        batch: batchIndices.map((index) => trainset[index] as Datum),
-        ids: batchIndices.map((index) => trainIds[index] as string),
+        batch: batchIndices.map((index) => trainingSet[index] as Datum),
+        ids: batchIndices.map((index) => trainingIds[index] as string),
         split: "train",
         phase: "minibatch",
         candidateId: null,
@@ -834,13 +844,13 @@ async function runMipro<Datum, Traj, Out, K extends string>(args: {
   }
 
   const testScore =
-    testset === undefined
+    testSet === undefined
       ? undefined
       : mean(
           (
             await evaluator.evaluate({
               candidate: best,
-              batch: testset,
+              batch: testSet,
               ids: testIds,
               split: "test",
               phase: "test",

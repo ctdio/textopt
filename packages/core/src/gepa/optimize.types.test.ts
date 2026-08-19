@@ -36,7 +36,7 @@ export function componentKeysAreChecked(gepa: GepaOptimizer): unknown[] {
   return [
     gepa.optimize({
       seedCandidate: SEED,
-      trainset: TICKETS,
+      trainingSet: TICKETS,
       adapter: createTicketAdapter(),
       reflect: REFLECT,
       maxMetricCalls: 1,
@@ -46,7 +46,7 @@ export function componentKeysAreChecked(gepa: GepaOptimizer): unknown[] {
 
     gepa.optimize({
       seedCandidate: SEED,
-      trainset: TICKETS,
+      trainingSet: TICKETS,
       adapter: {
         ...createTicketAdapter(),
         // @ts-expect-error "tonne" is not a component of the seed candidate
@@ -58,7 +58,7 @@ export function componentKeysAreChecked(gepa: GepaOptimizer): unknown[] {
 
     gepa.optimize({
       seedCandidate: SEED,
-      trainset: TICKETS,
+      trainingSet: TICKETS,
       // @ts-expect-error the adapter is keyed on components the seed lacks
       adapter: createMismatchedAdapter(),
       reflect: REFLECT,
@@ -75,7 +75,7 @@ test("infers component names from the seed candidate", async () => {
     seed: 1,
   }).optimize({
     seedCandidate: SEED,
-    trainset: TICKETS,
+    trainingSet: TICKETS,
     adapter: createTicketAdapter(),
     reflect: REFLECT,
     maxMetricCalls: 20,
@@ -106,7 +106,7 @@ test("narrows component names down to a single-component seed", async () => {
     seed: 1,
   }).optimize({
     seedCandidate: { onlyOne: "Answer the ticket." },
-    trainset: TICKETS,
+    trainingSet: TICKETS,
     adapter: createSingleComponentAdapter(),
     reflect: REFLECT,
     maxMetricCalls: 20,
@@ -134,14 +134,14 @@ test("keeps the component names a widened annotation threw away", async () => {
   });
   const fromWidened = await gepa.optimize({
     seedCandidate: widened,
-    trainset: TICKETS,
+    trainingSet: TICKETS,
     adapter: createSingleComponentAdapter(),
     reflect: REFLECT,
     maxMetricCalls: 20,
   });
   const fromPreserved = await gepa.optimize({
     seedCandidate: preserved,
-    trainset: TICKETS,
+    trainingSet: TICKETS,
     adapter: createSingleComponentAdapter(),
     reflect: REFLECT,
     maxMetricCalls: 20,

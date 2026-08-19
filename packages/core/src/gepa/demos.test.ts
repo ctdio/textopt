@@ -247,7 +247,7 @@ describe("createDemoProposer inside a run", () => {
     }).optimize({
       componentSelector: () => ["examples"],
       seedCandidate: { instruction: "hold ten seconds", examples: "" },
-      trainset: KEYWORD_EXAMPLES,
+      trainingSet: KEYWORD_EXAMPLES,
       adapter: {
         ...adapter,
         proposeNewTexts: async (args) => {

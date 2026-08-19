@@ -24,7 +24,7 @@ function baseAdapter(): Adapter<
 function task() {
   return {
     seedCandidate: SEED,
-    trainset: KEYWORD_EXAMPLES,
+    trainingSet: KEYWORD_EXAMPLES,
     adapter: baseAdapter(),
     reflect: createHillClimbingReflector(),
     maxMetricCalls: 400,
@@ -211,13 +211,13 @@ describe("OproOptimizer", () => {
     }
   });
 
-  test("scores the winner on a held-out testset", async () => {
+  test("scores the winner on a held-out testSet", async () => {
     const result = await new OproOptimizer({
       proposalsPerRound: 2,
       maxRounds: 2,
     }).optimize({
       ...task(),
-      testset: [
+      testSet: [
         { question: "held out, satisfied", required: ["answer"] },
         { question: "held out, unsatisfiable", required: ["zzz-never"] },
       ],
@@ -282,11 +282,11 @@ describe("OproOptimizer scoring subset", () => {
     );
   });
 
-  test("scores proposals on the subset instead of the whole valset", async () => {
+  test("scores proposals on the subset instead of the whole validationSet", async () => {
     let drawn = 0;
-    // Four proposals against a 20-instance valset costs 80 rollouts to screen.
-    // OPRO screens on a small fixed slice of the trainset instead, which is
-    // what makes a large valset affordable at all.
+    // Four proposals against a 20-instance validation set costs 80 rollouts to screen.
+    // OPRO screens on a small fixed slice of the training set instead, which is
+    // what makes a large validation set affordable at all.
     const result = await new OproOptimizer({
       proposalsPerRound: 2,
       maxRounds: 2,
@@ -294,8 +294,8 @@ describe("OproOptimizer scoring subset", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "seed" },
-      trainset: TRAIN,
-      valset: VAL,
+      trainingSet: TRAIN,
+      validationSet: VAL,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map(() => ""),
@@ -309,7 +309,7 @@ describe("OproOptimizer scoring subset", () => {
       maxMetricCalls: 5000,
     });
 
-    // Screening all four on the valset would be 80 rollouts on its own.
+    // Screening all four on the validation set would be 80 rollouts on its own.
     expect(result.metricCalls).toBeLessThan(80);
   });
 
@@ -327,8 +327,8 @@ describe("OproOptimizer scoring subset", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "seed" },
-      trainset: TRAIN,
-      valset: VAL,
+      trainingSet: TRAIN,
+      validationSet: VAL,
       adapter: {
         evaluate: ({ batch }) => ({
           outputs: batch.map(() => ""),
@@ -350,10 +350,10 @@ describe("OproOptimizer scoring subset", () => {
     expect(scored.size).toBe(4);
   });
 
-  test("reports a winner measured on the valset, not on the subset", async () => {
-    // "over" is perfect on the trainset and worthless on the valset. The
+  test("reports a winner measured on the validationSet, not on the subset", async () => {
+    // "over" is perfect on the training set and worthless on the validation set. The
     // search will chase it, because the search only ever sees the subset — but
-    // what gets reported has to be a number the full valset actually produced.
+    // what gets reported has to be a number the full validation set actually produced.
     const result = await new OproOptimizer({
       proposalsPerRound: 1,
       maxRounds: 3,
@@ -362,8 +362,8 @@ describe("OproOptimizer scoring subset", () => {
       seed: 1,
     }).optimize({
       seedCandidate: { instruction: "seed" },
-      trainset: TRAIN,
-      valset: VAL,
+      trainingSet: TRAIN,
+      validationSet: VAL,
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map(() => ""),
@@ -401,7 +401,7 @@ describe("OproOptimizer score history", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { alpha: "", beta: "" },
-      trainset: [{ id: 0 }],
+      trainingSet: [{ id: 0 }],
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map(() => ""),
@@ -441,7 +441,7 @@ describe("OproOptimizer score history", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { alpha: "", beta: "" },
-      trainset: [{ id: 0 }],
+      trainingSet: [{ id: 0 }],
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map(() => ""),
@@ -478,7 +478,7 @@ describe("OproOptimizer score history", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { alpha: "", beta: "" },
-      trainset: [{ id: 0 }],
+      trainingSet: [{ id: 0 }],
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map(() => ""),
@@ -520,7 +520,7 @@ describe("OproOptimizer score history", () => {
       seed: 3,
     }).optimize({
       seedCandidate: { alpha: "" },
-      trainset: [{ id: 0 }],
+      trainingSet: [{ id: 0 }],
       adapter: {
         evaluate: ({ batch, candidate }) => ({
           outputs: batch.map(() => ""),

@@ -7,26 +7,26 @@ import type { Adapter, Candidate } from "./types.js";
  */
 export interface OptimizerTask<
   Datum,
-  Traj = unknown,
-  Out = unknown,
+  Trajectory = unknown,
+  Output = unknown,
   K extends string = string,
 > {
   seedCandidate: Candidate<K>;
-  trainset: readonly Datum[];
-  valset?: readonly Datum[];
+  trainingSet: readonly Datum[];
+  validationSet?: readonly Datum[];
   /**
    * `NoInfer` keeps the adapter out of `K`'s inference: an adapter built by a
    * factory knows nothing about component names, and one inference candidate of
    * `string` widens `K` back to `string` everywhere.
    */
-  adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  adapter: Adapter<Datum, Trajectory, Output, NoInfer<K>>;
   /**
    * Instances held back from the search entirely, used once at the end to
-   * score the winner. Selection pressure is applied to the valset for the
+   * score the winner. Selection pressure is applied to the validation set for the
    * whole run, so `bestScore` is partly fitted to it; `testScore` is the only
    * number in a result that no candidate was ever selected against.
    */
-  testset?: readonly Datum[];
+  testSet?: readonly Datum[];
   maxMetricCalls: number;
   signal?: AbortSignal;
 }
@@ -39,15 +39,15 @@ export interface OptimizerTask<
 export interface OptimizerResult<
   K extends string,
   Stop extends string,
-  Out = unknown,
+  Output = unknown,
 > {
   bestCandidate: Candidate<K>;
   bestScore: number;
-  bestOutputs?: (Out | undefined)[];
+  bestOutputs?: (Output | undefined)[];
   metricCalls: number;
   /**
-   * `bestCandidate`'s mean score over the held-out testset. Absent when no
-   * testset was given. A large gap below `bestScore` is the search having
+   * `bestCandidate`'s mean score over the held-out testSet. Absent when no
+   * testSet was given. A large gap below `bestScore` is the search having
    * fitted the validation instances rather than the task.
    */
   testScore?: number;
@@ -74,10 +74,10 @@ export interface OptimizerResult<
 export interface Optimizer<Stop extends string> {
   optimize<
     Datum,
-    Traj = unknown,
-    Out = unknown,
+    Trajectory = unknown,
+    Output = unknown,
     const K extends string = string,
   >(
-    task: OptimizerTask<Datum, Traj, Out, K>,
-  ): Promise<OptimizerResult<K, Stop, Out>>;
+    task: OptimizerTask<Datum, Trajectory, Output, K>,
+  ): Promise<OptimizerResult<K, Stop, Output>>;
 }
