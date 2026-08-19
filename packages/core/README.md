@@ -177,6 +177,8 @@ These options control search behavior and can be reused across runs.
 | `trackBestOutputs`         | `false`                   | Keep validation outputs so the winner's can be read back.                                                     |
 | `raiseOnError`             | `true`                    | Rethrow adapter failures instead of skipping the iteration.                                                   |
 
+**What a run costs.** One validation sweep for the seed, then per iteration `proposals.perIteration × minibatchSize × 2` — every proposal screens its parent and its child on the same minibatch — plus `validationSet.length` for the sweep a surviving child earns — less than that where `valEvaluationPolicy` subsamples. All of it is reserved before the iteration begins, so a run never starts an iteration it cannot afford to promote out of.
+
 ### `GepaTask`
 
 `GepaTask` extends `OptimizerTask` with GEPA-specific run inputs.
@@ -294,6 +296,8 @@ SIMBA uses the base `Adapter`: it reads outputs, scores, and feedback and builds
 | `checkpointCache`      | `true`               | Include cached scores in every snapshot.                                   |
 | `trackBestOutputs`     | `false`              | Keep the winner's validation outputs.                                      |
 
+**What a run costs.** `(candidates + 1) × minibatchSize` per step, on top of `min(candidates + 1, maxSteps + 1) × validationSet.length` reserved before the first step for the finalist sweeps. The seed is scored as one of those finalists rather than up front, so every rollout a SIMBA run makes is one of these two.
+
 Each step samples `candidates` programs from the pool over one minibatch, groups the results by instance, and ranks the instances by how much the programs disagreed — max-to-min gap first, then best score, then max-to-avg gap. Wide disagreement is a controlled experiment with the input held fixed, so the difference in reward is attributable to behaviour rather than to difficulty.
 
 Two mutations are drawn at random per instance. `appendDemo` keeps the winning rollout as a few-shot example and costs no model call; it requires `demoComponents` and is unavailable without one. `appendRule` shows the better and worse run to `reflect` and appends the returned advice to each instruction component. Neither replaces text, so demos are dropped at a Poisson rate to stop a growing block from crowding out the instruction. When the advice budget is spent, `appendDemo` carries the run alone, or the run stops with `"reflectionBudgetExhausted"` if it was the only mutation enabled.
@@ -330,6 +334,8 @@ DSPy's `BootstrapFewShotWithRandomSearch`. It uses the base `Adapter` and no ref
 | `checkpointCache`  | `true`  | Include cached scores in every snapshot.                             |
 | `trackBestOutputs` | `false` | Keep the winner's validation outputs.                                |
 
+**What a run costs.** One validation sweep per candidate — `candidates` shuffled harvests after the two or three fixed ones — plus the training rollouts each harvest spends looking for demos, bounded by the size of `trainingSet`. A stricter `demoMinScore` raises that second number rather than lowering it, because a harvest keeps rolling out instances until it holds `maxDemos` of them or has run out of set.
+
 Candidates are tried cheapest and most reliable first, following DSPy's special seeds: zero-shot, then labels-only when `goldOutput` is supplied, then one unshuffled full-size harvest, then the shuffled ones. A run cut short by its budget therefore still has the baseline it needs to report against.
 
 Zero-shot stays in the running throughout. Demonstrations can hurt, and a search that cannot return "no demos" has no baseline. The labels-only candidate costs no rollout to build and is the only candidate available at all to a system too weak to bootstrap from.
@@ -361,6 +367,8 @@ OPRO uses the base `Adapter`. `OproTask` adds `reflect` and optional `renderDatu
 | `scoreScale`         | `100`             | What scores are multiplied by before being shown.          |
 | `seed`               | `0`               | Seeds the run's random stream.                             |
 | `buildPrompt`        | `buildOproPrompt` | Replaces the meta-prompt template.                         |
+
+**What a run costs.** One validation sweep for the seed, then up to `proposalsPerRound` screenings per round, each over `validationSet` or over `scoringSetSize` instances when that is set, plus a full sweep of the incumbent every `fullEvalInterval` rounds. Rounds are also capped at `maxReflectionCalls / proposalsPerRound`, and a round advances one component in turn, so a candidate with several components needs proportionally more of them.
 
 By default, every proposal is evaluated against the full `validationSet`; eight proposals on 500 instances require 4,000 rollouts. When `scoringSetSize` is set, proposals are screened on one fixed subset of `trainingSet`. The subset is not resampled because OPRO compares scores across proposals. Every `fullEvalInterval` rounds, the incumbent is evaluated on the full validation set.
 
@@ -410,6 +418,8 @@ MIPRO uses the base `Adapter`. `MiproTask` adds `reflect`, `componentOptions`, `
 | `tips`                     | built-in           | Style hints used when generating menu options.                                     |
 | `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                    |
 
+**What a run costs.** `maxTrials × minibatchSize` for the trials, plus `validationSet.length` for the seed and for each full evaluation — one every `fullEvalInterval` trials, and one at the end — plus up to `demoSets × trainingSet.length` to bootstrap the demo menus. The search stops as soon as a sweep is no longer affordable, because a trial that can never be promoted buys nothing. Trials should also scale with the menus they draw from: the space is their product, and the surrogate spends `startupTrials` of them sampling uniformly before it models anything.
+
 The proposer receives the current text of other components, a generated summary of `trainingSet`, and task exemplars. The summary uses one reflection call and is skipped when all menus are supplied through `componentOptions`. Unlike DSPy's MIPROv2 implementation, textopt does not include program source because the adapter interface has no generic representation for it.
 
 `componentOptions` adds menu entries without reflection calls. Each component's menu starts with its seed text, followed by these options.
@@ -448,6 +458,8 @@ import { RandomSearchOptimizer } from "textopt/random-search";
 | `concurrency` | `1`                     | How many may be in flight at once.                |
 | `maxRounds`   | `Infinity`              | Round ceiling.                                    |
 | `buildPrompt` | `buildParaphrasePrompt` | Replaces the paraphrase template.                 |
+
+**What a run costs.** One validation sweep for the seed, then `variants × validationSet.length` per round. A round starts only when all of it is affordable, so a half-funded round never spends rollouts on variants the rest cannot be compared against.
 
 `RandomSearchResult` adds `seedScore`, `rounds`, `variantsEvaluated`, `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"maxRounds"`, `"proposerStalled"`, or `"aborted"`.
 

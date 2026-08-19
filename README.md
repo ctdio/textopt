@@ -76,6 +76,49 @@ The tasks differ only in their metric: `noisy` adds per-instance jitter to the s
 
 Read these as evidence about the search, not about your task. The proposal model is a deterministic stand-in, so the benchmark holds proposal quality fixed and measures what each search does with it. Use `compare()` on your own task and metric before choosing.
 
+## Sizing a run
+
+`maxMetricCalls` is the only hard bound on a search, and a run that cannot afford its next unit of work stops rather than throws: the result carries `stopReason: "budgetExhausted"` and whatever had been found by then. An underfunded run looks exactly like a finished one, so price it before starting it.
+
+GEPA, MIPRO, OPRO, and random search sweep the seed candidate over the validation set before anything else, and bootstrap search's first candidate is the zero-shot one, which is that same sweep. SIMBA scores its seed alongside its finalists instead. After that, each spends in units of its own — `|val|` below is the size of the validation set, `|train|` the training set:
+
+| Optimizer                  | One unit of search                                                                   | Charged besides                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `GepaOptimizer`            | an iteration: `perIteration × minibatchSize × 2 + \|val\|`                           | —                                                                                                       |
+| `SimbaOptimizer`           | a step: `(candidates + 1) × minibatchSize`                                           | `min(candidates + 1, maxSteps + 1) × \|val\|`, reserved before the first step                           |
+| `MiproOptimizer`           | a trial: `minibatchSize`                                                             | `\|val\|` every `fullEvalInterval` trials, and up to `demoSets × \|train\|` to bootstrap each demo menu |
+| `OproOptimizer`            | a round: up to `proposalsPerRound × \|val\|`, or `× scoringSetSize` when that is set | `\|val\|` every `fullEvalInterval` rounds, once `scoringSetSize` is set                                 |
+| `BootstrapSearchOptimizer` | a candidate: `\|val\|`, plus up to `\|train\|` to harvest its demos                  | —                                                                                                       |
+| `RandomSearchOptimizer`    | a round: `variants × \|val\|`                                                        | —                                                                                                       |
+
+GEPA's doubling is the parent: each proposal scores its parent and its child on the same minibatch, because acceptance is a paired comparison rather than a threshold. The trailing `|val|` is the sweep a child earns by improving, reserved before the iteration starts rather than discovered missing once there is something to promote. The others refuse work for the same reason — MIPRO stops as soon as it can no longer afford a sweep, because a reading nothing can act on buys nothing.
+
+SIMBA is the one worth doing the arithmetic for, because its reserve comes off the top. Under its defaults — `candidates: 6`, `minibatchSize: 32`, `maxSteps: 8` — against a 50-instance validation set, it holds back 350 rollouts for the finalists and spends 224 per step, so eight steps need about 2,150. The same run under `maxMetricCalls: 600` takes one step and stops.
+
+### Sizing the sets
+
+`validationSet` defaults to `trainingSet`. That is the right default for a first run and the wrong number to report: the search selected against those instances, so `bestScore` is fitted to them. [Held-out evaluation](#held-out-evaluation) is how to find out what that cost.
+
+Validation size multiplies almost every row of the table, so it decides what a run costs. Shrinking it is the wrong lever — it makes the number that picks the winner noisier. Screen on something smaller and sweep rarely instead: that is what OPRO's `scoringSetSize`, MIPRO's minibatch trials, and GEPA's minibatch screening are for.
+
+Minibatch defaults differ by an order of magnitude between optimizers — GEPA 3, SIMBA 32, MIPRO 35 — and do not transfer. GEPA compares a child against its own parent on the same instances, so three of them already say something. MIPRO hands the batch mean to its surrogate as an absolute reading of a configuration. SIMBA ranks the instances in a batch by how much its programs disagreed on them. Carry one optimizer's number to another and the search reads noise.
+
+### When a run disappoints
+
+| What happened                                                             | Where to look                                                                                                                  |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| stopped short of `maxIterations`, `maxSteps`, `maxTrials`, or `maxRounds` | `stopReason`. `budgetExhausted` is the arithmetic above, not a failure                                                         |
+| `stopReason` is `reflectionBudgetExhausted`                               | GEPA's `reflection.maxCalls` or OPRO's `maxReflectionCalls`. Both are separate from the rollout budget and default unbounded   |
+| `bestScore` improved but `testScore` did not                              | the validation set is too small or too easy to separate candidates. The gap is the measurement working                         |
+| accepted candidates do not hold up when re-evaluated                      | metric noise — [Noisy metrics](#noisy-metrics), including the cost of turning both guards on                                   |
+| proposals repeat themselves                                               | `reflection.strategies` for the framing, `rejectedProposalMemory` for what the prompt is told has already failed               |
+| MIPRO settles on the seed                                                 | the menus were the search space: read `result.menu`, add `componentOptions`, and set `multivariate: false` when trials are few |
+| the run cost more money or took longer than expected                      | `maxCostUsd` and `maxWallClockMs` — [Budgets, cost, and time](#budgets-cost-and-time)                                          |
+
+### What to try first
+
+`BootstrapSearchOptimizer` answers the cheapest question worth asking first — whether the instruction is already fine and the output format is what is failing — and it calls no proposal model to do it, so a run costs rollouts and nothing else. Reach for a reflective search once that has been ruled out, and pick between them with [`compare()`](#comparing-optimizers) under one budget rather than from the benchmark table above.
+
 ## How GEPA works
 
 GEPA maintains a pool of candidates and a **Pareto frontier over validation instances**, not objectives. A candidate remains on the frontier while it has the best score for at least one instance. Parent sampling is weighted by the number of instances each candidate wins, preserving candidates with useful strengths even when their mean score is lower.
@@ -332,6 +375,8 @@ new GepaOptimizer({
 
 Component names are inferred from `seedCandidate`. Other positions use `NoInfer`, so misspelled component names fail type checking.
 
+`proposals.perIteration` is the setting that moves the bill: each proposal is priced at two minibatch evaluations, its parent's and its own, so raising it from one to three triples what an iteration costs before any child is swept ([Sizing a run](#sizing-a-run)). What that buys is width — every slot draws its own parent and its own minibatch, so the slots diagnose different failures and `concurrency` can run them at once, and `selection: "best"` then promotes only the strongest improving child of the batch. Pair it with `reflection.strategies`, which is what keeps two slots that landed on the same parent from writing the same revision.
+
 `textopt/gepa` exports the following strategies: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `pairedPermutationAcceptance`, `fullEvaluationPolicy`, `subsampledEvaluationPolicy`, and `lowerBoundEvaluationPolicy`.
 
 ### Noisy metrics
@@ -380,7 +425,7 @@ const result = await new SimbaOptimizer({
   adapter, // the base Adapter — no makeReflectiveDataset needed
   reflect,
   demoComponents: ["demos"], // optional; enables the appendDemo mutation
-  maxMetricCalls: 600,
+  maxMetricCalls: 900, // 250 reserved for finalists, 80 a step, over 50 validation instances
 });
 
 result.finalists; // the step winners, scored on the full validation set, best first
@@ -395,7 +440,9 @@ Neither replaces text, so candidates accumulate; demonstrations are dropped at a
 
 Ported from DSPy's SIMBA with two deliberate changes. A trajectory sample runs one program across the whole minibatch rather than resampling a program per instance, because the adapter owns decoding here and there is no temperature knob to vary — the variability comes from the program pool instead. And the percentile guards are strict rather than inclusive, so a step on which every rollout ties still produces a mutation instead of doing nothing at all.
 
-Only the finalists are scored on the full validation set: the step winners are sampled evenly across the run, so early winners stay in the running. Those rollouts are reserved before the search starts, which is why a small `maxMetricCalls` buys fewer steps than the arithmetic suggests.
+Only the finalists are scored on the full validation set: the step winners are sampled evenly across the run, so early winners stay in the running. Those rollouts are reserved before the search starts, which is why a small `maxMetricCalls` buys fewer steps than the arithmetic suggests — see [Sizing a run](#sizing-a-run) for what the reserve costs.
+
+Its batch defaults are wide on purpose: a step reads the disagreement between programs over a batch, and a narrow batch leaves little to rank. When a run has to get cheaper, lower `candidates` first — it shrinks both the step and the reserve, where `minibatchSize` shrinks the step alone and narrows the batch the ranking reads.
 
 ### Bootstrapped few-shot search
 
@@ -413,7 +460,7 @@ const result = await new BootstrapSearchOptimizer({
   adapter,
   demoComponents: ["demos"],
   goldOutput: (datum) => datum.answer, // optional; enables the labels-only candidate
-  maxMetricCalls: 600,
+  maxMetricCalls: 1500, // 19 candidates swept over 50 validation instances, plus their harvests
 });
 
 result.candidates; // every set tried, with its source and how many demos it held
@@ -422,6 +469,8 @@ result.candidates; // every set tried, with its source and how many demos it hel
 DSPy's `BootstrapFewShotWithRandomSearch`. It calls no model to write text: every candidate is assembled from outputs the system itself produced, so the search costs rollouts and nothing else. The fixed candidates come first — zero-shot, then labels-only when `goldOutput` is given, then one unshuffled full-size harvest — followed by shuffled harvests of random size.
 
 Zero-shot stays in the running throughout. Demonstrations can hurt, and a search that cannot return "no demos" has no baseline to report against.
+
+`candidates` is the whole search: each one is a fresh harvest and a full sweep, so it sets both the breadth and the bill. `demoMinScore` is the knob that surprises — a strict threshold does not cost less, it costs more, because a harvest keeps rolling out training instances until it has collected `maxDemos` of them or run out of set. If harvests come back with no demos, the seed cannot yet produce work its own metric rewards, and few-shot search is the wrong tool until it can.
 
 ### OPRO
 
@@ -437,7 +486,7 @@ const result = await new OproOptimizer({
   validationSet,
   adapter,
   reflect,
-  maxMetricCalls: 300,
+  maxMetricCalls: 2000, // 4 proposals a round, each swept over 50 validation instances
 });
 
 result.trajectory; // every candidate scored, in the order it was tried
@@ -446,6 +495,8 @@ result.trajectory; // every candidate scored, in the order it was tried
 By default, every proposal is scored on the full `validationSet`. With `scoringSetSize`, proposals are screened on a fixed subset of `trainingSet`, and the incumbent receives a full sweep every `fullEvalInterval` rounds. In a 30-instance validation set, screening on 12 instances halved rollout count without reducing the measured best score.
 
 The meta-prompt lists the strongest attempts in ascending score order, placing the best attempt nearest the request. `scoreScale` converts scores to integers (100 by default), because models distinguish values such as 41 and 68 more reliably than 0.41 and 0.68.
+
+Rounds are where OPRO gets its signal: every proposal in a round sees the same history, so `proposalsPerRound` widens a round rather than deepening the search, and the history a later prompt reads only grows between rounds. A run also moves one component per round, in turn, so a two-component candidate needs twice the rounds to revise each as often. Budget for rounds first, then set `proposalsPerRound` to what a round can afford — `maxReflectionCalls` caps the two together, at `maxReflectionCalls / proposalsPerRound` rounds.
 
 ### MIPRO
 
@@ -461,7 +512,7 @@ const result = await new MiproOptimizer({
   adapter,
   reflect,
   demoComponents: ["demos"], // menu bootstrapped from the training set
-  maxMetricCalls: 600,
+  maxMetricCalls: 1600, // 30 trials of 35, six sweeps of 50, and the demo harvests
 });
 
 result.menu; // the space that was searched, per component
@@ -474,6 +525,8 @@ MIPRO first builds a menu for each component from the seed text and variants gen
 
 Every `fullEvalInterval` trials, MIPRO fully evaluates the unswept configuration with the highest average minibatch score. Averaging repeated observations reduces the effect of a lucky minibatch.
 
+The space is the product of the menus, so it grows multiplicatively with components while `maxTrials` grows by hand — three components of six options each is 216 configurations, and the default thirty trials sees a seventh of them. The surrogate also spends its first ten trials sampling at random before it models anything, so a short run is mostly random search with extra steps. Give it trials in proportion to the menu, or trim the menu with `instructionsPerComponent`.
+
 ### Random search
 
 ```ts
@@ -485,11 +538,13 @@ const result = await new RandomSearchOptimizer({
   validationSet,
   adapter,
   reflect,
-  maxMetricCalls: 300,
+  maxMetricCalls: 1000, // 4 variants a round, each swept over 50 validation instances
 });
 ```
 
 Random search paraphrases one component per round and keeps the highest-scoring candidate. Its prompt receives no performance data. Compare it with a reflective optimizer under the same metric budget to measure the benefit of reflection.
+
+Being a baseline is the whole configuration: give it the `maxMetricCalls` and `validationSet` of the run it stands against, and change nothing else. A baseline on a smaller budget answers a different question than the one being asked of it. [`compare()`](#comparing-optimizers) runs both over the same seeds and ranks them on the held-out score, but each entrant builds its own task, so keeping the budgets equal is still yours to do.
 
 ## Held-out evaluation
 
