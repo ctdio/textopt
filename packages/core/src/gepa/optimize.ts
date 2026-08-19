@@ -1,8 +1,19 @@
+import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
 import { createMemoryCache, stableHash } from "../cache.js";
+import {
+  assertResumable,
+  candidateFingerprint,
+  runFingerprint,
+} from "../checkpoint.js";
 import type { EvaluationCache } from "../cache.js";
 import { mapWithConcurrency } from "../concurrency.js";
-import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import {
+  BudgetExhausted,
+  costExhausted,
+  createEvaluator,
+  measuredMean,
+} from "../evaluation.js";
 import type { ScoredBatch } from "../evaluation.js";
 import { mean, sum } from "../math.js";
 import type {
@@ -348,6 +359,10 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     batchSampler = createEpochShuffledSampler<Datum>({ minibatchSize }),
     valEvaluationPolicy = fullEvaluationPolicy<Datum, K>(),
     cache,
+    cacheNamespace,
+    retry,
+    maxCostUsd,
+    maxWallClockMs,
     instanceId = defaultInstanceId,
     onEvent,
     onCheckpoint,
@@ -355,6 +370,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     signal,
   } = task;
 
+  const deadline = createDeadline({ maxWallClockMs });
   const seedComponents = componentNames(seedCandidate);
   const mergeConfig = {
     enabled: merge?.enabled ?? seedComponents.length > 1,
@@ -424,12 +440,12 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     trainingIds,
     validationIds,
     seed,
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
   });
-  if (resumeFrom !== undefined && resumeFrom.fingerprint !== fingerprint) {
-    throw new Error(
-      "checkpoint does not belong to this run: the seed candidate, instance ids or seed differ from the ones it was taken with",
-    );
-  }
+  assertResumable({
+    fingerprint,
+    ...(resumeFrom === undefined ? {} : { snapshot: resumeFrom }),
+  });
 
   const rng = createSeededRng(seed, resumeFrom?.rngState);
   const budget = createBudget({
@@ -528,6 +544,8 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
+    ...(retry === undefined ? {} : { retry }),
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
@@ -1041,18 +1059,27 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       throw err;
     }
 
+    const screened = pairMeasured({
+      parent: parentEvaluation,
+      child: childEvaluation,
+    });
+
+    // Every instance in the minibatch failed on one side or the other, so the
+    // batch holds no comparison to make. Screening it anyway would decide the
+    // proposal on an outage.
+    if (screened.parentScores.length === 0) {
+      return { status: "skipped" };
+    }
+
     return {
       status: "screened",
       plan,
       child,
       proposed,
-      parentScore: mean(parentEvaluation.scores),
-      childScore: mean(childEvaluation.scores),
-      improvement: sum(childEvaluation.scores) - sum(parentEvaluation.scores),
-      accepted: acceptance({
-        parentScores: parentEvaluation.scores,
-        childScores: childEvaluation.scores,
-      }),
+      parentScore: mean(screened.parentScores),
+      childScore: mean(screened.childScores),
+      improvement: sum(screened.childScores) - sum(screened.parentScores),
+      accepted: acceptance(screened),
     };
   }
 
@@ -1240,6 +1267,14 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       stopReason = "aborted";
       break;
     }
+    if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
+      stopReason = "costExhausted";
+      break;
+    }
+    if (deadline.exceeded()) {
+      stopReason = "deadlineReached";
+      break;
+    }
     if (iteration >= maxIterations) {
       stopReason = "maxIterations";
       break;
@@ -1340,18 +1375,16 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   const testScore =
     testSet === undefined
       ? undefined
-      : mean(
-          (
-            await evaluateCached({
-              candidate: best.candidate,
-              batch: testSet,
-              ids: testIds,
-              split: "test",
-              phase: "test",
-              candidateId: bestCandidateId,
-              charge: false,
-            })
-          ).scores,
+      : measuredMean(
+          await evaluateCached({
+            candidate: best.candidate,
+            batch: testSet,
+            ids: testIds,
+            split: "test",
+            phase: "test",
+            candidateId: bestCandidateId,
+            charge: false,
+          }),
         );
 
   emit({
@@ -1368,6 +1401,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   return {
     bestCandidate: best.candidate,
     bestScore: best.aggregateScore,
+    usage: evaluator.usage(),
     bestCandidateId,
     ...(testScore === undefined
       ? {}
@@ -1657,44 +1691,6 @@ function collectDominatorIds(records: readonly CandidateRecord[]): number[] {
 }
 
 /**
- * Identifies the configuration a checkpoint was taken under. Resuming against
- * different data would score old candidates on new instances and quietly
- * corrupt the frontier, so the mismatch is refused instead.
- */
-/**
- * Identifies a run by everything the search trajectory depends on. The test set
- * is deliberately absent: it never touches selection, so adding one to a
- * resumed run changes nothing about what that run would have done.
- */
-function runFingerprint(args: {
-  seedCandidate: Candidate;
-  trainingIds: readonly string[];
-  validationIds: readonly string[];
-  seed: number;
-}): string {
-  const { seedCandidate, trainingIds, validationIds, seed } = args;
-
-  // Hashed, not embedded: this goes into every snapshot, and only ever gets
-  // compared for equality.
-  return stableHash({
-    seed,
-    seedCandidate: candidateFingerprint(seedCandidate),
-    trainingIds,
-    validationIds,
-  });
-}
-
-function candidateFingerprint<K extends string>(
-  candidate: Candidate<K>,
-): string {
-  return JSON.stringify(
-    componentNames(candidate)
-      .sort()
-      .map((name) => [name, candidate[name]]),
-  );
-}
-
-/**
  * Names an instance by a hash of its content rather than by the content
  * itself: the id ends up inside every cache key and inside the checkpoint
  * fingerprint, and embedding whole examples there costs memory proportional to
@@ -1704,4 +1700,33 @@ function candidateFingerprint<K extends string>(
 function defaultInstanceId(args: { datum: unknown; index: number }): string {
   const hash = stableHash(args.datum);
   return hash === "" ? String(args.index) : hash;
+}
+
+/**
+ * The two rollout sets restricted to the instances both of them measured.
+ *
+ * Screening is a paired comparison over one minibatch: a transient row is a
+ * rollout that never happened, and leaving it in scores the candidate that ran
+ * against the infrastructure failure of the one that did not.
+ */
+function pairMeasured(args: {
+  parent: { scores: readonly number[]; transient?: readonly boolean[] };
+  child: { scores: readonly number[]; transient?: readonly boolean[] };
+}): { parentScores: number[]; childScores: number[] } {
+  const { parent, child } = args;
+
+  const parentScores: number[] = [];
+  const childScores: number[] = [];
+
+  for (let index = 0; index < parent.scores.length; index += 1) {
+    if (
+      parent.transient?.[index] === true ||
+      child.transient?.[index] === true
+    ) {
+      continue;
+    }
+    parentScores.push(parent.scores[index] as number);
+    childScores.push(child.scores[index] as number);
+  }
+  return { parentScores, childScores };
 }

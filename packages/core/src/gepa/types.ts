@@ -179,7 +179,12 @@ export interface ValEvaluationPolicy<
 }
 
 export type GepaStopReason =
-  "budgetExhausted" | "reflectionBudgetExhausted" | "aborted" | "maxIterations";
+  | "budgetExhausted"
+  | "costExhausted"
+  | "deadlineReached"
+  | "reflectionBudgetExhausted"
+  | "aborted"
+  | "maxIterations";
 
 export type GepaEvent<K extends string = string> =
   | { type: "start"; components: K[]; validationSetSize: number }

@@ -386,6 +386,7 @@ async function runRandomSearch<
   return {
     bestCandidate: best,
     bestScore,
+    usage: evaluator.usage(),
     seedScore,
     ...(trackBestOutputs ? { bestOutputs } : {}),
     ...(testScore === undefined

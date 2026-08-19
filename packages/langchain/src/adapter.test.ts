@@ -83,6 +83,42 @@ function buildRunnableWithOrphanedToolSpan() {
 }
 
 describe("createLangChainAdapter", () => {
+  test("reports the tokens its model spans accounted for, priced when asked", async () => {
+    const runnable = RunnableLambda.from(
+      async (input: { text: string }, config?: { callbacks?: unknown }) => {
+        const manager = config?.callbacks as CallbackManager;
+        const run = await manager.handleLLMStart(
+          { lc: 1, type: "not_implemented", id: ["counter"] },
+          [input.text],
+        );
+        await run[0]?.handleLLMEnd({
+          generations: [[{ text: "hardware" }]],
+          llmOutput: {
+            tokenUsage: { promptTokens: 10, completionTokens: 4 },
+          },
+        });
+        return "hardware";
+      },
+    );
+
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => runnable,
+      score: () => ({ score: 1 }),
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { system: "classify" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(evaluation.usage).toEqual([
+      { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.00009 },
+    ]);
+  });
+
   test("scores every item in the batch in order", async () => {
     const adapter = createLangChainAdapter<Ticket, string>({
       buildRunnable: (candidate) => echoRunnable(candidate.instruction ?? ""),

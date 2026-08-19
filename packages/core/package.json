@@ -41,6 +41,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./file-cache": {
+      "import": {
+        "types": "./dist/file-cache.d.mts",
+        "default": "./dist/file-cache.mjs"
+      },
+      "require": {
+        "types": "./dist/file-cache.d.cts",
+        "default": "./dist/file-cache.cjs"
+      }
+    },
     "./gepa": {
       "import": {
         "types": "./dist/gepa/index.d.mts",

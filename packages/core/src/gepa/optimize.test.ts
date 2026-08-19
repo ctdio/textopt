@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createMemoryCache } from "../cache.js";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
@@ -30,6 +30,73 @@ const PART_TASKS = ["alpha", "beta", "gamma"].flatMap((part) =>
 );
 
 describe("optimize", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("stops once the wall clock deadline passes", async () => {
+    // Rollout and cost ceilings bound what a run spends, not how long it
+    // takes: a run stuck behind a rate limit costs nothing and runs forever.
+    vi.useFakeTimers();
+
+    const result = await new GepaOptimizer({
+      maxIterations: 20,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: {
+        ...createKeywordAdapter(),
+        evaluate: ({ batch }) => {
+          vi.advanceTimersByTime(400);
+          return {
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0.5),
+            feedback: batch.map(() => "measured"),
+          };
+        },
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 1000,
+      maxWallClockMs: 1000,
+    });
+
+    expect(result.stopReason).toBe("deadlineReached");
+  });
+  test("stops once the reported cost reaches the ceiling", async () => {
+    // Rollouts are the budget, but a run is paid for in dollars: a candidate
+    // that grows its prompt costs more per rollout than the seed did, so a
+    // rollout ceiling alone cannot bound spend.
+    const result = await new GepaOptimizer({
+      maxIterations: 5,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: {
+        ...createKeywordAdapter(),
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0.5),
+          feedback: batch.map(() => "measured"),
+          usage: batch.map(() => ({ inputTokens: 100, costUsd: 1 })),
+        }),
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 1000,
+      maxCostUsd: 4,
+    });
+
+    expect(result.stopReason).toBe("costExhausted");
+    expect(result.usage).toEqual({
+      inputTokens: 400,
+      outputTokens: 0,
+      totalTokens: 400,
+      costUsd: 4,
+      rollouts: 4,
+    });
+  });
+
   test("satisfies the Optimizer contract", async () => {
     const gepa = new GepaOptimizer();
     const contract: Optimizer<GepaStopReason> = gepa;
@@ -844,6 +911,9 @@ describe("optimize", () => {
         reflect: async () => "```\nunused\n```",
         maxMetricCalls: 100,
         cache,
+        // The subject here is what happens to a row that stays transient, not
+        // the retrying that usually rescues one.
+        retry: { attempts: 0 },
       });
 
     await run();
@@ -886,6 +956,7 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
+      retry: { attempts: 0 },
     });
 
     const seedRecord = result.candidates[0];
@@ -916,12 +987,83 @@ describe("optimize", () => {
         reflect: async () => "```\nunused\n```",
         maxMetricCalls: 100,
         cache,
+        // The subject here is what happens to a row that stays transient, not
+        // the retrying that usually rescues one.
+        retry: { attempts: 0 },
       });
 
     await run();
     const second = await run();
 
     expect(second.cacheHits).toBeGreaterThan(0);
+  });
+
+  test("screens a proposal on the instances both it and its parent measured", async () => {
+    // Screening compares two rollout sets over the same instances. An instance
+    // that failed transiently on one side was never measured on that side, so
+    // scoring the pair on it compares a candidate against an outage — here it
+    // hides a child that is better everywhere it actually ran.
+    const rows = [{ id: 0 }, { id: 1 }];
+
+    const result = await new GepaOptimizer({
+      maxIterations: 1,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: rows,
+      adapter: {
+        evaluate: ({ batch, candidate }) => {
+          const isSeed = candidate.instruction === SEED.instruction;
+          return {
+            outputs: batch.map(() => ""),
+            scores: batch.map((row) => (isSeed ? 1 - row.id : row.id)),
+            feedback: batch.map(() => "measured"),
+            // The child's first instance never ran; the seed's did.
+            transient: batch.map((row) => !isSeed && row.id === 0),
+          };
+        },
+        makeReflectiveDataset: ({ batch, evaluation }) => ({
+          instruction: batch.map((row, index) => ({
+            inputs: { id: row.id },
+            generatedOutputs: "",
+            feedback: evaluation.feedback?.[index] ?? "",
+            score: evaluation.scores[index] as number,
+          })),
+        }),
+      },
+      reflect: async () => "```\nrewritten instruction\n```",
+      maxMetricCalls: 100,
+      retry: { attempts: 0 },
+    });
+
+    expect(result.candidates).toHaveLength(2);
+  });
+
+  test("keeps scores measured under different environments apart", async () => {
+    // Nothing about a cached score records which model produced it. Swapping
+    // the task model, its temperature, or the scorer leaves the same key
+    // pointing at a measurement of a system that no longer exists.
+    const cache = createMemoryCache();
+    const run = (environment: string) =>
+      new GepaOptimizer({
+        maxIterations: 1,
+        minibatchSize: 2,
+        seed: 1,
+      }).optimize({
+        seedCandidate: SEED,
+        trainingSet: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        cache,
+        cacheNamespace: environment,
+      });
+
+    await run("gpt-5-mini@0.0");
+    const second = await run("gpt-5@0.7");
+
+    expect(second.cacheHits).toBe(0);
   });
 
   test("rejects a component selector that names a component the candidate lacks", async () => {

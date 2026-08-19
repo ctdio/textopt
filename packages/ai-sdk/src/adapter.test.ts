@@ -49,6 +49,26 @@ function resultFor(text: string): AiSdkResultLike {
 }
 
 describe("createAiSdkAdapter", () => {
+  test("reports token usage per rollout, priced when a price list is given", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum }) => resultFor(datum.answer),
+      score: () => ({ score: 1 }),
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "answer" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(evaluation.usage).toEqual([
+      { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.00009 },
+      { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.00009 },
+    ]);
+  });
+
   test("accepts the shape a real generateText call returns", () => {
     const compatible: GenerateTextIsCompatible = true;
 

@@ -1,9 +1,11 @@
-import { mapWithConcurrency } from "textopt";
+import { mapWithConcurrency, priceUsage } from "textopt";
 import type {
   Candidate,
   EvaluationBatch,
   EvaluationContext,
+  RolloutUsage,
   ScoreResult,
+  TokenPricing,
 } from "textopt";
 import type {
   GepaAdapter,
@@ -106,6 +108,11 @@ export interface AiSdkAdapterOptions<Datum, Output> {
   }) => ScoreResult | Promise<ScoreResult>;
   concurrency?: number;
   /**
+   * Converts the tokens a rollout reported into dollars. Without it usage is
+   * still reported in tokens; with it a run can be given a spend ceiling.
+   */
+  pricing?: TokenPricing;
+  /**
    * Classify a thrown error as infrastructure (rate limit, 5xx, network) so
    * its zero is not cached against the candidate. Defaults to treating every
    * failure as the candidate's, which is the safe assumption.
@@ -139,6 +146,7 @@ export function createAiSdkAdapter<Datum, Output = string>(
     toOutput,
     score,
     concurrency = DEFAULT_CONCURRENCY,
+    pricing,
     isTransient = () => false,
     buildRecord,
   } = options;
@@ -178,16 +186,12 @@ export function createAiSdkAdapter<Datum, Output = string>(
               feedback: `Run failed: ${message}`,
               transient: isTransient(err),
             };
-            return {
-              output: null,
-              result: null,
-              trace: {
-                steps: [],
-                durationMs: Date.now() - startedAt,
-                error: message,
-              },
-              scored,
+            const failed: AiSdkTrace = {
+              steps: [],
+              durationMs: Date.now() - startedAt,
+              error: message,
             };
+            return { output: null, result: null, trace: failed, scored };
           }
 
           const output = extractOutput(result);
@@ -218,6 +222,20 @@ export function createAiSdkAdapter<Datum, Output = string>(
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),
       };
+
+      if (
+        results.some(
+          (result) =>
+            result.scored.usage !== undefined ||
+            result.trace.usage !== undefined,
+        )
+      ) {
+        evaluation.usage = results.map(
+          (result) =>
+            result.scored.usage ??
+            usageOf({ usage: result.trace.usage, pricing }),
+        );
+      }
 
       if (captureTraces) {
         evaluation.trajectories = results.map((result) => result.trace);
@@ -331,4 +349,29 @@ export function summarizeRun(result: AiSdkResultLike): AiSdkTrace {
     ...(result.usage === undefined ? {} : { usage: result.usage }),
     durationMs: 0,
   };
+}
+
+/**
+ * Turns an AI SDK usage reading into the engine's own. Providers report
+ * different subsets of the token fields, so absent ones are left absent rather
+ * than zeroed.
+ */
+function usageOf(args: {
+  usage: AiSdkUsageLike | undefined;
+  pricing: TokenPricing | undefined;
+}): RolloutUsage {
+  const { usage, pricing } = args;
+  if (usage === undefined) {
+    return {};
+  }
+
+  const { inputTokens, outputTokens, totalTokens } = usage;
+  return priceUsage({
+    usage: {
+      ...(inputTokens === undefined ? {} : { inputTokens }),
+      ...(outputTokens === undefined ? {} : { outputTokens }),
+      ...(totalTokens === undefined ? {} : { totalTokens }),
+    },
+    ...(pricing === undefined ? {} : { pricing }),
+  });
 }

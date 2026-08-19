@@ -1,4 +1,5 @@
-import type { Adapter, Candidate } from "./types.js";
+import type { RetryPolicy } from "./evaluation.js";
+import type { Adapter, Candidate, UsageTotals } from "./types.js";
 
 /**
  * The run-level inputs every optimizer needs, whatever search it runs. An
@@ -28,6 +29,37 @@ export interface OptimizerTask<
    */
   testSet?: readonly Datum[];
   maxMetricCalls: number;
+  /**
+   * Dollars the run may spend, as reported by the adapter's usage. Checked
+   * between evaluations rather than during one, so a run stops at the first
+   * decision point past the ceiling rather than exactly on it.
+   *
+   * A rollout ceiling cannot bound spend on its own: reflective search grows
+   * the text it optimizes, so late rollouts cost more than early ones.
+   */
+  maxCostUsd?: number;
+  /**
+   * Wall-clock milliseconds the run may take. Checked between evaluations, so
+   * a run overruns by at most the length of one.
+   *
+   * Neither a rollout ceiling nor a cost ceiling bounds duration: a run behind
+   * a rate limit spends almost nothing and takes as long as the provider
+   * makes it take. This is what makes an optimizer safe to put behind a
+   * request timeout or a nightly job.
+   */
+  maxWallClockMs?: number;
+  /**
+   * Names the system under optimization — model id, decoding settings, scorer
+   * version — so cached scores measured under one are never served to another.
+   * Change it whenever anything outside the candidate text changes.
+   */
+  cacheNamespace?: string;
+  /**
+   * How a rollout the adapter reported as an infrastructure failure is retried.
+   * Optimizer-agnostic, because a rate limit costs every search the same thing:
+   * an instance that measured the provider rather than the candidate.
+   */
+  retry?: RetryPolicy;
   signal?: AbortSignal;
 }
 
@@ -45,6 +77,11 @@ export interface OptimizerResult<
   bestScore: number;
   bestOutputs?: (Output | undefined)[];
   metricCalls: number;
+  /**
+   * Tokens and dollars the run spent, summed from what the adapter reported.
+   * Zero throughout when the adapter reports no usage.
+   */
+  usage: UsageTotals;
   /**
    * `bestCandidate`'s mean score over the held-out testSet. Absent when no
    * testSet was given. A large gap below `bestScore` is the search having

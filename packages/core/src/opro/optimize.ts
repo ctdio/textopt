@@ -663,6 +663,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   return {
     bestCandidate: reported,
     bestScore,
+    usage: evaluator.usage(),
     seedScore,
     ...(trackBestOutputs ? { bestOutputs } : {}),
     ...(testScore === undefined

@@ -9,6 +9,28 @@
 export type Candidate<K extends string = string> = Record<K, string>;
 
 /**
+ * What one rollout consumed. Every field is optional because providers report
+ * different subsets, and a partial reading is still worth more than none.
+ */
+export interface RolloutUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Defaults to the sum of the two token counts when they are reported. */
+  totalTokens?: number;
+  costUsd?: number;
+}
+
+/** Usage summed over a run, alongside the rollouts that produced it. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  /** Fresh rollouts counted here. Cached instances buy nothing. */
+  rollouts: number;
+}
+
+/**
  * Result of running a candidate over a batch of data instances.
  *
  * `scores` is the load-bearing field: one number per instance, higher is
@@ -18,6 +40,12 @@ export type Candidate<K extends string = string> = Record<K, string>;
 export interface EvaluationBatch<Trajectory = unknown, Output = unknown> {
   outputs: Output[];
   scores: number[];
+  /**
+   * What each rollout consumed. Rollout counts are the budget, but they are a
+   * poor proxy for spend: reflective search grows the text it optimizes, so
+   * the same rollout costs more late in a run than early in it.
+   */
+  usage?: RolloutUsage[];
   feedback?: string[];
   trajectories?: Trajectory[];
   objectiveScores?: Record<string, number>[];
@@ -37,6 +65,8 @@ export interface ScoreResult {
   score: number;
   feedback?: string;
   objectiveScores?: Record<string, number>;
+  /** What this rollout consumed, when the caller can see it. */
+  usage?: RolloutUsage;
   /**
    * Marks a score produced by an infrastructure failure — a rate limit, a
    * network blip, a provider 5xx — rather than by the candidate. Without this

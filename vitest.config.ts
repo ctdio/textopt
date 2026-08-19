@@ -14,6 +14,10 @@ export default defineConfig({
         replacement: sourceOf("./packages/core/src/testing.ts"),
       },
       {
+        find: "textopt/file-cache",
+        replacement: sourceOf("./packages/core/src/file-cache.ts"),
+      },
+      {
         find: "textopt/mipro",
         replacement: sourceOf("./packages/core/src/mipro/index.ts"),
       },

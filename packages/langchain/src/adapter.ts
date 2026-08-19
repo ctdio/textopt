@@ -1,5 +1,11 @@
-import { mapWithConcurrency } from "textopt";
-import type { Candidate, EvaluationBatch, ScoreResult } from "textopt";
+import { mapWithConcurrency, priceUsage } from "textopt";
+import type {
+  Candidate,
+  EvaluationBatch,
+  RolloutUsage,
+  ScoreResult,
+  TokenPricing,
+} from "textopt";
 import type {
   GepaAdapter,
   ReflectiveDataset,
@@ -51,6 +57,12 @@ export interface LangChainAdapterOptions<Datum, Output> {
   concurrency?: number;
   /** Include LangChain's per-runnable chain spans in the trace. Noisy. */
   includeChainSteps?: boolean;
+  /**
+   * Converts the tokens the chain's model spans reported into dollars. Without
+   * it usage is still reported in tokens; with it a run can be given a spend
+   * ceiling.
+   */
+  pricing?: TokenPricing;
   /** Component name -> LangChain run name, used to highlight per-component IO. */
   componentRunNames?: Record<string, string>;
   /**
@@ -86,6 +98,7 @@ export function createLangChainAdapter<Datum, Output>(
     toInput = (datum: Datum) => datum,
     concurrency = DEFAULT_CONCURRENCY,
     includeChainSteps = false,
+    pricing,
     componentRunNames,
     isTransient = () => false,
     buildRecord,
@@ -116,7 +129,10 @@ export function createLangChainAdapter<Datum, Output>(
 
           try {
             output = await runnable.invoke(toInput(datum) as never, {
-              callbacks: captureTraces ? [collector.handler] : undefined,
+              // Attached whether or not traces are kept: token usage is
+              // counted from the same model spans, and a run that reports no
+              // usage cannot be given a spend ceiling.
+              callbacks: [collector.handler],
               metadata,
               signal,
             });
@@ -128,8 +144,13 @@ export function createLangChainAdapter<Datum, Output>(
             transient = isTransient(err);
           }
 
+          const steps = collector.finish();
+          const usage = priceUsage({
+            usage: collector.usage(),
+            ...(pricing === undefined ? {} : { pricing }),
+          });
           const trace: LangChainTrace = {
-            steps: collector.finish(),
+            steps: captureTraces ? steps : [],
             durationMs: Date.now() - startedAt,
             ...(failure === undefined ? {} : { error: failure }),
           };
@@ -138,6 +159,7 @@ export function createLangChainAdapter<Datum, Output>(
             return {
               output: null,
               trace,
+              usage,
               scored: {
                 score: 0,
                 feedback: `Run failed: ${failure}`,
@@ -150,6 +172,7 @@ export function createLangChainAdapter<Datum, Output>(
             return {
               output,
               trace,
+              usage,
               scored: await score({ datum, output, trace }),
             };
           } catch (err) {
@@ -158,6 +181,7 @@ export function createLangChainAdapter<Datum, Output>(
             return {
               output,
               trace,
+              usage,
               scored: {
                 score: 0,
                 feedback: `Scoring failed: ${message}`,
@@ -174,6 +198,12 @@ export function createLangChainAdapter<Datum, Output>(
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),
       };
+
+      if (results.some((result) => Object.keys(result.usage).length > 0)) {
+        evaluation.usage = results.map(
+          (result) => result.scored.usage ?? result.usage,
+        );
+      }
 
       if (captureTraces) {
         evaluation.trajectories = results.map((result) => result.trace);
@@ -261,10 +291,13 @@ function selectComponentSteps(args: {
 function createTraceCollector(args: { includeChainSteps: boolean }): {
   handler: CallbackHandlerMethods;
   finish: () => LangChainTraceStep[];
+  usage: () => RolloutUsage;
 } {
   const { includeChainSteps } = args;
   const steps: LangChainTraceStep[] = [];
   const openSteps = new Map<string, LangChainTraceStep>();
+  const tokens = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  let counted = false;
 
   function open(step: LangChainTraceStep): void {
     openSteps.set(step.runId, step);
@@ -342,6 +375,7 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
       });
     },
     handleLLMEnd: (output, runId) => {
+      countTokens(output);
       close({
         runId,
         outputs: output.generations.flat().map((generation) => generation.text),
@@ -422,7 +456,62 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
     };
   }
 
-  return { handler, finish };
+  /**
+   * LangChain reports tokens in two shapes depending on the integration: the
+   * legacy `llmOutput.tokenUsage` and the message-level `usage_metadata` newer
+   * chat models attach. Reading both is what makes this work across providers.
+   */
+  function countTokens(output: LlmResultLike): void {
+    const legacy = output.llmOutput?.tokenUsage;
+    if (legacy !== undefined) {
+      counted = true;
+      tokens.inputTokens += legacy.promptTokens ?? 0;
+      tokens.outputTokens += legacy.completionTokens ?? 0;
+      tokens.totalTokens +=
+        legacy.totalTokens ??
+        (legacy.promptTokens ?? 0) + (legacy.completionTokens ?? 0);
+    }
+
+    for (const generation of output.generations?.flat() ?? []) {
+      const metadata = generation.message?.usage_metadata;
+      if (metadata === undefined) {
+        continue;
+      }
+      counted = true;
+      tokens.inputTokens += metadata.input_tokens ?? 0;
+      tokens.outputTokens += metadata.output_tokens ?? 0;
+      tokens.totalTokens +=
+        metadata.total_tokens ??
+        (metadata.input_tokens ?? 0) + (metadata.output_tokens ?? 0);
+    }
+  }
+
+  return { handler, finish, usage: () => (counted ? { ...tokens } : {}) };
+}
+
+/**
+ * The token-carrying subset of a LangChain `LLMResult`. Declared structurally
+ * so this reads the fields it needs from any integration, whichever of the two
+ * reporting shapes that integration uses.
+ */
+interface LlmResultLike {
+  llmOutput?: {
+    tokenUsage?: {
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    };
+  } | null;
+  generations?: {
+    text?: string;
+    message?: {
+      usage_metadata?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+      };
+    };
+  }[][];
 }
 
 function nameOf(serialized: { id?: string[] } | undefined): string {
