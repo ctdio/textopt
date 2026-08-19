@@ -28,12 +28,12 @@ The returned function produces a `ScoreResult` and can be called directly from a
 
 The aggregate score is a weighted mean. Scorer metadata, such as judge rationales, diffs, and validation errors, becomes reflection `feedback`. Individual scores are returned as `objectiveScores` for per-objective Pareto selection.
 
-| Option          | Default                          | Effect                                                                 |
-| --------------- | -------------------------------- | ---------------------------------------------------------------------- |
-| `scorers`       | required                         | The scorers to run. Each may return a `Score` object or a bare number. |
-| `weights`       | `1` per scorer                   | Relative weight by scorer name. Must be finite and non-negative.       |
-| `buildFeedback` | one line per scorer              | Overrides how scorer output becomes reflection feedback.               |
-| `isTransient`   | every failure is the candidate's | Classifies a thrown scorer error as infrastructure.                    |
+| Option          | Default                | Effect                                                                 |
+| --------------- | ---------------------- | ---------------------------------------------------------------------- |
+| `scorers`       | required               | The scorers to run. Each may return a `Score` object or a bare number. |
+| `weights`       | `1` per scorer         | Relative weight by scorer name. Must be finite and non-negative.       |
+| `buildFeedback` | one line per scorer    | Overrides how scorer output becomes reflection feedback.               |
+| `isTransient`   | `false` for all errors | Identifies infrastructure-related scorer failures.                     |
 
 Duplicate scorer names throw because `objectiveScores` can store only one value per name. If `isTransient` classifies a scorer failure as infrastructure-related, the aggregate uses the remaining scorers and is marked `transient`, preventing it from being cached.
 
@@ -54,13 +54,13 @@ The decorator works with [`@textopt/ai-sdk`](../ai-sdk), [`@textopt/langchain`](
 
 Logged events include the candidate, instance feedback, `iteration`, `phase`, `split`, and `candidateId` for grouping rollouts by their place in the optimization run.
 
-| Option       | Default        | Effect                                                                                |
-| ------------ | -------------- | ------------------------------------------------------------------------------------- |
-| `adapter`    | required       | The adapter to wrap.                                                                  |
-| `logger`     | required       | Anything with `log(event)`. Both a braintrust `Experiment` and a `Logger` satisfy it. |
-| `metadata`   | none           | Merged into every event's metadata.                                                   |
-| `toInput`    | the row itself | Maps a dataset row to the logged input.                                               |
-| `toExpected` | omitted        | Maps a dataset row to the logged expected value.                                      |
+| Option       | Default        | Effect                                                                            |
+| ------------ | -------------- | --------------------------------------------------------------------------------- |
+| `adapter`    | required       | The adapter to wrap.                                                              |
+| `logger`     | required       | A Braintrust `Experiment`, `Logger`, or another object implementing `log(event)`. |
+| `metadata`   | none           | Merged into every event's metadata.                                               |
+| `toInput`    | the row itself | Maps a dataset row to the logged input.                                           |
+| `toExpected` | omitted        | Maps a dataset row to the logged expected value.                                  |
 
 Logger failures emit a warning and do not fail the rollout.
 

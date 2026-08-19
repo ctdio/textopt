@@ -29,14 +29,14 @@ Pre-release. The packages are private and not yet published to npm. The test sui
 
 ## Choosing an optimizer
 
-All four implement the same `Optimizer` interface, take the same adapter, and account for their budget the same way. What separates them is the signal they need and the structure they can exploit.
+All four use the same `Optimizer` interface, adapter, and budget accounting.
 
-| Optimizer               | Signal it needs                   | Reach for it when                                                                             |
-| ----------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- |
-| `GepaOptimizer`         | per-instance **textual feedback** | your metric can say _why_ a rollout failed, in words. Strongest of the four where that holds. |
-| `OproOptimizer`         | a **scalar** score                | your metric is a number and nothing more: exact match, a pass rate, a latency budget.         |
-| `MiproOptimizer`        | a **scalar** score                | components interact, and the right text for one depends on what the others say.               |
-| `RandomSearchOptimizer` | a **scalar** score                | you want to know whether any of the above is earning its cost.                                |
+| Optimizer               | Required signal                   | Use it for                                              |
+| ----------------------- | --------------------------------- | ------------------------------------------------------- |
+| `GepaOptimizer`         | per-instance **textual feedback** | revising text from written explanations of failures     |
+| `OproOptimizer`         | a **scalar** score                | proposing text from a history of scored attempts        |
+| `MiproOptimizer`        | a **scalar** score                | searching combinations of interacting component options |
+| `RandomSearchOptimizer` | a **scalar** score                | establishing a score-independent paraphrasing baseline  |
 
 Use GEPA when the metric can explain failures in text. A scalar such as `0.0` gives its reflection step little useful information. OPRO only needs scalar scores: its prompt lists previous attempts by score and asks the model to improve on them.
 
@@ -71,17 +71,17 @@ Based on _GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learnin
 
 ## Packages
 
-| Package                 | What it is                                                                                                                                         |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `textopt`               | The optimizer and adapter contracts, the shared evaluator, demo bootstrapping, the evaluation cache, and the sampler/RNG types. Zero dependencies. |
-| `textopt/gepa`          | `GepaOptimizer`, its config and types, and the pluggable selection/acceptance/evaluation strategies.                                               |
-| `textopt/opro`          | `OproOptimizer`: score-history search for metrics that emit a number and no explanation.                                                           |
-| `textopt/mipro`         | `MiproOptimizer`: joint search over per-component instruction menus, with a TPE surrogate and minibatch screening.                                 |
-| `textopt/random-search` | `RandomSearchOptimizer`: uninformed paraphrase search, as the baseline the others have to beat.                                                    |
-| `textopt/testing`       | A deterministic, LLM-free system under optimization and reflector, for exercising the loop and your own adapters in milliseconds.                  |
-| `@textopt/ai-sdk`       | Adapter for the Vercel AI SDK (`generateText`, `generateObject`), with multi-step tool traces.                                                     |
-| `@textopt/langchain`    | Adapter for any LangChain runnable, chain, agent, or LangGraph graph.                                                                              |
-| `@textopt/braintrust`   | autoevals scorers as the metric, plus a decorator that logs every rollout to Braintrust.                                                           |
+| Package                 | Contents                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `textopt`               | Shared contracts, evaluator, demo utilities, cache, sampler, and RNG types. No runtime dependencies. |
+| `textopt/gepa`          | `GepaOptimizer`, GEPA types, and configurable selection, acceptance, and evaluation strategies.      |
+| `textopt/opro`          | `OproOptimizer` and score-history prompting.                                                         |
+| `textopt/mipro`         | `MiproOptimizer`, per-component option menus, TPE search, and minibatch screening.                   |
+| `textopt/random-search` | `RandomSearchOptimizer`, a score-independent paraphrasing baseline.                                  |
+| `textopt/testing`       | Deterministic fixtures for testing optimizers and adapters without an LLM.                           |
+| `@textopt/ai-sdk`       | Vercel AI SDK adapter for `generateText` and `generateObject`, including multi-step tool traces.     |
+| `@textopt/langchain`    | Adapter for LangChain runnables, chains, agents, and LangGraph graphs.                               |
+| `@textopt/braintrust`   | autoevals scorer integration and a Braintrust logging decorator.                                     |
 
 ## Quickstart, offline
 
@@ -115,7 +115,7 @@ const result = await gepa.optimize({
 console.log(result.bestScore, result.bestCandidate.instruction);
 ```
 
-The constructor takes settings that are stateless and free of your types; `optimize` takes one problem. An optimizer holds no run state, so one instance can run any number of them.
+Constructor options control search behavior. `optimize` receives the dataset, adapter, candidate, and run budget. Optimizer instances do not retain state between runs.
 
 ## The adapter
 
@@ -207,7 +207,7 @@ The scorer maps scorer rationales to feedback and individual scores to `objectiv
 
 ## The reflection model
 
-`reflect` is the other required input, and the interface is small: `({ prompt, signal }) => Promise<string>`. Text in, text out, provider-agnostic.
+`reflect` implements the provider-independent `TextModel` interface: `({ prompt, signal }) => Promise<string>`.
 
 ```ts
 import type { TextModel } from "textopt";
@@ -246,7 +246,7 @@ This behavior is opt-in. The default is the prompt from the GEPA reference imple
 
 Few-shot examples can be stored in a candidate component and optimized with the other text. textopt can populate that component from successful training rollouts.
 
-**Before a run**, `bootstrapDemos` runs your seed candidate over the trainingSet and keeps the rollouts that scored well:
+Before optimization, `bootstrapDemos` evaluates the seed candidate on `trainingSet` and keeps high-scoring rollouts:
 
 ```ts
 import { bootstrapDemos } from "textopt";
@@ -262,7 +262,7 @@ const { block, demos, metricCalls } = await bootstrapDemos({
 const seed = { instruction: "Route the ticket.", demos: block };
 ```
 
-**During a run**, `createDemoProposer` harvests them from the reflective dataset the adapter already builds, which costs no extra rollouts and no reflection call:
+During optimization, `createDemoProposer` reads demos from the existing reflective dataset without additional rollouts or reflection calls:
 
 ```ts
 import { createDemoProposer } from "textopt/gepa";
@@ -282,7 +282,7 @@ Each proposal appends demos to its parent's block. A demo remains in the lineage
 
 ## Configuring GEPA
 
-`GepaConfig` (constructor) sets how the search runs, independent of your types:
+Pass search settings to the `GepaOptimizer` constructor:
 
 ```ts
 new GepaOptimizer({
@@ -301,15 +301,15 @@ new GepaOptimizer({
 });
 ```
 
-`GepaTask` (per call) carries the problem, its data, and its IO: `seedCandidate`, `trainingSet`, `adapter`, `reflect`, `maxMetricCalls`, an optional `validationSet` that defaults to the trainingSet, an optional held-out `testSet`, plus `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, `resumeFrom`, `signal`.
+`optimize` takes a `GepaTask`. Required fields are `seedCandidate`, `trainingSet`, `adapter`, `reflect`, and `maxMetricCalls`. `validationSet` defaults to `trainingSet`; `testSet` is optional and held out. Other options are `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, `resumeFrom`, and `signal`.
 
 Component names are inferred from `seedCandidate`. Other positions use `NoInfer`, so misspelled component names fail type checking.
 
-Swappable strategies ship in `textopt/gepa`: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `fullEvaluationPolicy`, `subsampledEvaluationPolicy`.
+`textopt/gepa` exports the following strategies: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `fullEvaluationPolicy`, and `subsampledEvaluationPolicy`.
 
 ## The other optimizers
 
-Each takes the **base `Adapter`**, not `GepaAdapter`: they read scores only, so they never ask for traces or a reflective dataset. Every one reports `seedScore` alongside `bestScore`, so the lift the search actually bought is readable without arithmetic.
+These optimizers use the base `Adapter` because they do not require GEPA's reflective dataset. Their results include both `seedScore` and `bestScore`.
 
 ### OPRO
 
@@ -381,7 +381,7 @@ const result = await new RandomSearchOptimizer({
 
 Random search paraphrases one component per round and keeps the highest-scoring candidate. Its prompt receives no performance data. Compare it with a reflective optimizer under the same metric budget to measure the benefit of reflection.
 
-## Measuring honestly
+## Held-out evaluation
 
 The optimizer selects candidates against `validationSet`, so `bestScore` is fitted to that set and may overstate performance on unseen data.
 
@@ -418,15 +418,15 @@ All optimizers expose these fields through `OptimizerTask` and `OptimizerResult`
 
 Runnable scripts in [`examples/src`](examples/src):
 
-| Command                                     | Needs               | What it shows                                                                                                                                        |
-| ------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm --filter textopt-examples keyword`    | none                | The whole loop end to end, offline.                                                                                                                  |
-| `pnpm --filter textopt-examples pareto`     | none                | What the instance-level frontier is, printed. Offline.                                                                                               |
-| `pnpm --filter textopt-examples ai-sdk`     | `ANTHROPIC_API_KEY` | Optimizing one `generateText` call.                                                                                                                  |
-| `pnpm --filter textopt-examples langchain`  | `OPENAI_API_KEY`    | Optimizing a LangChain chain.                                                                                                                        |
-| `pnpm --filter textopt-examples braintrust` | `OPENAI_API_KEY`    | autoevals as the metric, rollouts logged as experiment rows. `BRAINTRUST_API_KEY` is optional; without it the events are printed instead of shipped. |
-| `pnpm --filter textopt-examples merge`      | `ANTHROPIC_API_KEY` | Two components, two lineages, system-aware merge.                                                                                                    |
-| `pnpm --filter textopt-examples custom`     | `ANTHROPIC_API_KEY` | A hand-written adapter over a vendor SDK, no framework. Flip the `VENDOR` constant to run it on OpenAI instead, which needs `OPENAI_API_KEY`.        |
+| Command                                     | Needs               | Demonstrates                                                                                                 |
+| ------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `pnpm --filter textopt-examples keyword`    | none                | An offline optimization run.                                                                                 |
+| `pnpm --filter textopt-examples pareto`     | none                | The instance-level Pareto frontier.                                                                          |
+| `pnpm --filter textopt-examples ai-sdk`     | `ANTHROPIC_API_KEY` | Optimization of one `generateText` call.                                                                     |
+| `pnpm --filter textopt-examples langchain`  | `OPENAI_API_KEY`    | Optimization of a LangChain chain.                                                                           |
+| `pnpm --filter textopt-examples braintrust` | `OPENAI_API_KEY`    | autoevals scoring and Braintrust logging. Without `BRAINTRUST_API_KEY`, the script prints events locally.    |
+| `pnpm --filter textopt-examples merge`      | `ANTHROPIC_API_KEY` | System-aware merging of two components from separate lineages.                                               |
+| `pnpm --filter textopt-examples custom`     | `ANTHROPIC_API_KEY` | A custom adapter over a vendor SDK. Set `VENDOR` to use OpenAI instead; this also requires `OPENAI_API_KEY`. |
 
 Keys are read from a root `.env` if present.
 

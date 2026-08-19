@@ -47,16 +47,16 @@ const result = await new GepaOptimizer().optimize({
 
 ## Options
 
-| Option              | Default                          | Effect                                                                                                                                             |
-| ------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `buildRunnable`     | required                         | Rebuilds the chain with the candidate's text injected into its prompts.                                                                            |
-| `score`             | required                         | Scores one rollout, given the `datum`, `output`, and `trace`.                                                                                      |
-| `toInput`           | the row itself                   | Maps a dataset row to the chain's input.                                                                                                           |
-| `concurrency`       | `8`                              | In-flight rollouts.                                                                                                                                |
-| `includeChainSteps` | `false`                          | Adds per-runnable chain spans to the trace. Noisy.                                                                                                 |
-| `componentRunNames` | none                             | Component name to LangChain run name. That component's reflective records then show only the steps with that run name, instead of the whole trace. |
-| `isTransient`       | every failure is the candidate's | Classifies a thrown error as infrastructure, so its zero is not cached.                                                                            |
-| `buildRecord`       | a record with trace evidence     | Replaces the reflective record wholesale.                                                                                                          |
+| Option              | Default                   | Effect                                                                                     |
+| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------ |
+| `buildRunnable`     | required                  | Rebuilds the chain with the candidate's text injected into its prompts.                    |
+| `score`             | required                  | Scores one rollout, given the `datum`, `output`, and `trace`.                              |
+| `toInput`           | the row itself            | Maps a dataset row to the chain's input.                                                   |
+| `concurrency`       | `8`                       | In-flight rollouts.                                                                        |
+| `includeChainSteps` | `false`                   | Includes per-runnable chain spans in traces.                                               |
+| `componentRunNames` | none                      | Maps component names to run names and filters each component's evidence to matching steps. |
+| `isTransient`       | `false` for all errors    | Identifies infrastructure errors whose fallback scores must not be cached.                 |
+| `buildRecord`       | default reflective record | Builds a custom reflective record.                                                         |
 
 ## Tracing
 

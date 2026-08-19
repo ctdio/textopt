@@ -1,19 +1,19 @@
 # textopt
 
-Framework-agnostic prompt optimization for TypeScript: GEPA, OPRO, MIPRO, and a random-search baseline behind one `Optimizer` contract.
+Core interfaces and optimizers for textopt.
 
 This package has no runtime dependencies. For an overview of the algorithms and guidance on choosing one, see the [project README](../../README.md).
 
 ## Entry points
 
-| Import                  | Contains                                                                                                                                                                                 |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `textopt`               | The optimizer and adapter contracts, the shared evaluator, demo bootstrapping, the evaluation cache, and a concurrency helper. No engine: importing `GepaOptimizer` from here will fail. |
-| `textopt/gepa`          | `GepaOptimizer` and everything GEPA-specific. Its config, task, result, adapter, events, snapshot, and the swappable strategies.                                                         |
-| `textopt/opro`          | `OproOptimizer` and its config, task, result, and events. Scalar scores only; no reflective dataset.                                                                                     |
-| `textopt/mipro`         | `MiproOptimizer`, its types, and `proposeConfiguration` — the TPE surrogate, usable on its own.                                                                                          |
-| `textopt/random-search` | `RandomSearchOptimizer` and its types. The uninformed control the others are measured against.                                                                                           |
-| `textopt/testing`       | A deterministic, LLM-free system under optimization and reflection model, for exercising the loop or your own adapter without a network.                                                 |
+| Import                  | Contains                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `textopt`               | Shared contracts, evaluator, demo utilities, cache, and concurrency helper. Optimizer classes are not exported. |
+| `textopt/gepa`          | `GepaOptimizer`, GEPA types, events, checkpoints, and configurable strategies.                                  |
+| `textopt/opro`          | `OproOptimizer` and its types and events.                                                                       |
+| `textopt/mipro`         | `MiproOptimizer`, its types, and the standalone `proposeConfiguration` TPE function.                            |
+| `textopt/random-search` | `RandomSearchOptimizer` and its types.                                                                          |
+| `textopt/testing`       | Deterministic fixtures for testing optimizers and adapters without an LLM.                                      |
 
 ## `textopt`
 
@@ -113,34 +113,34 @@ Optimizer instances do not retain state between runs.
 
 These options control search behavior and can be reused across runs.
 
-| Option                     | Default                   | Effect                                                                                                                                  |
-| -------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `minibatchSize`            | `3`                       | Instances per screening batch.                                                                                                          |
-| `maxIterations`            | `Infinity`                | Iteration ceiling. The metric budget usually binds first.                                                                               |
-| `seed`                     | `0`                       | Seeds the run's random stream.                                                                                                          |
-| `candidateSelector`        | `paretoSelector()`        | Which candidate becomes the next parent.                                                                                                |
-| `acceptance`               | `improvementAcceptance()` | Whether a screened child beats its parent.                                                                                              |
-| `merge.enabled`            | components > 1            | System-aware merge of two lineages.                                                                                                     |
-| `merge.maxInvocations`     | `5`                       | Ceiling on merges attempted per run.                                                                                                    |
-| `merge.valOverlapFloor`    | `5`                       | Validation instances two lineages must share to be eligible. A validationSet smaller than this never merges.                            |
-| `skipPerfectScore`         | `true`                    | Skip reflection when the parent already scores perfectly on the minibatch.                                                              |
-| `perfectScore`             | `1`                       | The per-instance score treated as leaving no room.                                                                                      |
-| `rejectedProposalMemory`   | `3`                       | Rejected texts per component shown back to reflection. `0` disables it. An extension: not in the paper, and the only one on by default. |
-| `proposals.perIteration`   | `1`                       | Mutations drawn per iteration, each with its own parent and minibatch.                                                                  |
-| `proposals.concurrency`    | `1`                       | How many may be in flight at once.                                                                                                      |
-| `proposals.selection`      | `"all"`                   | Which improving proposals to keep: `"all"`, `"best"`, or `{ keep: n }`.                                                                 |
-| `reflection.maxCalls`      | unbounded                 | Hard ceiling on reflection calls. The run stops when it is reached.                                                                     |
-| `reflection.maxRecords`    | unbounded                 | Records shown per component. The worst-scoring ones are kept.                                                                           |
-| `reflection.maxCharacters` | unbounded                 | Rough ceiling on the serialized records.                                                                                                |
-| `reflection.buildPrompt`   | `buildReflectionPrompt`   | Replaces the prompt template. Custom proposers ignore it.                                                                               |
-| `reflection.strategies`    | none                      | Rotates over several prompt templates, one per proposal slot. Mutually exclusive with `buildPrompt`.                                    |
-| `checkpointCache`          | `true`                    | Include cached scores in every snapshot.                                                                                                |
-| `trackBestOutputs`         | `false`                   | Keep validation outputs so the winner's can be read back.                                                                               |
-| `raiseOnError`             | `true`                    | Rethrow adapter failures instead of skipping the iteration.                                                                             |
+| Option                     | Default                   | Effect                                                                                                        |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `minibatchSize`            | `3`                       | Instances per screening batch.                                                                                |
+| `maxIterations`            | `Infinity`                | Iteration ceiling. The metric budget usually binds first.                                                     |
+| `seed`                     | `0`                       | Seeds the run's random stream.                                                                                |
+| `candidateSelector`        | `paretoSelector()`        | Which candidate becomes the next parent.                                                                      |
+| `acceptance`               | `improvementAcceptance()` | Whether a screened child beats its parent.                                                                    |
+| `merge.enabled`            | components > 1            | System-aware merge of two lineages.                                                                           |
+| `merge.maxInvocations`     | `5`                       | Ceiling on merges attempted per run.                                                                          |
+| `merge.valOverlapFloor`    | `5`                       | Validation instances two lineages must share to be eligible. A validationSet smaller than this never merges.  |
+| `skipPerfectScore`         | `true`                    | Skip reflection when the parent already scores perfectly on the minibatch.                                    |
+| `perfectScore`             | `1`                       | The per-instance score treated as leaving no room.                                                            |
+| `rejectedProposalMemory`   | `3`                       | Rejected texts per component included in reflection. `0` disables it. This behavior is not in the GEPA paper. |
+| `proposals.perIteration`   | `1`                       | Mutations drawn per iteration, each with its own parent and minibatch.                                        |
+| `proposals.concurrency`    | `1`                       | How many may be in flight at once.                                                                            |
+| `proposals.selection`      | `"all"`                   | Which improving proposals to keep: `"all"`, `"best"`, or `{ keep: n }`.                                       |
+| `reflection.maxCalls`      | unbounded                 | Hard ceiling on reflection calls. The run stops when it is reached.                                           |
+| `reflection.maxRecords`    | unbounded                 | Records shown per component. The worst-scoring ones are kept.                                                 |
+| `reflection.maxCharacters` | unbounded                 | Rough ceiling on the serialized records.                                                                      |
+| `reflection.buildPrompt`   | `buildReflectionPrompt`   | Replaces the prompt template. Custom proposers ignore it.                                                     |
+| `reflection.strategies`    | none                      | Rotates over several prompt templates, one per proposal slot. Mutually exclusive with `buildPrompt`.          |
+| `checkpointCache`          | `true`                    | Include cached scores in every snapshot.                                                                      |
+| `trackBestOutputs`         | `false`                   | Keep validation outputs so the winner's can be read back.                                                     |
+| `raiseOnError`             | `true`                    | Rethrow adapter failures instead of skipping the iteration.                                                   |
 
 ### `GepaTask`
 
-One problem, its data, and its IO. Extends `OptimizerTask`.
+`GepaTask` extends `OptimizerTask` with GEPA-specific run inputs.
 
 Required: `seedCandidate`, `trainingSet`, `adapter` (a `GepaAdapter`), `reflect` (a `TextModel`), and `maxMetricCalls`.
 
@@ -189,13 +189,13 @@ Each export is a factory. Selector and acceptance interfaces accept custom funct
 
 ### Reflection prompts
 
-| Export                        | What it asks for                                                              |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| `buildReflectionPrompt`       | The default: read the failures, write better text.                            |
-| `buildSimplifyPrompt`         | The shortest text that still handles the batch. Prompts accrete; this prunes. |
-| `buildGeneralizePrompt`       | Text that does not overfit the specific failures it was shown.                |
-| `buildRewritePrompt`          | A fresh attempt, for a lineage that has stopped moving.                       |
-| `diverseReflectionStrategies` | All four as a rotation, for `reflection.strategies`.                          |
+| Export                        | What it asks for                                              |
+| ----------------------------- | ------------------------------------------------------------- |
+| `buildReflectionPrompt`       | The default: read the failures, write better text.            |
+| `buildSimplifyPrompt`         | A shorter version that retains behavior needed by the batch.  |
+| `buildGeneralizePrompt`       | Text that avoids details specific to the current failures.    |
+| `buildRewritePrompt`          | A replacement written without preserving the current wording. |
+| `diverseReflectionStrategies` | All four builders for use with `reflection.strategies`.       |
 
 Each implements `ReflectionPromptBuilder`, defined as `(args: ReflectionPromptArgs) => string`.
 
@@ -223,7 +223,7 @@ This `proposeNewTexts` implementation fills selected components with few-shot ex
 import { OproOptimizer, buildOproPrompt } from "textopt/opro";
 ```
 
-Takes the base `Adapter`, not `GepaAdapter`. `OproTask` adds `reflect`, and optionally `renderDatum`, `instanceId`, `cache`, and `onEvent`.
+OPRO uses the base `Adapter`. `OproTask` adds `reflect` and optional `renderDatum`, `instanceId`, `cache`, and `onEvent` fields.
 
 | Option               | Default           | Effect                                                     |
 | -------------------- | ----------------- | ---------------------------------------------------------- |
@@ -231,7 +231,7 @@ Takes the base `Adapter`, not `GepaAdapter`. `OproTask` adds `reflect`, and opti
 | `concurrency`        | `1`               | How many may be in flight at once.                         |
 | `maxRounds`          | `Infinity`        | Round ceiling.                                             |
 | `maxReflectionCalls` | unbounded         | Bounded separately; no metric budget covers reflection.    |
-| `historySize`        | `20`              | Scored attempts the prompt carries, strongest kept.        |
+| `historySize`        | `20`              | Maximum scored attempts included in the prompt.            |
 | `exemplars`          | `3`               | Task inputs shown for grounding.                           |
 | `scoringSetSize`     | unset             | Instances drawn once from the trainingSet to screen on.    |
 | `fullEvalInterval`   | `3`               | Rounds between full validationSet sweeps of the incumbent. |
@@ -266,30 +266,30 @@ For multi-component candidates, each attempt records the other components presen
 import { MiproOptimizer, proposeConfiguration } from "textopt/mipro";
 ```
 
-Takes the base `Adapter`. `MiproTask` adds `reflect` and `componentOptions`, plus the usual `renderDatum`, `batchSampler`, `instanceId`, `cache`, and `onEvent`.
+MIPRO uses the base `Adapter`. `MiproTask` adds `reflect`, `componentOptions`, `renderDatum`, `batchSampler`, `instanceId`, `cache`, and `onEvent`.
 
-| Option                     | Default            | Effect                                                                                                                |
-| -------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `instructionsPerComponent` | `3`                | Menu entries generated per component, beyond the seed.                                                                |
-| `minibatchSize`            | `5`                | Instances a trial is scored on.                                                                                       |
-| `fullEvalInterval`         | `6`                | Trials between full sweeps of the best-average config. dspy spells the same cadence as `minibatch_full_eval_steps=5`. |
-| `demoSets`                 | `3`                | Bootstrapped demo sets generated per demo component.                                                                  |
-| `maxDemos`                 | `4`                | Demos in the largest generated set.                                                                                   |
-| `demoMinScore`             | `1`                | Score a rollout must reach to be kept as a demo.                                                                      |
-| `maxTrials`                | `30`               | Configurations evaluated.                                                                                             |
-| `startupTrials`            | `10`               | Trials drawn uniformly before the surrogate takes over.                                                               |
-| `gamma`                    | Optuna's rule      | Fraction treated as good. Unset means a tenth of them, capped at 25, which narrows as the run goes on.                |
-| `surrogateSamples`         | `24`               | Configurations drawn per trial, best of batch proposed.                                                               |
-| `multivariate`             | `true`             | Model components jointly rather than one at a time.                                                                   |
-| `exemplars`                | `3`                | Task inputs shown when generating instructions.                                                                       |
-| `datasetSummary`           | `true`             | Summarize the trainingSet once and show it to the proposer. One reflection call.                                      |
-| `summaryExamples`          | `10`               | Trainset entries the summary is written from.                                                                         |
-| `tips`                     | built-in           | Style hints, so a menu spreads over approaches.                                                                       |
-| `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                                                       |
+| Option                     | Default            | Effect                                                                                       |
+| -------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `instructionsPerComponent` | `3`                | Menu entries generated per component, beyond the seed.                                       |
+| `minibatchSize`            | `5`                | Instances a trial is scored on.                                                              |
+| `fullEvalInterval`         | `6`                | Trials between full evaluations. Equivalent to DSPy's `minibatch_full_eval_steps=5` cadence. |
+| `demoSets`                 | `3`                | Bootstrapped demo sets generated per demo component.                                         |
+| `maxDemos`                 | `4`                | Demos in the largest generated set.                                                          |
+| `demoMinScore`             | `1`                | Score a rollout must reach to be kept as a demo.                                             |
+| `maxTrials`                | `30`               | Configurations evaluated.                                                                    |
+| `startupTrials`            | `10`               | Trials drawn uniformly before the surrogate takes over.                                      |
+| `gamma`                    | Optuna's rule      | Observations assigned to the good density: `ceil(10%)`, capped at 25.                        |
+| `surrogateSamples`         | `24`               | Candidate configurations sampled by the surrogate per trial.                                 |
+| `multivariate`             | `true`             | Model components jointly rather than one at a time.                                          |
+| `exemplars`                | `3`                | Task inputs shown when generating instructions.                                              |
+| `datasetSummary`           | `true`             | Generate a `trainingSet` summary for the proposer. Uses one reflection call.                 |
+| `summaryExamples`          | `10`               | Training examples used to generate the summary.                                              |
+| `tips`                     | built-in           | Style hints used when generating menu options.                                               |
+| `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                              |
 
 The proposer receives the current text of other components, a generated summary of `trainingSet`, and task exemplars. The summary uses one reflection call and is skipped when all menus are supplied through `componentOptions`. Unlike DSPy's MIPROv2 implementation, textopt does not include program source because the adapter interface has no generic representation for it.
 
-`componentOptions` supplies menu entries **verbatim**, with no reflection call. The menu for a component is always its seed text followed by its options.
+`componentOptions` adds menu entries without reflection calls. Each component's menu starts with its seed text, followed by these options.
 
 `demoComponents` identifies components that contain few-shot blocks. Their menus are bootstrapped from successful `trainingSet` rollouts instead of generated by `reflect`. Each demo set uses a separate shuffled pass and a size between one and `maxDemos`; the zero-shot option is always included. Separate passes can produce different demos for stochastic systems but add redundant work for deterministic systems, matching MIPROv2's behavior. Bootstrap rollouts count against `maxMetricCalls` and are also reported as `bootstrapMetricCalls`.
 
@@ -301,9 +301,9 @@ The surrogate includes both minibatch and full-evaluation observations, matching
 
 One difference from MIPROv2 is that textopt keeps labelled demo sets as separate menu options; MIPROv2 pads bootstrapped sets with labelled examples.
 
-`MiproResult` adds `seedScore`, `trials`, `menu` (the space actually searched), `observations`, `fullEvaluations`, `bootstrapMetricCalls`, `reflectionCalls`, and `cacheHits`. Only a full validation sweep can move the incumbent; minibatch readings decide what is worth sweeping.
+`MiproResult` adds `seedScore`, `trials`, `menu`, `observations`, `fullEvaluations`, `bootstrapMetricCalls`, `reflectionCalls`, and `cacheHits`. Only full validation evaluations update the incumbent; minibatch scores select configurations for full evaluation.
 
-**`proposeConfiguration({ observations, menuSizes, gamma, samples, startupTrials, multivariate, rng })`** is the surrogate on its own: it splits the observations into good and rest, models the density of each, samples from the good one and ranks the draws by the log ratio.
+**`proposeConfiguration({ observations, menuSizes, gamma, samples, startupTrials, multivariate, rng })`** exposes the TPE surrogate separately. It splits observations into good and remaining groups, models each density, samples from the good density, and ranks samples by the log density ratio.
 
 With `multivariate: true`, each density is a mixture of kernels centered on observed configurations. This preserves dependencies between component options. With `multivariate: false`, each component uses an independent smoothed histogram, which learns from fewer trials but cannot represent interactions.
 
@@ -333,16 +333,16 @@ The paraphrase prompt receives no score or feedback. Compare random search with 
 
 Deterministic keyword-coverage fixtures for testing optimizers and adapters without network access.
 
-| Export                          | What it is                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `KEYWORD_EXAMPLES`              | Four `KeywordExample` rows.                                                                             |
-| `createKeywordAdapter()`        | A `GepaAdapter` scoring how many required terms the candidate text covers.                              |
-| `createKeywordReflector()`      | A `TextModel` that folds the missing terms into the current instruction.                                |
-| `createSamplingReflector()`     | A `TextModel` that ignores the prompt and appends a pooled term, for testing blind proposal.            |
-| `createHillClimbingReflector()` | A `TextModel` that reads a score history and extends the best attempt, for testing score-driven search. |
-| `SAMPLING_POOL`                 | Useful terms interleaved with distractors, the pool the two above draw from.                            |
-| `createDegradingReflector()`    | A `TextModel` that always proposes something strictly worse, for testing rejection.                     |
-| `buildReflectionPrompt`         | The default prompt template, also exported from `textopt/gepa`.                                         |
+| Export                          | Description                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `KEYWORD_EXAMPLES`              | Four `KeywordExample` rows.                                                         |
+| `createKeywordAdapter()`        | A `GepaAdapter` scoring how many required terms the candidate text covers.          |
+| `createKeywordReflector()`      | A `TextModel` that folds the missing terms into the current instruction.            |
+| `createSamplingReflector()`     | A `TextModel` that ignores the prompt and appends a term from a fixed pool.         |
+| `createHillClimbingReflector()` | A `TextModel` that reads score history and extends the best attempt.                |
+| `SAMPLING_POOL`                 | Useful terms interleaved with distractors, the pool the two above draw from.        |
+| `createDegradingReflector()`    | A `TextModel` that always proposes something strictly worse, for testing rejection. |
+| `buildReflectionPrompt`         | The default prompt template, also exported from `textopt/gepa`.                     |
 
 ## Adapters
 
