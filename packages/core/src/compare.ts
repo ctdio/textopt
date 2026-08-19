@@ -54,7 +54,7 @@ const EXACT_LIMIT = 16;
  * seed is constructor config and every optimizer here is deterministic given
  * one — comparing two entrants at a single seed compares two anecdotes. It also
  * leaves the task where the caller builds it, which is the only place the
- * optimizer-specific parts of it (`reflect`, `cache`, `onEvent`) are known.
+ * optimizer-specific parts of it (`reflect`, `cache`, `reporters`) are known.
  */
 export async function compare<K extends string, Output = unknown>(args: {
   entrants: Record<

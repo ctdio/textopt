@@ -28,6 +28,7 @@ import {
   createAdviceModel,
   createNoisyKeywordAdapter,
 } from "./shared/noisy-keyword.js";
+import { createAcceptanceTally } from "./shared/report.js";
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 const BUDGET = 200;
@@ -57,6 +58,12 @@ const shared = {
   maxMetricCalls: BUDGET,
 };
 
+// One observer for all three searches. Every optimizer emits the same
+// acceptance payload, so this reads GEPA, SIMBA and OPRO without knowing which
+// of them produced an event — the comparison below would otherwise be three
+// numbers with no account of how each search got there.
+const tally = createAcceptanceTally();
+
 const comparison = await compare({
   seeds: SEEDS,
   entrants: {
@@ -68,6 +75,7 @@ const comparison = await compare({
         ...shared,
         adapter: createNoisyKeywordAdapter(),
         reflect: createKeywordReflector(),
+        reporters: [tally.for("gepa")],
       }),
 
     simba: ({ seed }) =>
@@ -80,6 +88,7 @@ const comparison = await compare({
         ...shared,
         adapter: createNoisyKeywordAdapter(),
         reflect: createAdviceModel(),
+        reporters: [tally.for("simba")],
       }),
 
     // A third family, and a useful control: OPRO shows the proposal model a
@@ -96,6 +105,7 @@ const comparison = await compare({
         // the mismatch rather than the search. It also ignores the seed, which
         // is why OPRO's spread below is exactly zero.
         reflect: createHillClimbingReflector(),
+        reporters: [tally.for("opro")],
       }),
   },
 });
@@ -129,3 +139,23 @@ console.log(
   `\n${comparison.runs.length} runs over ${SEEDS.length} seeds.` +
     " A p-value above 0.05 means the ranking above could be seed luck.",
 );
+
+// The same reporter read all three searches. What it counted is how each one
+// spent its budget: how often the incumbent moved at all, and how far it moved
+// from the seed the run started at.
+console.log(
+  `\n${["entrant", "accepted", "seed", "best"].map((heading) => heading.padEnd(13)).join("")}`,
+);
+
+for (const row of tally.rows()) {
+  console.log(
+    [
+      row.entrant,
+      String(row.accepted),
+      row.seedScore.toFixed(3),
+      row.bestScore.toFixed(3),
+    ]
+      .map((cell) => cell.padEnd(13))
+      .join(""),
+  );
+}
