@@ -12,7 +12,12 @@
     "langchain": "tsx --env-file-if-exists=../.env src/04-langchain-chain.ts",
     "braintrust": "tsx --env-file-if-exists=../.env src/05-braintrust-scoring.ts",
     "merge": "tsx --env-file-if-exists=../.env src/06-multi-component-merge.ts",
-    "custom": "tsx --env-file-if-exists=../.env src/07-custom-adapter.ts"
+    "custom": "tsx --env-file-if-exists=../.env src/07-custom-adapter.ts",
+    "simba": "tsx --env-file-if-exists=../.env src/08-simba-noisy-metric.ts",
+    "bootstrap": "tsx --env-file-if-exists=../.env src/09-bootstrap-demos.ts",
+    "compare": "tsx --env-file-if-exists=../.env src/10-compare-optimizers.ts",
+    "judge": "tsx --env-file-if-exists=../.env src/11-judge-scoring.ts",
+    "pipeline": "tsx --env-file-if-exists=../.env src/12-pipeline-modules.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.39",
