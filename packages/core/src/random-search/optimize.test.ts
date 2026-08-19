@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
   KEYWORD_EXAMPLES,
@@ -7,7 +7,10 @@ import {
 } from "../testing.js";
 import type { Adapter } from "../types.js";
 import { RandomSearchOptimizer } from "./optimize.js";
-import type { RandomSearchStopReason } from "./optimize.js";
+import type {
+  RandomSearchSnapshot,
+  RandomSearchStopReason,
+} from "./optimize.js";
 
 const SEED = { instruction: "Answer the user question." };
 
@@ -32,6 +35,75 @@ function task() {
 }
 
 describe("RandomSearchOptimizer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("stops once the wall clock deadline passes", async () => {
+    // Rollout and cost ceilings bound what a run spends, not how long it
+    // takes: a run stuck behind a rate limit costs nothing and runs forever.
+    vi.useFakeTimers();
+
+    const result = await new RandomSearchOptimizer({
+      variants: 1,
+      maxRounds: 20,
+    }).optimize({
+      ...task(),
+      adapter: {
+        evaluate: ({ batch }) => {
+          vi.advanceTimersByTime(400);
+          return {
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0.5),
+          };
+        },
+      },
+      maxWallClockMs: 1000,
+    });
+
+    expect(result.stopReason).toBe("deadlineReached");
+  });
+  test("stops once the reported cost reaches the ceiling", async () => {
+    const result = await new RandomSearchOptimizer({
+      variants: 1,
+      maxRounds: 5,
+    }).optimize({
+      ...task(),
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0.5),
+          usage: batch.map(() => ({ costUsd: 1 })),
+        }),
+      },
+      maxCostUsd: 4,
+    });
+
+    expect(result.stopReason).toBe("costExhausted");
+    expect(result.usage.costUsd).toBe(4);
+  });
+
+  test("leaves a transiently failed rollout out of the score it reports", async () => {
+    // A rate limit measured the provider, not the candidate, and a baseline
+    // that averages its zero in is one no rollout ever produced.
+    const result = await new RandomSearchOptimizer({
+      variants: 1,
+      maxRounds: 1,
+    }).optimize({
+      ...task(),
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map((_, index) => (index === 2 ? 0 : 1)),
+          transient: batch.map((_, index) => index === 2),
+        }),
+      },
+      retry: { attempts: 0 },
+    });
+
+    expect(result.seedScore).toBe(1);
+  });
+
   test("satisfies the Optimizer contract", async () => {
     const search = new RandomSearchOptimizer({ variants: 2, maxRounds: 2 });
     const contract: Optimizer<RandomSearchStopReason> = search;
@@ -172,5 +244,138 @@ describe("RandomSearchOptimizer", () => {
     });
 
     expect(components).toEqual(["intro", "outro", "intro", "outro"]);
+  });
+});
+
+describe("RandomSearchOptimizer stalls", () => {
+  test("stops when a full cycle of components proposes nothing new", async () => {
+    // A proposer that keeps returning the incumbent costs no rollouts, so
+    // neither the metric budget nor the cost ceiling can end the run: without
+    // this the loop spins forever making reflection calls nobody bounded.
+    const result = await new RandomSearchOptimizer({ variants: 2 }).optimize({
+      ...task(),
+      seedCandidate: { instruction: "Answer the user question." },
+      reflect: async () => "```\nAnswer the user question.\n```",
+    });
+
+    expect(result.stopReason).toBe("proposerStalled");
+  });
+});
+
+describe("RandomSearchOptimizer checkpoints", () => {
+  test("survives a round trip through JSON", async () => {
+    let snapshot: RandomSearchSnapshot | undefined;
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 2 }).optimize({
+      ...task(),
+      onCheckpoint: (taken) => {
+        snapshot = taken;
+      },
+    });
+
+    expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
+  });
+
+  test("checkpoints after the seed sweep and after every round", async () => {
+    const rounds: number[] = [];
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 3 }).optimize({
+      ...task(),
+      onCheckpoint: (taken) => {
+        rounds.push(taken.round);
+      },
+    });
+
+    expect(rounds).toEqual([0, 1, 2, 3]);
+  });
+
+  test("resumes without re-scoring the seed candidate", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize({ ...task(), cache: false });
+
+    const resumed = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 3,
+    }).optimize({
+      ...task(),
+      cache: false,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(resumed.rounds).toBe(3);
+    expect(resumed.seedScore).toBe(interrupted.seedScore);
+    expect(resumed.bestScore).toBeGreaterThanOrEqual(interrupted.bestScore);
+  });
+
+  test("charges a resumed run for what the checkpoint already spent", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize({ ...task(), cache: false });
+
+    const resumed = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 3,
+    }).optimize({
+      ...task(),
+      cache: false,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(resumed.metricCalls).toBeGreaterThan(interrupted.metricCalls);
+  });
+
+  test("re-sweeps nothing when it resumes at the round it stopped on", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize({ ...task(), cache: false });
+
+    const resumed = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize({
+      ...task(),
+      cache: false,
+      resumeFrom: interrupted.snapshot,
+    });
+
+    expect(resumed.metricCalls).toBe(interrupted.metricCalls);
+  });
+
+  test("refuses a checkpoint taken against a different seed candidate", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize(task());
+
+    await expect(
+      new RandomSearchOptimizer({ variants: 2, maxRounds: 1 }).optimize({
+        ...task(),
+        seedCandidate: { instruction: "Something else entirely." },
+        resumeFrom: interrupted.snapshot,
+      }),
+    ).rejects.toThrow("does not belong to this run");
+  });
+
+  test("carries the evaluation cache in the checkpoint", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize(task());
+
+    expect(interrupted.snapshot.cache?.length).toBeGreaterThan(0);
+  });
+
+  test("leaves the cache out when checkpointing it was turned off", async () => {
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+      checkpointCache: false,
+    }).optimize(task());
+
+    expect(interrupted.snapshot.cache).toBeUndefined();
   });
 });

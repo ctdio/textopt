@@ -1,10 +1,17 @@
+import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
 import { createMemoryCache, stableHash } from "../cache.js";
-import type { EvaluationCache } from "../cache.js";
+import type { CachedScore, EvaluationCache } from "../cache.js";
+import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
-import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import {
+  BudgetExhausted,
+  costExhausted,
+  createEvaluator,
+  measuredMean,
+  requireMeasuredMean,
+} from "../evaluation.js";
 import type { EvaluationEvent } from "../evaluation.js";
-import { mean } from "../math.js";
 import type {
   Optimizer,
   OptimizerResult,
@@ -17,7 +24,7 @@ import type { Adapter, Candidate, TextModel } from "../types.js";
 
 /** One instruction that was tried, and what it scored. */
 /** A history entry plus the system state its score was measured in. */
-interface RecordedAttempt extends ScoredAttempt {
+export interface RecordedAttempt extends ScoredAttempt {
   context: string;
 }
 
@@ -99,6 +106,41 @@ export interface OproConfig {
   scoreScale?: number;
   buildPrompt?: OproPromptBuilder;
   trackBestOutputs?: boolean;
+  /**
+   * Include cached instance scores in every checkpoint. Leaving them out keeps
+   * snapshots small at the cost of a resumed run re-paying for rollouts it
+   * cannot look up. Default true.
+   */
+  checkpointCache?: boolean;
+}
+
+/**
+ * Everything needed to continue a run: the per-component score histories the
+ * meta-prompt is written from, the incumbent, the budget already spent, the
+ * position of the random stream, and the screening slice — which is drawn once
+ * and must survive a resume, since attempts screened on different instances
+ * are not the gradient this search reads.
+ */
+export interface OproSnapshot {
+  version: 1;
+  fingerprint: string;
+  best: Candidate;
+  reported: Candidate;
+  /** Whether the incumbent has already been confirmed by a full sweep. */
+  incumbentSwept: boolean;
+  bestScore: number;
+  bestSearchScore: number;
+  seedScore: number;
+  round: number;
+  reflectionCalls: number;
+  metricCalls: number;
+  cacheHits: number;
+  rngState: number;
+  /** Component name -> every text tried for it, with what it scored. */
+  histories: Record<string, RecordedAttempt[]>;
+  /** Training set positions the screening slice was drawn from. */
+  scoringIndices?: number[];
+  cache?: [string, CachedScore][];
 }
 
 export interface OproTask<
@@ -119,10 +161,22 @@ export interface OproTask<
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
   onEvent?: (event: OproEvent<NoInfer<K>>) => void;
+  /**
+   * Called with a resumable snapshot after the seed is scored and after every
+   * round. Persist it and a killed run costs the last round, not all of them.
+   */
+  onCheckpoint?: (snapshot: OproSnapshot) => void | Promise<void>;
+  /** Snapshot to continue from, instead of starting at the seed candidate. */
+  resumeFrom?: OproSnapshot;
 }
 
 export type OproStopReason =
-  "budgetExhausted" | "reflectionBudgetExhausted" | "maxRounds" | "aborted";
+  | "budgetExhausted"
+  | "costExhausted"
+  | "deadlineReached"
+  | "reflectionBudgetExhausted"
+  | "maxRounds"
+  | "aborted";
 
 export type OproEvent<K extends string = string> =
   | { type: "start"; components: K[]; validationSetSize: number }
@@ -162,6 +216,8 @@ export interface OproResult<
   trajectory: OproAttempt<K>[];
   reflectionCalls: number;
   cacheHits: number;
+  /** State as of the last round, ready to hand back as `resumeFrom`. */
+  snapshot: OproSnapshot;
 }
 
 const DEFAULT_PROPOSALS_PER_ROUND = 8;
@@ -279,6 +335,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     scoreScale = DEFAULT_SCORE_SCALE,
     buildPrompt = buildOproPrompt,
     trackBestOutputs = false,
+    checkpointCache = true,
   } = config;
 
   const {
@@ -291,11 +348,18 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     maxMetricCalls,
     renderDatum = renderDefault,
     cache,
+    cacheNamespace,
+    retry,
+    maxCostUsd,
+    maxWallClockMs,
     instanceId = defaultInstanceId,
     onEvent,
+    onCheckpoint,
+    resumeFrom,
     signal,
   } = task;
 
+  const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
 
   if (trainingSet.length === 0) {
@@ -321,16 +385,40 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   const testIds =
     testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
-  const rng = createSeededRng(seed);
-  const budget = createBudget({ maxMetricCalls });
+  const fingerprint = runFingerprint({
+    seedCandidate,
+    trainingIds: trainingSet.map((datum, index) =>
+      instanceId({ datum, index }),
+    ),
+    validationIds,
+    seed,
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+  });
+  assertResumable({
+    fingerprint,
+    ...(resumeFrom === undefined ? {} : { snapshot: resumeFrom }),
+  });
+
+  const rng = createSeededRng(seed, resumeFrom?.rngState);
+  const budget = createBudget({
+    maxMetricCalls,
+    spent: resumeFrom?.metricCalls ?? 0,
+  });
+  const evaluationCache =
+    cache === false ? undefined : (cache ?? createMemoryCache());
   const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
-    ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
+    ...(retry === undefined ? {} : { retry }),
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+    ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
+    cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
   });
+
+  evaluator.restore(resumeFrom?.cache ?? []);
 
   // Redrawn every round, as the reference does with its `random` few-shot
   // selection. A slice held fixed for the whole run lets the search tune its
@@ -345,12 +433,13 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   // meta-prompt asks the model to read a gradient across scores and a gradient
   // across different instances is not one.
   const scoringIndices =
-    scoringSetSize === undefined
+    resumeFrom?.scoringIndices ??
+    (scoringSetSize === undefined
       ? undefined
       : rng.sample(
           trainingSet.map((_, index) => index),
           Math.min(scoringSetSize, trainingSet.length),
-        );
+        ));
   const scoringSet = scoringIndices?.map(
     (index) => trainingSet[index] as Datum,
   );
@@ -370,7 +459,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   // and listing it beside current scores asks the model to read a trend across
   // measurements that were never comparable.
   const histories = new Map<K, RecordedAttempt[]>(
-    components.map((name) => [name, []]),
+    components.map((name) => [name, [...(resumeFrom?.histories[name] ?? [])]]),
   );
 
   function contextOf(candidate: Candidate<K>, component: K): string {
@@ -384,8 +473,8 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   }
   const trajectory: OproAttempt<K>[] = [];
 
-  let round = 0;
-  let reflectionCalls = 0;
+  let round = resumeFrom?.round ?? 0;
+  let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: OproStopReason = "maxRounds";
 
   onEvent?.({
@@ -426,24 +515,42 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     });
   }
 
-  const seedEvaluation = await sweep(seedCandidate, "seed");
-  const seedScore = mean(seedEvaluation.scores);
+  // A resumed run already knows what the seed scored. Re-sweeping it would
+  // charge the budget a second time for a number the checkpoint carries.
+  const seedEvaluation =
+    resumeFrom === undefined ? await sweep(seedCandidate, "seed") : undefined;
+  const seedScore =
+    seedEvaluation === undefined
+      ? (resumeFrom as OproSnapshot).seedScore
+      : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
 
-  let best = seedCandidate;
-  let bestScore = seedScore;
-  let bestOutputs = seedEvaluation.outputs;
+  let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
+  let bestScore = resumeFrom?.bestScore ?? seedScore;
+  /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
+  let bestOutputs = seedEvaluation?.outputs;
   // The best candidate a full sweep has actually seen, and the incumbent most
   // recently swept. They are not the same thing: sweeping a candidate that
   // turns out worse than the seed confirms it, and reports the seed.
-  let reported = seedCandidate;
-  let lastSwept = seedCandidate;
+  let reported =
+    (resumeFrom?.reported as Candidate<K> | undefined) ?? seedCandidate;
+  // Identity, not equality: on a resume the flag says whether the incumbent
+  // was already confirmed, and a fresh object stands in for "not this one".
+  let lastSwept =
+    resumeFrom === undefined
+      ? seedCandidate
+      : resumeFrom.incumbentSwept
+        ? best
+        : ({} as Candidate<K>);
 
   // What the search compares against. The same number as `bestScore` until a
   // scoring set splits the two apart: the search then runs on the subset while
   // the reported result stays a full-validation set measurement.
-  let bestSearchScore = seedScore;
-  if (scoringSet !== undefined) {
-    bestSearchScore = mean((await screen(seedCandidate, "seed")).scores);
+  let bestSearchScore = resumeFrom?.bestSearchScore ?? seedScore;
+  if (resumeFrom === undefined && scoringSet !== undefined) {
+    bestSearchScore = requireMeasuredMean({
+      batch: await screen(seedCandidate, "seed"),
+      phase: "seed",
+    });
   }
 
   /**
@@ -458,9 +565,11 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     }
     try {
       const evaluation = await sweep(best, "validation");
-      const full = mean(evaluation.scores);
+      const full = measuredMean(evaluation);
       lastSwept = best;
-      if (full > bestScore) {
+      // A sweep that measured nothing cannot confirm the incumbent, and
+      // reporting its zero would replace a real number with an outage.
+      if (full !== undefined && full > bestScore) {
         reported = best;
         bestScore = full;
         bestOutputs = evaluation.outputs;
@@ -474,23 +583,67 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     return "ok";
   }
 
-  for (const name of components) {
-    histories.get(name)?.push({
-      text: seedCandidate[name],
-      score: scaleScore(bestSearchScore, scoreScale),
-      context: contextOf(seedCandidate, name),
+  if (resumeFrom === undefined) {
+    for (const name of components) {
+      histories.get(name)?.push({
+        text: seedCandidate[name],
+        score: scaleScore(bestSearchScore, scoreScale),
+        context: contextOf(seedCandidate, name),
+      });
+    }
+    trajectory.push({
+      round: 0,
+      component: components[0] as K,
+      candidate: seedCandidate,
+      score: seedScore,
     });
   }
-  trajectory.push({
-    round: 0,
-    component: components[0] as K,
-    candidate: seedCandidate,
-    score: seedScore,
-  });
+
+  function takeSnapshot(): OproSnapshot {
+    const cached = checkpointCache ? evaluationCache?.entries?.() : undefined;
+
+    return {
+      version: 1,
+      fingerprint,
+      best,
+      reported,
+      incumbentSwept: best === lastSwept,
+      bestScore,
+      bestSearchScore,
+      seedScore,
+      round,
+      reflectionCalls,
+      metricCalls: budget.spent(),
+      cacheHits: evaluator.cacheHits(),
+      rngState: rng.state(),
+      histories: Object.fromEntries(
+        [...histories].map(([name, attempts]) => [name, [...attempts]]),
+      ),
+      ...(scoringIndices === undefined ? {} : { scoringIndices }),
+      ...(cached === undefined ? {} : { cache: cached }),
+    };
+  }
+
+  async function checkpoint(): Promise<void> {
+    if (onCheckpoint === undefined) {
+      return;
+    }
+    await onCheckpoint(takeSnapshot());
+  }
+
+  await checkpoint();
 
   while (round < maxRounds) {
     if (signal?.aborted) {
       stopReason = "aborted";
+      break;
+    }
+    if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
+      stopReason = "costExhausted";
+      break;
+    }
+    if (deadline.exceeded()) {
+      stopReason = "deadlineReached";
       break;
     }
     if (reflectionCalls >= maxReflectionCalls) {
@@ -569,7 +722,13 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
         throw err;
       }
 
-      const score = mean(evaluation.scores);
+      const score = measuredMean(evaluation);
+      // The attempt measured the provider rather than the text. Recording it
+      // would put a score in the history that no rollout produced, and the
+      // next meta-prompt asks the model to read a gradient across that history.
+      if (score === undefined) {
+        continue;
+      }
       const accepted = score > bestSearchScore;
 
       history.push({ text, score: scaleScore(score, scoreScale), context });
@@ -610,6 +769,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     }
 
     round += 1;
+    await checkpoint();
 
     if (roundStop !== undefined) {
       stopReason = roundStop;
@@ -637,19 +797,17 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   const testScore =
     testSet === undefined
       ? undefined
-      : mean(
-          (
-            await evaluator.evaluate({
-              candidate: best,
-              batch: testSet,
-              ids: testIds,
-              split: "test",
-              phase: "test",
-              candidateId: null,
-              iteration: round,
-              charge: false,
-            })
-          ).scores,
+      : measuredMean(
+          await evaluator.evaluate({
+            candidate: best,
+            batch: testSet,
+            ids: testIds,
+            split: "test",
+            phase: "test",
+            candidateId: null,
+            iteration: round,
+            charge: false,
+          }),
         );
 
   onEvent?.({
@@ -661,6 +819,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   });
 
   return {
+    snapshot: takeSnapshot(),
     bestCandidate: reported,
     bestScore,
     usage: evaluator.usage(),

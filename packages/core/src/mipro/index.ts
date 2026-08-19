@@ -5,6 +5,7 @@ export type {
   MiproObservation,
   MiproPromptBuilder,
   MiproResult,
+  MiproSnapshot,
   MiproStopReason,
   MiproTask,
 } from "./optimize.js";

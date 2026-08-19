@@ -1,10 +1,18 @@
+import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
 import { createMemoryCache, stableHash } from "../cache.js";
-import type { EvaluationCache } from "../cache.js";
+import type { CachedScore, EvaluationCache } from "../cache.js";
+import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
 import { bootstrapDemos, formatDemos } from "../demos.js";
 import type { Demo, DemoRenderer } from "../demos.js";
-import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import {
+  BudgetExhausted,
+  costExhausted,
+  createEvaluator,
+  measuredMean,
+  requireMeasuredMean,
+} from "../evaluation.js";
 import type { EvaluationEvent } from "../evaluation.js";
 import { mean } from "../math.js";
 import type {
@@ -118,6 +126,48 @@ export interface MiproConfig {
   /** Replaces the built-in style hints. */
   tips?: readonly string[];
   trackBestOutputs?: boolean;
+  /**
+   * Include cached instance scores in every checkpoint. Leaving them out keeps
+   * snapshots small at the cost of a resumed run re-paying for rollouts it
+   * cannot look up. Default true.
+   */
+  checkpointCache?: boolean;
+}
+
+/**
+ * Everything needed to continue a run.
+ *
+ * The menus matter most. Building them is the expensive half of a MIPRO run —
+ * a reflection call per instruction and a harvesting pass per demo set — and
+ * they are also what every trial's choice vector indexes into, so a resumed
+ * run that rebuilt them would both pay twice and reinterpret every
+ * observation it had already made.
+ */
+export interface MiproSnapshot {
+  version: 1;
+  fingerprint: string;
+  /** Component name -> its option menu, in the order choices index it. */
+  menu: Record<string, string[]>;
+  best: Candidate;
+  bestScore: number;
+  seedScore: number;
+  trial: number;
+  fullEvaluations: number;
+  reflectionCalls: number;
+  bootstrapMetricCalls: number;
+  metricCalls: number;
+  cacheHits: number;
+  rngState: number;
+  observations: MiproObservation[];
+  /** What the surrogate was fitted on: one entry per measured trial. */
+  surrogateInput: { choices: number[]; score: number }[];
+  /** Configuration key -> its minibatch readings so far. */
+  readings: [string, number[]][];
+  /** Configuration keys a full sweep has already bought. */
+  swept: string[];
+  /** Whatever the batch sampler reports from `state()`, when it has one. */
+  sampler?: unknown;
+  cache?: [string, CachedScore][];
 }
 
 export interface MiproTask<
@@ -164,9 +214,21 @@ export interface MiproTask<
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
   onEvent?: (event: MiproEvent<NoInfer<K>>) => void;
+  /**
+   * Called with a resumable snapshot once the menus are built and after every
+   * trial. Persist it and a killed run costs the last trial, not the menus.
+   */
+  onCheckpoint?: (snapshot: MiproSnapshot) => void | Promise<void>;
+  /** Snapshot to continue from, instead of starting at the seed candidate. */
+  resumeFrom?: MiproSnapshot;
 }
 
-export type MiproStopReason = "budgetExhausted" | "maxTrials" | "aborted";
+export type MiproStopReason =
+  | "budgetExhausted"
+  | "costExhausted"
+  | "deadlineReached"
+  | "maxTrials"
+  | "aborted";
 
 export type MiproEvent<K extends string = string> =
   | { type: "start"; components: K[]; validationSetSize: number }
@@ -219,6 +281,8 @@ export interface MiproResult<
   bootstrapMetricCalls: number;
   reflectionCalls: number;
   cacheHits: number;
+  /** State as of the last trial, ready to hand back as `resumeFrom`. */
+  snapshot: MiproSnapshot;
 }
 
 const DEFAULT_INSTRUCTIONS = 3;
@@ -390,6 +454,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     buildPrompt = buildMiproPrompt,
     tips = DEFAULT_TIPS,
     trackBestOutputs = false,
+    checkpointCache = true,
   } = config;
 
   const {
@@ -407,11 +472,18 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     renderDatum = renderDefault,
     batchSampler = createEpochShuffledSampler<Datum>({ minibatchSize }),
     cache,
+    cacheNamespace,
+    retry,
+    maxCostUsd,
+    maxWallClockMs,
     instanceId = defaultInstanceId,
     onEvent,
+    onCheckpoint,
+    resumeFrom,
     signal,
   } = task;
 
+  const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
 
   if (trainingSet.length === 0) {
@@ -448,16 +520,41 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   const testIds =
     testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
-  const rng = createSeededRng(seed);
-  const budget = createBudget({ maxMetricCalls });
+  const fingerprint = runFingerprint({
+    seedCandidate,
+    trainingIds,
+    validationIds,
+    seed,
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+  });
+  assertResumable({
+    fingerprint,
+    ...(resumeFrom === undefined ? {} : { snapshot: resumeFrom }),
+  });
+
+  const rng = createSeededRng(seed, resumeFrom?.rngState);
+  const budget = createBudget({
+    maxMetricCalls,
+    spent: resumeFrom?.metricCalls ?? 0,
+  });
+  const evaluationCache =
+    cache === false ? undefined : (cache ?? createMemoryCache());
   const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
-    ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
+    ...(retry === undefined ? {} : { retry }),
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+    ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
+    cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
   });
+
+  evaluator.restore(resumeFrom?.cache ?? []);
+  if (resumeFrom?.sampler !== undefined) {
+    batchSampler.restore?.(resumeFrom.sampler);
+  }
 
   onEvent?.({
     type: "start",
@@ -469,7 +566,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     .sample(trainingSet, Math.min(exemplars, trainingSet.length))
     .map(renderDatum);
 
-  let reflectionCalls = 0;
+  let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   const menu = {} as Record<K, string[]>;
 
   const demoNames = new Set<K>(demoComponents ?? []);
@@ -480,7 +577,12 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   );
 
   let summary: string | undefined;
-  if (datasetSummary && proposing && trainingSet.length > 0) {
+  if (
+    resumeFrom === undefined &&
+    datasetSummary &&
+    proposing &&
+    trainingSet.length > 0
+  ) {
     reflectionCalls += 1;
     summary = parseProposedText(
       await reflect({
@@ -494,7 +596,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     );
   }
 
-  let bootstrapMetricCalls = 0;
+  let bootstrapMetricCalls = resumeFrom?.bootstrapMetricCalls ?? 0;
 
   /**
    * Builds a demo component's menu from rollouts the metric rewarded.
@@ -591,6 +693,15 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   for (const name of components) {
     const supplied = componentOptions?.[name];
 
+    // A resumed run reuses the menus it already paid for. Rebuilding them
+    // would buy the same options a second time and, worse, reindex every
+    // choice vector the surrogate has already been fitted on.
+    const restored = resumeFrom?.menu[name];
+    if (restored !== undefined) {
+      menu[name] = [...restored];
+      continue;
+    }
+
     if (demoNames.has(name)) {
       menu[name] = await bootstrapMenu(name);
       continue;
@@ -654,10 +765,12 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     return candidate;
   }
 
-  let trial = 0;
-  let fullEvaluations = 0;
-  const observations: MiproObservation[] = [];
-  const surrogateInput: Observation[] = [];
+  let trial = resumeFrom?.trial ?? 0;
+  let fullEvaluations = resumeFrom?.fullEvaluations ?? 0;
+  const observations: MiproObservation[] = [
+    ...(resumeFrom?.observations ?? []),
+  ];
+  const surrogateInput: Observation[] = [...(resumeFrom?.surrogateInput ?? [])];
   let stopReason: MiproStopReason = "maxTrials";
 
   async function fullSweep(
@@ -675,25 +788,77 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     });
   }
 
-  const seedEvaluation = await fullSweep(seedCandidate, "seed");
-  const seedScore = mean(seedEvaluation.scores);
-  fullEvaluations += 1;
+  // A resumed run already knows what the seed scored, and re-sweeping it would
+  // charge the budget a second time for a number the checkpoint carries.
+  const seedEvaluation =
+    resumeFrom === undefined
+      ? await fullSweep(seedCandidate, "seed")
+      : undefined;
+  const seedScore =
+    seedEvaluation === undefined
+      ? (resumeFrom as MiproSnapshot).seedScore
+      : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
+  if (seedEvaluation !== undefined) {
+    fullEvaluations += 1;
+  }
 
   // The seed is index 0 of every menu, and its sweep is the most reliable
   // measurement the run will ever make. Registering it as a trial is how the
   // surrogate starts with a reference point instead of having to buy one, and
   // is what dspy does with `study.add_trial` before its loop begins.
-  surrogateInput.push({ choices: menuSizes.map(() => 0), score: seedScore });
+  if (resumeFrom === undefined) {
+    surrogateInput.push({ choices: menuSizes.map(() => 0), score: seedScore });
+  }
 
-  let best = seedCandidate;
-  let bestScore = seedScore;
-  let bestOutputs = seedEvaluation.outputs;
+  let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
+  let bestScore = resumeFrom?.bestScore ?? seedScore;
+  /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
+  let bestOutputs = seedEvaluation?.outputs;
   // Minibatch readings per configuration, not one running bar. A configuration
   // drawn more than once is measured on a different batch each time, so the
   // mean of its readings is a steadier estimate than any single one — and it
   // is what decides which configuration earns the expensive sweep.
-  const readings = new Map<string, number[]>();
-  const swept = new Set<string>();
+  const readings = new Map<string, number[]>(resumeFrom?.readings ?? []);
+  const swept = new Set<string>(resumeFrom?.swept ?? []);
+
+  function takeSnapshot(): MiproSnapshot {
+    const cached = checkpointCache ? evaluationCache?.entries?.() : undefined;
+    const samplerState = batchSampler.state?.();
+
+    return {
+      version: 1,
+      fingerprint,
+      menu: { ...menu },
+      best,
+      bestScore,
+      seedScore,
+      trial,
+      fullEvaluations,
+      reflectionCalls,
+      bootstrapMetricCalls,
+      metricCalls: budget.spent(),
+      cacheHits: evaluator.cacheHits(),
+      rngState: rng.state(),
+      observations: [...observations],
+      surrogateInput: surrogateInput.map((entry) => ({
+        choices: [...entry.choices],
+        score: entry.score,
+      })),
+      readings: [...readings].map(([key, values]) => [key, [...values]]),
+      swept: [...swept],
+      ...(samplerState === undefined ? {} : { sampler: samplerState }),
+      ...(cached === undefined ? {} : { cache: cached }),
+    };
+  }
+
+  async function checkpoint(): Promise<void> {
+    if (onCheckpoint === undefined) {
+      return;
+    }
+    await onCheckpoint(takeSnapshot());
+  }
+
+  await checkpoint();
 
   /**
    * Full-evaluates the strongest configuration by mean minibatch reading that
@@ -742,7 +907,13 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     }
     fullEvaluations += 1;
 
-    const score = mean(evaluation.scores);
+    const score = measuredMean(evaluation);
+    // The sweep measured the provider, not the configuration. Feeding its
+    // zero to the surrogate would teach it to avoid a configuration on the
+    // strength of an outage.
+    if (score === undefined) {
+      return "swept";
+    }
     // A sweep is a far better measurement of this configuration than the
     // minibatch readings that earned it one, so the surrogate hears it too.
     // Without this a lucky reading keeps pulling proposals toward a
@@ -767,6 +938,14 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   while (trial < maxTrials) {
     if (signal?.aborted) {
       stopReason = "aborted";
+      break;
+    }
+    if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
+      stopReason = "costExhausted";
+      break;
+    }
+    if (deadline.exceeded()) {
+      stopReason = "deadlineReached";
       break;
     }
     if (!budget.canAfford(minibatchSize)) {
@@ -794,7 +973,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     const candidate = candidateFor(choices);
     const batchIndices = batchSampler({ trainingSet, iteration: trial, rng });
 
-    let minibatchScore: number;
+    let minibatchScore: number | undefined;
     try {
       const evaluation = await evaluator.evaluate({
         candidate,
@@ -805,7 +984,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
         candidateId: null,
         iteration: trial,
       });
-      minibatchScore = mean(evaluation.scores);
+      minibatchScore = measuredMean(evaluation);
     } catch (err) {
       if (err instanceof BudgetExhausted) {
         stopReason = "budgetExhausted";
@@ -816,6 +995,14 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
         break;
       }
       throw err;
+    }
+
+    // Nothing was measured, so the trial is spent but says nothing. Recording
+    // it would fit the surrogate to an outage and, worse, average an
+    // infrastructure zero into this configuration's readings.
+    if (minibatchScore === undefined) {
+      trial += 1;
+      continue;
     }
 
     surrogateInput.push({ choices, score: minibatchScore });
@@ -838,6 +1025,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       promoted: false,
     });
     trial += 1;
+    await checkpoint();
 
     if (trial % fullEvalInterval === 0) {
       const outcome = await sweepBestUnswept();
@@ -869,19 +1057,17 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   const testScore =
     testSet === undefined
       ? undefined
-      : mean(
-          (
-            await evaluator.evaluate({
-              candidate: best,
-              batch: testSet,
-              ids: testIds,
-              split: "test",
-              phase: "test",
-              candidateId: null,
-              iteration: trial,
-              charge: false,
-            })
-          ).scores,
+      : measuredMean(
+          await evaluator.evaluate({
+            candidate: best,
+            batch: testSet,
+            ids: testIds,
+            split: "test",
+            phase: "test",
+            candidateId: null,
+            iteration: trial,
+            charge: false,
+          }),
         );
 
   onEvent?.({
@@ -893,6 +1079,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   });
 
   return {
+    snapshot: takeSnapshot(),
     bestCandidate: best,
     bestScore,
     usage: evaluator.usage(),

@@ -1,10 +1,17 @@
+import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
 import { createMemoryCache, stableHash } from "../cache.js";
-import type { EvaluationCache } from "../cache.js";
+import type { CachedScore, EvaluationCache } from "../cache.js";
+import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
-import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import {
+  BudgetExhausted,
+  costExhausted,
+  createEvaluator,
+  measuredMean,
+  requireMeasuredMean,
+} from "../evaluation.js";
 import type { EvaluationEvent } from "../evaluation.js";
-import { mean } from "../math.js";
 import type {
   Optimizer,
   OptimizerResult,
@@ -36,6 +43,40 @@ export interface RandomSearchConfig {
   buildPrompt?: ParaphrasePromptBuilder;
   /** Keep what the winner produced on each validation instance. */
   trackBestOutputs?: boolean;
+  /**
+   * Include cached instance scores in every checkpoint. Leaving them out keeps
+   * snapshots small at the cost of a resumed run re-paying for rollouts it
+   * cannot look up. Default true.
+   */
+  checkpointCache?: boolean;
+}
+
+/**
+ * Everything needed to continue a run: the incumbent and its score, the budget
+ * already spent, and the bookkeeping that stops the seed from being re-scored.
+ * Plain JSON — persist it and hand it back as `resumeFrom`.
+ *
+ * There is no random stream here because this search has none: its variants
+ * come from the proposer alone.
+ */
+export interface RandomSearchSnapshot {
+  version: 1;
+  /**
+   * Identifies the run this came from — seed candidate, instance ids, cache
+   * namespace. Resuming against a different setup is refused rather than
+   * silently scoring an old incumbent against new data.
+   */
+  fingerprint: string;
+  best: Candidate;
+  bestScore: number;
+  seedScore: number;
+  round: number;
+  variantsEvaluated: number;
+  reflectionCalls: number;
+  metricCalls: number;
+  cacheHits: number;
+  /** Cached instance scores, when the cache can enumerate them. */
+  cache?: [string, CachedScore][];
 }
 
 export interface RandomSearchTask<
@@ -55,10 +96,22 @@ export interface RandomSearchTask<
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
   onEvent?: (event: RandomSearchEvent<NoInfer<K>>) => void;
+  /**
+   * Called with a resumable snapshot after the seed is scored and after every
+   * round. Persist it and a killed run costs the last round, not all of them.
+   */
+  onCheckpoint?: (snapshot: RandomSearchSnapshot) => void | Promise<void>;
+  /** Snapshot to continue from, instead of starting at the seed candidate. */
+  resumeFrom?: RandomSearchSnapshot;
 }
 
 export type RandomSearchStopReason =
-  "budgetExhausted" | "maxRounds" | "aborted";
+  | "budgetExhausted"
+  | "costExhausted"
+  | "deadlineReached"
+  | "maxRounds"
+  | "proposerStalled"
+  | "aborted";
 
 export type RandomSearchEvent<K extends string = string> =
   | { type: "start"; components: K[]; validationSetSize: number }
@@ -90,6 +143,8 @@ export interface RandomSearchResult<
   variantsEvaluated: number;
   reflectionCalls: number;
   cacheHits: number;
+  /** State as of the last round, ready to hand back as `resumeFrom`. */
+  snapshot: RandomSearchSnapshot;
 }
 
 const DEFAULT_VARIANTS = 4;
@@ -180,6 +235,7 @@ async function runRandomSearch<
     maxRounds = Number.POSITIVE_INFINITY,
     buildPrompt = buildParaphrasePrompt,
     trackBestOutputs = false,
+    checkpointCache = true,
   } = config;
 
   const {
@@ -191,11 +247,18 @@ async function runRandomSearch<
     reflect,
     maxMetricCalls,
     cache,
+    cacheNamespace,
+    retry,
+    maxCostUsd,
+    maxWallClockMs,
     instanceId = defaultInstanceId,
     onEvent,
+    onCheckpoint,
+    resumeFrom,
     signal,
   } = task;
 
+  const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
 
   if (trainingSet.length === 0) {
@@ -221,20 +284,51 @@ async function runRandomSearch<
   const testIds =
     testSet?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
-  const budget = createBudget({ maxMetricCalls });
+  const fingerprint = runFingerprint({
+    seedCandidate,
+    trainingIds: trainingSet.map((datum, index) =>
+      instanceId({ datum, index }),
+    ),
+    validationIds,
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+  });
+  assertResumable({
+    fingerprint,
+    ...(resumeFrom === undefined ? {} : { snapshot: resumeFrom }),
+  });
+
+  const budget = createBudget({
+    maxMetricCalls,
+    spent: resumeFrom?.metricCalls ?? 0,
+  });
+  const evaluationCache =
+    cache === false ? undefined : (cache ?? createMemoryCache());
   const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
     adapter,
     budget,
-    ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
+    ...(retry === undefined ? {} : { retry }),
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
+    ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
+    cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
   });
 
-  let round = 0;
-  let variantsEvaluated = 0;
-  let reflectionCalls = 0;
+  evaluator.restore(resumeFrom?.cache ?? []);
+
+  let round = resumeFrom?.round ?? 0;
+  let variantsEvaluated = resumeFrom?.variantsEvaluated ?? 0;
+  let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: RandomSearchStopReason = "maxRounds";
+  /**
+   * Consecutive rounds that neither spent a rollout nor improved on the
+   * incumbent. A proposer stuck on texts that are already cached costs
+   * nothing, so neither the metric budget nor the cost ceiling can end the
+   * run — without this the loop spins forever, burning reflection calls that
+   * no budget here bounds.
+   */
+  let stalledRounds = 0;
 
   onEvent?.({
     type: "start",
@@ -257,19 +351,60 @@ async function runRandomSearch<
     });
   }
 
-  const seedEvaluation = await sweep({
-    candidate: seedCandidate,
-    phase: "seed",
-  });
-  const seedScore = mean(seedEvaluation.scores);
+  function takeSnapshot(): RandomSearchSnapshot {
+    const cached = checkpointCache ? evaluationCache?.entries?.() : undefined;
 
-  let best = seedCandidate;
-  let bestScore = seedScore;
-  let bestOutputs = seedEvaluation.outputs;
+    return {
+      version: 1,
+      fingerprint,
+      best,
+      bestScore,
+      seedScore,
+      round,
+      variantsEvaluated,
+      reflectionCalls,
+      metricCalls: budget.spent(),
+      cacheHits: evaluator.cacheHits(),
+      ...(cached === undefined ? {} : { cache: cached }),
+    };
+  }
+
+  async function checkpoint(): Promise<void> {
+    if (onCheckpoint === undefined) {
+      return;
+    }
+    await onCheckpoint(takeSnapshot());
+  }
+
+  // A resumed run already knows what the seed scored. Re-sweeping it would
+  // charge the budget a second time for a number the checkpoint carries.
+  const seedEvaluation =
+    resumeFrom === undefined
+      ? await sweep({ candidate: seedCandidate, phase: "seed" })
+      : undefined;
+  const seedScore =
+    seedEvaluation === undefined
+      ? (resumeFrom as RandomSearchSnapshot).seedScore
+      : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
+
+  let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
+  let bestScore = resumeFrom?.bestScore ?? seedScore;
+  /** Absent on a resumed run until a variant wins: outputs are not checkpointed. */
+  let bestOutputs = seedEvaluation?.outputs;
+
+  await checkpoint();
 
   while (round < maxRounds) {
     if (signal?.aborted) {
       stopReason = "aborted";
+      break;
+    }
+    if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
+      stopReason = "costExhausted";
+      break;
+    }
+    if (deadline.exceeded()) {
+      stopReason = "deadlineReached";
       break;
     }
     // A round is only worth starting if every variant in it can be both
@@ -282,6 +417,8 @@ async function runRandomSearch<
 
     const component = components[round % components.length] as K;
     onEvent?.({ type: "roundStart", round, component });
+    const spentBefore = budget.spent();
+    const scoreBefore = bestScore;
 
     const currentText = best[component];
     const drawn = await mapWithConcurrency({
@@ -330,8 +467,10 @@ async function runRandomSearch<
       }
       variantsEvaluated += 1;
 
-      const score = mean(evaluation.scores);
-      if (score > bestScore) {
+      const score = measuredMean(evaluation);
+      // The variant measured the provider rather than its own text, so there
+      // is nothing here to compare the incumbent against.
+      if (score !== undefined && score > bestScore) {
         onEvent?.({
           type: "candidateAccepted",
           round,
@@ -346,6 +485,16 @@ async function runRandomSearch<
     }
 
     round += 1;
+    stalledRounds =
+      budget.spent() === spentBefore && bestScore === scoreBefore
+        ? stalledRounds + 1
+        : 0;
+    await checkpoint();
+
+    if (stalledRounds >= components.length) {
+      stopReason = "proposerStalled";
+      break;
+    }
 
     if (roundStop !== undefined) {
       stopReason = roundStop;
@@ -360,19 +509,17 @@ async function runRandomSearch<
   const testScore =
     testSet === undefined
       ? undefined
-      : mean(
-          (
-            await evaluator.evaluate({
-              candidate: best,
-              batch: testSet,
-              ids: testIds,
-              split: "test",
-              phase: "test",
-              candidateId: null,
-              iteration: round,
-              charge: false,
-            })
-          ).scores,
+      : measuredMean(
+          await evaluator.evaluate({
+            candidate: best,
+            batch: testSet,
+            ids: testIds,
+            split: "test",
+            phase: "test",
+            candidateId: null,
+            iteration: round,
+            charge: false,
+          }),
         );
 
   onEvent?.({
@@ -388,6 +535,7 @@ async function runRandomSearch<
     bestScore,
     usage: evaluator.usage(),
     seedScore,
+    snapshot: takeSnapshot(),
     ...(trackBestOutputs ? { bestOutputs } : {}),
     ...(testScore === undefined
       ? {}

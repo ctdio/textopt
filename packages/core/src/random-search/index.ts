@@ -4,6 +4,7 @@ export type {
   RandomSearchConfig,
   RandomSearchEvent,
   RandomSearchResult,
+  RandomSearchSnapshot,
   RandomSearchStopReason,
   RandomSearchTask,
 } from "./optimize.js";

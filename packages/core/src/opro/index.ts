@@ -5,6 +5,7 @@ export type {
   OproEvent,
   OproPromptBuilder,
   OproResult,
+  OproSnapshot,
   OproStopReason,
   OproTask,
   ScoredAttempt,

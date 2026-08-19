@@ -1,9 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
 import type { Adapter, TextModel } from "../types.js";
 import { MiproOptimizer } from "./optimize.js";
-import type { MiproStopReason } from "./optimize.js";
+import type { MiproSnapshot, MiproStopReason } from "./optimize.js";
 
 /** The terms each instance needs, split across two components. */
 const JOINT_OPTIONS = {
@@ -94,6 +94,77 @@ function jointTask() {
 }
 
 describe("MiproOptimizer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("stops once the wall clock deadline passes", async () => {
+    // Rollout and cost ceilings bound what a run spends, not how long it
+    // takes: a run stuck behind a rate limit costs nothing and runs forever.
+    vi.useFakeTimers();
+
+    const result = await new MiproOptimizer({
+      maxTrials: 20,
+      minibatchSize: 2,
+    }).optimize({
+      ...jointTask(),
+      adapter: {
+        evaluate: ({ batch }) => {
+          vi.advanceTimersByTime(400);
+          return {
+            outputs: batch.map(() => ""),
+            scores: batch.map(() => 0.5),
+          };
+        },
+      },
+      maxWallClockMs: 1000,
+    });
+
+    expect(result.stopReason).toBe("deadlineReached");
+  });
+  test("stops once the reported cost reaches the ceiling", async () => {
+    const result = await new MiproOptimizer({
+      maxTrials: 8,
+      minibatchSize: 2,
+    }).optimize({
+      ...jointTask(),
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0.5),
+          usage: batch.map(() => ({ costUsd: 1 })),
+        }),
+      },
+      maxCostUsd: 4,
+    });
+
+    expect(result.stopReason).toBe("costExhausted");
+    expect(result.usage.costUsd).toBe(4);
+  });
+
+  test("leaves a transiently failed rollout out of the score it reports", async () => {
+    // A rate limit measured the provider, not the candidate. Averaging its
+    // zero in reports a score no rollout ever produced, and the surrogate then
+    // fits a configuration to it.
+    const result = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      ...jointTask(),
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map((_, index) => (index === 2 ? 0 : 1)),
+          transient: batch.map((_, index) => index === 2),
+        }),
+      },
+      retry: { attempts: 0 },
+    });
+
+    expect(result.seedScore).toBe(1);
+  });
+
   test("satisfies the Optimizer contract", async () => {
     const mipro = new MiproOptimizer({ maxTrials: 4, minibatchSize: 2 });
     const contract: Optimizer<MiproStopReason> = mipro;
@@ -803,5 +874,111 @@ describe("MiproOptimizer", () => {
       ).observations.map((entry) => entry.choices.join(","));
 
     expect(await run()).toEqual(await run());
+  });
+});
+
+describe("MiproOptimizer checkpoints", () => {
+  test("survives a round trip through JSON", async () => {
+    let snapshot: MiproSnapshot | undefined;
+
+    await new MiproOptimizer({ maxTrials: 3, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      onCheckpoint: (taken) => {
+        snapshot = taken;
+      },
+    });
+
+    expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
+  });
+
+  test("checkpoints after the menus are built and after every trial", async () => {
+    const trials: number[] = [];
+
+    await new MiproOptimizer({ maxTrials: 3, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      onCheckpoint: (taken) => {
+        trials.push(taken.trial);
+      },
+    });
+
+    expect(trials).toEqual([0, 1, 2, 3]);
+  });
+
+  test("does not re-score the seed candidate", async () => {
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+    }).optimize({ ...jointTask(), cache: false });
+
+    const phases: string[] = [];
+    await new MiproOptimizer({ maxTrials: 4, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      cache: false,
+      resumeFrom: interrupted.snapshot,
+      onEvent: (event) => {
+        phases.push(event.type === "evaluation" ? event.phase : event.type);
+      },
+    });
+
+    expect(phases).not.toContain("seed");
+  });
+
+  test("reuses the menus the first run paid for", async () => {
+    // Rebuilding them would buy the same options again and reindex every
+    // choice vector the surrogate was already fitted on.
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+    }).optimize(jointTask());
+
+    const resumed = await new MiproOptimizer({
+      maxTrials: 4,
+      minibatchSize: 2,
+    }).optimize({ ...jointTask(), resumeFrom: interrupted.snapshot });
+
+    expect(resumed.menu).toEqual(interrupted.menu);
+  });
+
+  test("keeps the observations the surrogate was fitted on", async () => {
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 3,
+      minibatchSize: 2,
+    }).optimize(jointTask());
+
+    const resumed = await new MiproOptimizer({
+      maxTrials: 5,
+      minibatchSize: 2,
+    }).optimize({ ...jointTask(), resumeFrom: interrupted.snapshot });
+
+    expect(resumed.observations.length).toBeGreaterThan(
+      interrupted.observations.length,
+    );
+    expect(
+      resumed.observations.slice(0, interrupted.observations.length),
+    ).toEqual(interrupted.observations);
+  });
+
+  test("refuses a checkpoint taken against a different seed candidate", async () => {
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+    }).optimize(jointTask());
+
+    await expect(
+      new MiproOptimizer({ maxTrials: 2, minibatchSize: 2 }).optimize({
+        ...jointTask(),
+        seedCandidate: { alpha: "different", beta: "" },
+        resumeFrom: interrupted.snapshot,
+      }),
+    ).rejects.toThrow("does not belong to this run");
+  });
+
+  test("carries the evaluation cache in the checkpoint", async () => {
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+    }).optimize(jointTask());
+
+    expect(interrupted.snapshot.cache?.length).toBeGreaterThan(0);
   });
 });
