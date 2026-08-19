@@ -385,7 +385,9 @@ In this sweep, 12 screening instances cut rollout count by 48% without changing 
 
 The reference implementation selects its winner by training-subset score. textopt instead returns the best candidate evaluated on the full validation set, so `bestScore` never falls below `seedScore`. Screening scores still guide the search but cannot determine the returned winner.
 
-`OproResult` adds `seedScore`, `rounds`, `trajectory` (every candidate scored, in order), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"maxRounds"`, or `"aborted"`.
+`OproResult` adds `seedScore`, `rounds`, `trajectory` (every candidate scored, in order), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"proposalsExhausted"`, `"maxRounds"`, or `"aborted"`.
+
+`"proposalsExhausted"` means several rounds in a row produced only texts already tried. Such a round spends no rollouts, so without this the budget would never run down and a proposal model that has settled on one answer would loop forever.
 
 History is sorted by ascending score so the strongest attempt appears nearest the request. Scores are shown as integers because models distinguish 41 from 68 more reliably than 0.41 from 0.68.
 

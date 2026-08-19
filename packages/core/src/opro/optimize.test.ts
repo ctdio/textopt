@@ -276,6 +276,19 @@ describe("OproOptimizer", () => {
     expect(result.stopReason).toBe("budgetExhausted");
   });
 
+  test("stops when the proposal model stops producing anything new", async () => {
+    // A round whose every proposal was already tried spends no rollouts, so
+    // the budget guard never fires: with the default round limit the run would
+    // never end at all.
+    const result = await new OproOptimizer({ proposalsPerRound: 2 }).optimize({
+      ...task(),
+      reflect: async () => "```\nthe only thing it ever says\n```",
+      maxMetricCalls: 10_000,
+    });
+
+    expect(result.stopReason).toBe("proposalsExhausted");
+  });
+
   test("stops once the round limit is reached", async () => {
     const result = await new OproOptimizer({
       proposalsPerRound: 2,

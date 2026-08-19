@@ -175,6 +175,7 @@ export type OproStopReason =
   | "costExhausted"
   | "deadlineReached"
   | "reflectionBudgetExhausted"
+  | "proposalsExhausted"
   | "maxRounds"
   | "aborted";
 
@@ -219,6 +220,18 @@ export interface OproResult<
   /** State as of the last round, ready to hand back as `resumeFrom`. */
   snapshot: OproSnapshot;
 }
+
+/**
+ * Rounds that may pass without a proposal nobody has tried before, per
+ * component, before the run gives up.
+ *
+ * Such a round spends no rollouts, so the budget guard — the only thing
+ * bounding a run at the default round limit — never fires, and a proposal
+ * model that has settled on one answer would loop forever. Waiting a few
+ * rounds costs one prompt each and leaves room for a stochastic model to find
+ * something new; waiting indefinitely is a hang.
+ */
+const BARREN_ROUNDS = 3;
 
 const DEFAULT_PROPOSALS_PER_ROUND = 8;
 const DEFAULT_HISTORY_SIZE = 20;
@@ -633,9 +646,15 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
 
   await checkpoint();
 
+  let barrenRounds = 0;
+
   while (round < maxRounds) {
     if (signal?.aborted) {
       stopReason = "aborted";
+      break;
+    }
+    if (barrenRounds >= BARREN_ROUNDS * components.length) {
+      stopReason = "proposalsExhausted";
       break;
     }
     if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
@@ -701,6 +720,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     const unique = [...new Set(drawn)].filter(
       (text) => text.length > 0 && !tried.has(text),
     );
+    barrenRounds = unique.length === 0 ? barrenRounds + 1 : 0;
 
     let roundStop: OproStopReason | undefined;
 
