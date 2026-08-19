@@ -527,6 +527,35 @@ function withPacing<Datum, Trajectory, Output>(
 }
 
 describe("RandomSearchOptimizer reporting", () => {
+  test("does not report the seed again on a resumed run", async () => {
+    // The seed is candidate 0 of one run, not of every process that continues
+    // it. Re-emitting would give a reporter a second baseline for the same
+    // search, and a checkpoint is exactly the case where nothing re-measured
+    // it to report.
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize({ ...task(), cache: false });
+
+    const seedReports: number[] = [];
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 3 }).optimize({
+      ...{ ...task(), cache: false },
+      resumeFrom: interrupted.snapshot,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted" && event.candidateId === 0) {
+              seedReports.push(event.aggregateScore);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(seedReports).toEqual([]);
+  });
+
   test("reports the seed as candidate 0, before any improvement", async () => {
     // The seed is what every later candidate is read against. A report that
     // starts at the first improvement has nothing to compare it to.
