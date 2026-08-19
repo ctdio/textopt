@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the version branch and create the release tags
+      contents: write # push the version commit, the tags, and the releases
       pull-requests: write # open and update the version pull request
       id-token: write # sign the published tarballs with npm provenance
     steps:
@@ -28,20 +28,23 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          # Writes the .npmrc that reads NODE_AUTH_TOKEN. The action stopped
+          # handling npm credentials itself in v2.
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      # ci.yml runs on the same push, but nothing orders it before publishing.
+      # ci.yml runs on the same push, but nothing orders it before publishing,
+      # and the version pull request gets no ci run of its own: GitHub does not
+      # trigger workflows for events raised by the default token.
       - run: pnpm test
 
-      - uses: changesets/action@v1
+      - uses: changesets/action@v2
         with:
           # Versioning rewrites the workspace package.json files, so the
           # lockfile has to be refreshed or the next ci run fails frozen.
-          version: pnpm changeset version && pnpm install --no-frozen-lockfile
-          publish: pnpm release
-          commit: "chore: version packages"
-          title: "chore: version packages"
+          version-script: pnpm changeset version && pnpm install --no-frozen-lockfile
+          publish-script: pnpm release
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
