@@ -1,6 +1,6 @@
 # @textopt/langchain
 
-LangChain adapter for [textopt](../../README.md).
+LangChain adapter for [textopt](https://github.com/ctdio/textopt#readme).
 
 The adapter rebuilds a LangChain runnable, chain, agent, or LangGraph graph for each candidate. Candidate components can supply prompts, tool descriptions, routing instructions, or other text read by the runnable.
 

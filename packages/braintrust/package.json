@@ -1,11 +1,30 @@
 {
   "name": "@textopt/braintrust",
   "version": "0.0.0",
-  "description": "Braintrust scorers and experiment logging for textopt",
-  "type": "module",
   "private": true,
+  "description": "Braintrust scorers and experiment logging for textopt",
+  "keywords": [
+    "prompt-optimization",
+    "gepa",
+    "braintrust",
+    "autoevals",
+    "llm"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/ctdio/textopt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctdio/textopt.git",
+    "directory": "packages/braintrust"
+  },
+  "bugs": {
+    "url": "https://github.com/ctdio/textopt/issues"
+  },
+  "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
   "exports": {
     ".": {
       "import": {

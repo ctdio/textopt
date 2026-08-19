@@ -9,12 +9,21 @@
   },
   "scripts": {
     "build": "pnpm -r --filter \"./packages/*\" build",
+    "changeset": "changeset",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint:packages": "pnpm -r --filter \"./packages/*\" exec publint --strict && pnpm -r --filter \"./packages/*\" exec attw --pack . --profile node16",
+    "release": "pnpm build && changeset publish",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "pnpm build && pnpm -r exec tsc --noEmit"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@changesets/cli": "^3.0.1",
     "@types/node": "^24.10.0",
+    "prettier": "^3.9.6",
+    "publint": "^0.3.24",
     "tsdown": "^0.22.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

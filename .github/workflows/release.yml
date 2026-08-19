@@ -1,0 +1,47 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+# Two releases must never publish at once, and cancelling one mid-publish would
+# leave the registry and the git tags disagreeing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version branch and create the release tags
+      pull-requests: write # open and update the version pull request
+      id-token: write # sign the published tarballs with npm provenance
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      # ci.yml runs on the same push, but nothing orders it before publishing.
+      - run: pnpm test
+
+      - uses: changesets/action@v1
+        with:
+          # Versioning rewrites the workspace package.json files, so the
+          # lockfile has to be refreshed or the next ci run fails frozen.
+          version: pnpm changeset version && pnpm install --no-frozen-lockfile
+          publish: pnpm release
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

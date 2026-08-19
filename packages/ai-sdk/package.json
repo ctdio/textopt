@@ -1,11 +1,30 @@
 {
   "name": "@textopt/ai-sdk",
   "version": "0.0.0",
-  "description": "Vercel AI SDK adapter for textopt",
-  "type": "module",
   "private": true,
+  "description": "Vercel AI SDK adapter for textopt",
+  "keywords": [
+    "prompt-optimization",
+    "gepa",
+    "ai-sdk",
+    "vercel-ai",
+    "llm"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/ctdio/textopt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctdio/textopt.git",
+    "directory": "packages/ai-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/ctdio/textopt/issues"
+  },
+  "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
   "exports": {
     ".": {
       "import": {

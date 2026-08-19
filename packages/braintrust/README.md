@@ -1,6 +1,6 @@
 # @textopt/braintrust
 
-Braintrust scorers and experiment logging for [textopt](../../README.md).
+Braintrust scorers and experiment logging for [textopt](https://github.com/ctdio/textopt#readme).
 
 The package provides two independent integrations:
 
@@ -50,7 +50,7 @@ const adapter = withBraintrustLogging({
 });
 ```
 
-The decorator works with [`@textopt/ai-sdk`](../ai-sdk), [`@textopt/langchain`](../langchain), and custom adapters. It preserves additional methods and generic component names, so wrapping a `GepaAdapter` returns a `GepaAdapter` with the same component type.
+The decorator works with [`@textopt/ai-sdk`](https://github.com/ctdio/textopt/tree/main/packages/ai-sdk), [`@textopt/langchain`](https://github.com/ctdio/textopt/tree/main/packages/langchain), and custom adapters. It preserves additional methods and generic component names, so wrapping a `GepaAdapter` returns a `GepaAdapter` with the same component type.
 
 Logged events include the candidate, instance feedback, `iteration`, `phase`, `split`, and `candidateId` for grouping rollouts by their place in the optimization run.
 

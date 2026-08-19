@@ -1,6 +1,6 @@
 # @textopt/ai-sdk
 
-Vercel AI SDK adapter for [textopt](../../README.md).
+Vercel AI SDK adapter for [textopt](https://github.com/ctdio/textopt#readme).
 
 The adapter evaluates candidate system prompts, tool descriptions, and output instructions by rerunning a `generateText` or `generateObject` call. Traces from multi-step runs include tool calls and results for use during reflection.
 

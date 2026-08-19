@@ -2,10 +2,31 @@
   "name": "@textopt/langchain",
   "version": "0.0.0",
   "description": "LangChain adapter for textopt",
-  "type": "module",
-  "private": true,
+  "keywords": [
+    "prompt-optimization",
+    "gepa",
+    "langchain",
+    "langgraph",
+    "llm"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/ctdio/textopt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctdio/textopt.git",
+    "directory": "packages/langchain"
+  },
+  "bugs": {
+    "url": "https://github.com/ctdio/textopt/issues"
+  },
+  "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "import": {

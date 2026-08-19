@@ -1,11 +1,35 @@
 {
   "name": "textopt",
   "version": "0.0.0",
-  "description": "Framework-agnostic prompt optimization for TypeScript, with GEPA (Genetic-Pareto) as its first optimizer",
-  "type": "module",
-  "private": true,
+  "description": "Prompt optimization for TypeScript, with GEPA, OPRO, MIPRO, and random search behind a shared interface",
+  "keywords": [
+    "prompt-optimization",
+    "gepa",
+    "mipro",
+    "opro",
+    "llm",
+    "prompt-engineering",
+    "dspy",
+    "evaluation"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/ctdio/textopt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctdio/textopt.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/ctdio/textopt/issues"
+  },
+  "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "import": {
