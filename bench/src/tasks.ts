@@ -14,6 +14,13 @@ export interface BenchTask {
   validationSet: BenchDatum[];
   testSet: BenchDatum[];
   adapter: GepaAdapter<BenchDatum, string, string>;
+  /**
+   * Components a demonstration search harvests into. Named per task because an
+   * optimizer that writes examples rather than instructions still has to put
+   * them somewhere, and here that is the same component the text-proposing
+   * entrants rewrite — so every entrant is scored on one candidate shape.
+   */
+  demoComponents: string[];
   /** Rollouts each optimizer is given. The same for all of them, by design. */
   maxMetricCalls: number;
   /** Reflection calls, which no metric budget covers. */
@@ -70,7 +77,7 @@ const POOL = REQUIRED.flatMap((term, index) => {
 const BLOAT_PENALTY = 0.03;
 
 export function benchTasks(): BenchTask[] {
-  return [clean(), noisy(), interacting()];
+  return [clean(), noisy(), interacting(), demonstrated()];
 }
 
 /**
@@ -138,12 +145,30 @@ export function createBenchAdviser(args: { absorb?: number } = {}): TextModel {
   };
 }
 
+/**
+ * Renders a harvested rollout without its label.
+ *
+ * A bench datum is an id and the terms an answer needs, so the default JSON
+ * renderer would print the answer key into the candidate — and the metric
+ * scores the candidate for containing exactly those terms. A demonstration
+ * search would then be reading the labels out of its own prompt and scoring
+ * for it. Only the id goes in, which is what a real demo's input is: the
+ * question, not the mark scheme.
+ */
+export function renderBenchDemo(args: {
+  demo: { input: BenchDatum; output: string };
+}): string {
+  const { demo } = args;
+  return `<input>\n${demo.input.id}\n</input>\n<output>\n${demo.output}\n</output>`;
+}
+
 /** A noiseless metric with a clean gradient: the reference case. */
 function clean(): BenchTask {
   const data = singleComponentData();
 
   return {
     name: "clean",
+    demoComponents: ["instruction"],
     seedCandidate: { instruction: "" },
     ...data,
     adapter: keywordAdapter({ noise: 0 }),
@@ -163,6 +188,7 @@ function noisy(): BenchTask {
 
   return {
     name: "noisy",
+    demoComponents: ["instruction"],
     seedCandidate: { instruction: "" },
     ...data,
     adapter: keywordAdapter({ noise: 0.2 }),
@@ -179,12 +205,42 @@ function noisy(): BenchTask {
 function interacting(): BenchTask {
   return {
     name: "interacting",
+    demoComponents: ["alpha", "beta"],
     seedCandidate: { alpha: "", beta: "" },
     trainingSet: pairedInstances({ count: 12, stride: 5, from: 0 }),
     validationSet: pairedInstances({ count: 12, stride: 5, from: 0 }),
     testSet: pairedInstances({ count: 12, stride: 7, from: 100 }),
     adapter: keywordAdapter({ noise: 0, allOrNothing: true }),
     maxMetricCalls: 250,
+    maxReflectionCalls: 40,
+  };
+}
+
+/**
+ * The same metric again, over a system that is sometimes right on its own.
+ *
+ * Every task above scores text the candidate already holds, so a rollout's
+ * output tells the search nothing its prompt did not, and a demonstration
+ * search harvesting those rollouts can only hand a candidate its own words
+ * back. Real systems are not like that: a model answers one instance correctly
+ * and the next one of the same kind wrong, and the examples worth showing it
+ * are the ones it already got right.
+ *
+ * `reliability` is that property and nothing else. It is what makes harvesting
+ * a lever here and a no-op on the three tasks above — which is the comparison
+ * worth running, because it is the question a caller actually has: are my
+ * failures a matter of the instruction, or of consistency?
+ */
+function demonstrated(): BenchTask {
+  const data = singleComponentData();
+
+  return {
+    name: "demonstrated",
+    demoComponents: ["instruction"],
+    seedCandidate: { instruction: "" },
+    ...data,
+    adapter: keywordAdapter({ noise: 0, reliability: 0.4 }),
+    maxMetricCalls: 200,
     maxReflectionCalls: 40,
   };
 }
@@ -245,8 +301,14 @@ function instances(args: {
 function keywordAdapter(args: {
   noise: number;
   allOrNothing?: boolean;
+  /**
+   * Share of instances the system answers correctly with no help from its
+   * prompt. Zero — the default, and the case the other tasks model — makes the
+   * output a pure function of the candidate.
+   */
+  reliability?: number;
 }): GepaAdapter<BenchDatum, string, string> {
-  const { noise, allOrNothing = false } = args;
+  const { noise, allOrNothing = false, reliability = 0 } = args;
 
   return {
     evaluate: ({ batch, candidate }) => {
@@ -281,7 +343,15 @@ function keywordAdapter(args: {
     answer: string;
   } {
     const { datum, candidate } = args;
-    const answer = Object.values(candidate).join(" ").toLowerCase();
+    // The output, which is the candidate's text plus whatever the system got
+    // right unaided. Scoring the output rather than the candidate is what
+    // gives a harvest something to carry.
+    const recalled = recalls({ id: datum.id, reliability })
+      ? Object.values(datum.required).flat()
+      : [];
+    const answer = [...Object.values(candidate), ...recalled]
+      .join(" ")
+      .toLowerCase();
 
     const missing: string[] = [];
     let covered = 0;
@@ -323,6 +393,22 @@ function keywordAdapter(args: {
         .join(" "),
     };
   }
+}
+
+/**
+ * Whether the system answers this instance right without being shown how.
+ *
+ * A function of the instance alone, so a run is reproducible and two instances
+ * needing the same term can differ — which is the whole mechanism: the one it
+ * got right is harvestable, and showing it makes the one it got wrong right
+ * too.
+ */
+function recalls(args: { id: number; reliability: number }): boolean {
+  const { id, reliability } = args;
+  if (reliability === 0) {
+    return false;
+  }
+  return hash32(`recall:${id}`) % 1000 < reliability * 1000;
 }
 
 /**

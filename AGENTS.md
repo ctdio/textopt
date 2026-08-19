@@ -102,8 +102,17 @@ a simulated proposer that reads whichever evidence a prompt carries — written
 feedback, a score history, or neither — so what a run measures is the search
 rather than the prompt it happened to send.
 
+Three of the four tasks score the candidate's own text, which leaves a
+demonstration search nothing to harvest; `demonstrated` models a system that is
+right on some instances and wrong on others of the same kind, which is the only
+condition under which harvesting is a lever at all. When adding a task, check
+what a demo of it would carry: the bench datum holds the terms an answer needs,
+so rendering one with the default JSON renderer prints the answer key into the
+candidate and every harvesting entrant scores by reading it back. That is what
+`renderBenchDemo` exists to prevent.
+
 ```bash
-pnpm bench          # 3 tasks x 5 configurations x 10 seeds, ~2 minutes
+pnpm bench          # 4 tasks x 7 configurations x 20 seeds, a few minutes
 ```
 
 It rewrites `bench/results/latest.json`, which is committed: a diff there is the

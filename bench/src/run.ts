@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compare } from "textopt";
-import type { Comparison, OptimizerResult, TextModel } from "textopt";
+import type { Comparison, OptimizerResult } from "textopt";
+import { BootstrapSearchOptimizer } from "textopt/bootstrap-search";
 import {
   GepaOptimizer,
   lowerBoundEvaluationPolicy,
@@ -17,6 +18,7 @@ import {
   benchTasks,
   createBenchAdviser,
   createBenchReflector,
+  renderBenchDemo,
 } from "./tasks.js";
 
 type Entrant = (args: {
@@ -69,7 +71,7 @@ function entrants(task: BenchTask): Record<string, Entrant> {
         seed,
         minibatchSize: MINIBATCH,
         reflection: { maxCalls: task.maxReflectionCalls },
-      }).optimize(shared(task)),
+      }).optimize({ ...shared(task), reflect: createBenchReflector() }),
 
     // The same search, judged differently: accept only when the minibatch
     // improvement survives a sign-flip test, and pick the winner by a lower
@@ -82,6 +84,7 @@ function entrants(task: BenchTask): Record<string, Entrant> {
         acceptance: pairedPermutationAcceptance(),
       }).optimize({
         ...shared(task),
+        reflect: createBenchReflector(),
         valEvaluationPolicy: lowerBoundEvaluationPolicy(),
       }),
 
@@ -90,7 +93,7 @@ function entrants(task: BenchTask): Record<string, Entrant> {
         seed,
         maxReflectionCalls: task.maxReflectionCalls,
         scoringSetSize: MINIBATCH,
-      }).optimize(shared(task)),
+      }).optimize({ ...shared(task), reflect: createBenchReflector() }),
 
     mipro: ({ seed }) =>
       new MiproOptimizer({
@@ -98,7 +101,7 @@ function entrants(task: BenchTask): Record<string, Entrant> {
         minibatchSize: MINIBATCH,
         instructionsPerComponent: 8,
         maxTrials: task.maxReflectionCalls,
-      }).optimize(shared(task)),
+      }).optimize({ ...shared(task), reflect: createBenchReflector() }),
 
     // SIMBA is given the advice-shaped proposer instead: it appends per-component
     // rules rather than replacing an instruction, so it needs a model that
@@ -122,13 +125,31 @@ function entrants(task: BenchTask): Record<string, Entrant> {
     // Random search takes no seed: its variants come from `reflect` alone, so
     // against a deterministic model every seed produces the same run. Its
     // reported spread is zero by construction, not by luck.
-    randomSearch: () => new RandomSearchOptimizer({}).optimize(shared(task)),
+    randomSearch: () =>
+      new RandomSearchOptimizer({}).optimize({
+        ...shared(task),
+        reflect: createBenchReflector(),
+      }),
+
+    // The one entrant that calls no proposal model: it harvests the rollouts
+    // the metric rewarded and searches over which of them to show. On the three
+    // tasks whose output is a pure function of the candidate there is nothing
+    // in a rollout to harvest, and the row it scores there is what that looks
+    // like — the point of running it on all four rather than only where it wins.
+    bootstrapSearch: ({ seed }) =>
+      new BootstrapSearchOptimizer({ seed, maxDemos: 4 }).optimize({
+        ...shared(task),
+        demoComponents: task.demoComponents,
+        renderDemo: renderBenchDemo,
+      }),
   };
 }
 
 /**
- * A fresh reflector per run. Its rotation is state, so sharing one across runs
- * would make each result depend on the runs before it.
+ * The parts of a task every entrant is given identically. The proposal model is
+ * not among them: it is built at each call site instead, because its rotation is
+ * state and one shared across runs would make each result depend on the runs
+ * before it — and because the demonstration search takes none at all.
  */
 function shared(task: BenchTask): {
   seedCandidate: BenchTask["seedCandidate"];
@@ -137,7 +158,6 @@ function shared(task: BenchTask): {
   testSet: readonly BenchDatum[];
   maxMetricCalls: number;
   adapter: BenchTask["adapter"];
-  reflect: TextModel;
 } {
   return {
     seedCandidate: task.seedCandidate,
@@ -146,7 +166,6 @@ function shared(task: BenchTask): {
     testSet: task.testSet,
     maxMetricCalls: task.maxMetricCalls,
     adapter: task.adapter,
-    reflect: createBenchReflector(),
   };
 }
 

@@ -71,6 +71,17 @@
             "meanMetricCalls": 156,
             "meanCostUsd": 0,
             "pValueVsWinner": 0.000004834326119418364
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "runs": 20,
+            "meanScore": 0,
+            "sdScore": 0,
+            "minScore": 0,
+            "maxScore": 0,
+            "meanMetricCalls": 188,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000004168681066563096
           }
         ],
         "runs": [
@@ -1273,6 +1284,206 @@
             "metricCalls": 156,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 0,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 1,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 2,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 3,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 4,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 5,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 6,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 7,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 8,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 9,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 10,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 11,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 12,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 13,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 14,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 15,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 16,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 17,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 18,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 19,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
           }
         ]
       }
@@ -1346,6 +1557,17 @@
             "meanMetricCalls": 156,
             "meanCostUsd": 0,
             "pValueVsWinner": 0.000041521872662375614
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "runs": 20,
+            "meanScore": 0.03920250000000001,
+            "sdScore": 0.02101419408566923,
+            "minScore": 0.01203333333333334,
+            "maxScore": 0.0816,
+            "meanMetricCalls": 195.1,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.00000717848578335456
           }
         ],
         "runs": [
@@ -2548,6 +2770,206 @@
             "metricCalls": 156,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 0,
+            "score": 0.05678333333333333,
+            "bestScore": 0.10646666666666665,
+            "testScore": 0.05678333333333333,
+            "metricCalls": 193,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 1,
+            "score": 0.02638333333333333,
+            "bestScore": 0.06356666666666667,
+            "testScore": 0.02638333333333333,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 2,
+            "score": 0.0311,
+            "bestScore": 0.07216666666666667,
+            "testScore": 0.0311,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 3,
+            "score": 0.04013333333333333,
+            "bestScore": 0.08130000000000001,
+            "testScore": 0.04013333333333333,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 4,
+            "score": 0.0311,
+            "bestScore": 0.07216666666666667,
+            "testScore": 0.0311,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 5,
+            "score": 0.04203333333333333,
+            "bestScore": 0.06558333333333333,
+            "testScore": 0.04203333333333333,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 6,
+            "score": 0.014883333333333333,
+            "bestScore": 0.07043333333333333,
+            "testScore": 0.014883333333333333,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 7,
+            "score": 0.04755,
+            "bestScore": 0.06513333333333333,
+            "testScore": 0.04755,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 8,
+            "score": 0.06198333333333334,
+            "bestScore": 0.07271666666666668,
+            "testScore": 0.06198333333333334,
+            "metricCalls": 197,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 9,
+            "score": 0.06836666666666667,
+            "bestScore": 0.05941666666666667,
+            "testScore": 0.06836666666666667,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 10,
+            "score": 0.04683333333333334,
+            "bestScore": 0.12248333333333335,
+            "testScore": 0.04683333333333334,
+            "metricCalls": 194,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 11,
+            "score": 0.04655000000000001,
+            "bestScore": 0.06015000000000001,
+            "testScore": 0.04655000000000001,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 12,
+            "score": 0.06978333333333334,
+            "bestScore": 0.08496666666666669,
+            "testScore": 0.06978333333333334,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 13,
+            "score": 0.014883333333333333,
+            "bestScore": 0.07043333333333333,
+            "testScore": 0.014883333333333333,
+            "metricCalls": 197,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 14,
+            "score": 0.01203333333333334,
+            "bestScore": 0.08678333333333332,
+            "testScore": 0.01203333333333334,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 15,
+            "score": 0.019766666666666672,
+            "bestScore": 0.05898333333333334,
+            "testScore": 0.019766666666666672,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 16,
+            "score": 0.014883333333333333,
+            "bestScore": 0.07043333333333333,
+            "testScore": 0.014883333333333333,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 17,
+            "score": 0.04251666666666667,
+            "bestScore": 0.07148333333333333,
+            "testScore": 0.04251666666666667,
+            "metricCalls": 194,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 18,
+            "score": 0.0816,
+            "bestScore": 0.06786666666666667,
+            "testScore": 0.0816,
+            "metricCalls": 194,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 19,
+            "score": 0.014883333333333333,
+            "bestScore": 0.07043333333333333,
+            "testScore": 0.014883333333333333,
+            "metricCalls": 193,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
           }
         ]
       }
@@ -2619,6 +3041,17 @@
             "minScore": 0.235,
             "maxScore": 0.235,
             "meanMetricCalls": 204,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000003875557189836343
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "runs": 20,
+            "meanScore": 0,
+            "sdScore": 0,
+            "minScore": 0,
+            "maxScore": 0,
+            "meanMetricCalls": 216,
             "meanCostUsd": 0,
             "pValueVsWinner": 0.000003875557189836343
           }
@@ -3821,6 +4254,1692 @@
             "bestScore": 0.3133333333333333,
             "testScore": 0.235,
             "metricCalls": 204,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 0,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 1,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 2,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 3,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 4,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 5,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 6,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 7,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 8,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 9,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 10,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 11,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 12,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 13,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 14,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 15,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 16,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 17,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 18,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 19,
+            "score": 0,
+            "bestScore": 0,
+            "testScore": 0,
+            "metricCalls": 216,
+            "costUsd": 0,
+            "stopReason": "candidatesExhausted"
+          }
+        ]
+      }
+    },
+    {
+      "task": "demonstrated",
+      "comparison": {
+        "winner": "gepa",
+        "summaries": [
+          {
+            "entrant": "gepa",
+            "runs": 20,
+            "meanScore": 0.7916666666666664,
+            "sdScore": 2.278129578503827e-16,
+            "minScore": 0.7916666666666666,
+            "maxScore": 0.7916666666666666,
+            "meanMetricCalls": 182.1,
+            "meanCostUsd": 0
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "runs": 20,
+            "meanScore": 0.3333333333333332,
+            "sdScore": 1.1390647892519134e-16,
+            "minScore": 0.3333333333333333,
+            "maxScore": 0.3333333333333333,
+            "meanMetricCalls": 180.7,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000003875557189836343
+          },
+          {
+            "entrant": "opro",
+            "runs": 20,
+            "meanScore": 0.49937499999999996,
+            "sdScore": 0.02020522448504911,
+            "minScore": 0.4799999999999999,
+            "maxScore": 0.5216666666666666,
+            "meanMetricCalls": 198,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000004063112990726481
+          },
+          {
+            "entrant": "mipro",
+            "runs": 20,
+            "meanScore": 0.44083333333333324,
+            "sdScore": 0,
+            "minScore": 0.44083333333333324,
+            "maxScore": 0.44083333333333324,
+            "meanMetricCalls": 193.55,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000003875557189836343
+          },
+          {
+            "entrant": "simba",
+            "runs": 20,
+            "meanScore": 0.5355833333333335,
+            "sdScore": 0.05287501814524181,
+            "minScore": 0.4016666666666666,
+            "maxScore": 0.625,
+            "meanMetricCalls": 194.6,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.00000582435285378935
+          },
+          {
+            "entrant": "randomSearch",
+            "runs": 20,
+            "meanScore": 0.48249999999999993,
+            "sdScore": 0,
+            "minScore": 0.48249999999999993,
+            "maxScore": 0.48249999999999993,
+            "meanMetricCalls": 156,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.000003875557189836343
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "runs": 20,
+            "meanScore": 0.5979166666666667,
+            "sdScore": 0.038887583520280385,
+            "minScore": 0.5416666666666666,
+            "maxScore": 0.6666666666666666,
+            "meanMetricCalls": 194.6,
+            "meanCostUsd": 0,
+            "pValueVsWinner": 0.0000056997641945111255
+          }
+        ],
+        "runs": [
+          {
+            "entrant": "gepa",
+            "seed": 0,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 1,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 2,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 3,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 4,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 5,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 6,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 7,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 8,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 9,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 10,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 11,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 12,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 13,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 14,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 15,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 16,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 17,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 18,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepa",
+            "seed": 19,
+            "score": 0.7916666666666666,
+            "bestScore": 1,
+            "testScore": 0.7916666666666666,
+            "metricCalls": 186,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 0,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 182,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 1,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 178,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 2,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 181,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 3,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 180,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 4,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 184,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 5,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 178,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 6,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 181,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 7,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 183,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 8,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 178,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 9,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 184,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 10,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 178,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 11,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 182,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 12,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 184,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 13,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 184,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 14,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 182,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 15,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 181,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 16,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 177,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 17,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 179,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 18,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 177,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "gepaVarianceAware",
+            "seed": 19,
+            "score": 0.3333333333333333,
+            "bestScore": 0.4166666666666667,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 181,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 0,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6416666666666665,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 1,
+            "score": 0.5191666666666666,
+            "bestScore": 0.6441666666666666,
+            "testScore": 0.5191666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 2,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6049999999999999,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 3,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6466666666666666,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 4,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6049999999999999,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 5,
+            "score": 0.4799999999999999,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.4799999999999999,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 6,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6466666666666666,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 7,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6416666666666665,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 8,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6466666666666666,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 9,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6024999999999999,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 10,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6466666666666666,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 11,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6833333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 12,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6833333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 13,
+            "score": 0.5191666666666666,
+            "bestScore": 0.6441666666666666,
+            "testScore": 0.5191666666666666,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 14,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6833333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 15,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6833333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 16,
+            "score": 0.4799999999999999,
+            "bestScore": 0.6024999999999999,
+            "testScore": 0.4799999999999999,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 17,
+            "score": 0.4799999999999999,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.4799999999999999,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 18,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6833333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "opro",
+            "seed": 19,
+            "score": 0.4799999999999999,
+            "bestScore": 0.6024999999999999,
+            "testScore": 0.4799999999999999,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 0,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 194,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 1,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 2,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 193,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 3,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 193,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 4,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 190,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 5,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 6,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 7,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 8,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 9,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 199,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 10,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 11,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 12,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 190,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 13,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 195,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 14,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 191,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 15,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 16,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 17,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 195,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 18,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "maxTrials"
+          },
+          {
+            "entrant": "mipro",
+            "seed": 19,
+            "score": 0.44083333333333324,
+            "bestScore": 0.5633333333333332,
+            "testScore": 0.44083333333333324,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 0,
+            "score": 0.5416666666666666,
+            "bestScore": 0.7083333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 1,
+            "score": 0.5608333333333332,
+            "bestScore": 0.6858333333333332,
+            "testScore": 0.5608333333333332,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 2,
+            "score": 0.5,
+            "bestScore": 0.7083333333333334,
+            "testScore": 0.5,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 3,
+            "score": 0.5,
+            "bestScore": 0.6666666666666666,
+            "testScore": 0.5,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 4,
+            "score": 0.625,
+            "bestScore": 0.7916666666666666,
+            "testScore": 0.625,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 5,
+            "score": 0.5416666666666666,
+            "bestScore": 0.75,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 6,
+            "score": 0.5416666666666666,
+            "bestScore": 0.6666666666666666,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 7,
+            "score": 0.5,
+            "bestScore": 0.6666666666666666,
+            "testScore": 0.5,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 8,
+            "score": 0.5416666666666666,
+            "bestScore": 0.625,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 9,
+            "score": 0.5,
+            "bestScore": 0.625,
+            "testScore": 0.5,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 10,
+            "score": 0.5416666666666666,
+            "bestScore": 0.7083333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 11,
+            "score": 0.5833333333333334,
+            "bestScore": 0.75,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 12,
+            "score": 0.5216666666666666,
+            "bestScore": 0.6466666666666666,
+            "testScore": 0.5216666666666666,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 13,
+            "score": 0.5416666666666666,
+            "bestScore": 0.7083333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 14,
+            "score": 0.5833333333333334,
+            "bestScore": 0.75,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 15,
+            "score": 0.4583333333333333,
+            "bestScore": 0.625,
+            "testScore": 0.4583333333333333,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 16,
+            "score": 0.5191666666666666,
+            "bestScore": 0.725,
+            "testScore": 0.5191666666666666,
+            "metricCalls": 192,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 17,
+            "score": 0.625,
+            "bestScore": 0.875,
+            "testScore": 0.625,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 18,
+            "score": 0.5833333333333334,
+            "bestScore": 0.8333333333333334,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "simba",
+            "seed": 19,
+            "score": 0.4016666666666666,
+            "bestScore": 0.5241666666666666,
+            "testScore": 0.4016666666666666,
+            "metricCalls": 196,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 0,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 1,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 2,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 3,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 4,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 5,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 6,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 7,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 8,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 9,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 10,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 11,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 12,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 13,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 14,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 15,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 16,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 17,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 18,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "randomSearch",
+            "seed": 19,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6808333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 156,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 0,
+            "score": 0.6666666666666666,
+            "bestScore": 0.625,
+            "testScore": 0.6666666666666666,
+            "metricCalls": 197,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 1,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 2,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 3,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 191,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 4,
+            "score": 0.6666666666666666,
+            "bestScore": 0.625,
+            "testScore": 0.6666666666666666,
+            "metricCalls": 193,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 5,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 6,
+            "score": 0.5833333333333334,
+            "bestScore": 0.5416666666666666,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 194,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 7,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 8,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 198,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 9,
+            "score": 0.625,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.625,
+            "metricCalls": 199,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 10,
+            "score": 0.6666666666666666,
+            "bestScore": 0.625,
+            "testScore": 0.6666666666666666,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 11,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 12,
+            "score": 0.5416666666666666,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 197,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 13,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 14,
+            "score": 0.5416666666666666,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 15,
+            "score": 0.5416666666666666,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 200,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 16,
+            "score": 0.625,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.625,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 17,
+            "score": 0.625,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.625,
+            "metricCalls": 189,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 18,
+            "score": 0.625,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.625,
+            "metricCalls": 188,
+            "costUsd": 0,
+            "stopReason": "budgetExhausted"
+          },
+          {
+            "entrant": "bootstrapSearch",
+            "seed": 19,
+            "score": 0.5833333333333334,
+            "bestScore": 0.625,
+            "testScore": 0.5833333333333334,
+            "metricCalls": 193,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           }
