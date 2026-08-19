@@ -17,23 +17,26 @@
     "bootstrap": "tsx --env-file-if-exists=../.env src/09-bootstrap-demos.ts",
     "compare": "tsx --env-file-if-exists=../.env src/10-compare-optimizers.ts",
     "judge": "tsx --env-file-if-exists=../.env src/11-judge-scoring.ts",
-    "pipeline": "tsx --env-file-if-exists=../.env src/12-pipeline-modules.ts"
+    "pipeline": "tsx --env-file-if-exists=../.env src/12-pipeline-modules.ts",
+    "langsmith": "tsx --env-file-if-exists=../.env src/13-langsmith-experiments.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.39",
     "@ai-sdk/openai": "^4.0.42",
     "@anthropic-ai/sdk": "^0.117.1",
-    "textopt": "workspace:*",
-    "@textopt/ai-sdk": "workspace:*",
-    "@textopt/braintrust": "workspace:*",
-    "@textopt/langchain": "workspace:*",
     "@langchain/anthropic": "^1.5.6",
     "@langchain/core": "^1.2.8",
     "@langchain/openai": "^1.5.8",
+    "@textopt/ai-sdk": "workspace:*",
+    "@textopt/braintrust": "workspace:*",
+    "@textopt/langchain": "workspace:*",
+    "@textopt/langsmith": "workspace:*",
     "ai": "^7.0.66",
     "autoevals": "^0.3.0",
     "braintrust": "^3.27.0",
-    "openai": "^7.4.0"
+    "langsmith": "^0.8.12",
+    "openai": "^7.4.0",
+    "textopt": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.23.12"

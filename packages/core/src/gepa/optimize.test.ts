@@ -297,7 +297,7 @@ describe("optimize", () => {
       adapter: createKeywordAdapter(),
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     expect(events[0]?.type).toBe("start");
@@ -305,6 +305,217 @@ describe("optimize", () => {
     expect(events.some((event) => event.type === "candidateAccepted")).toBe(
       true,
     );
+  });
+
+  test("reports the frontier row an accepted candidate contributed", async () => {
+    // An aggregate says a candidate improved. The row says which instances it
+    // won and which it paid for, which is the whole basis of Pareto selection
+    // and the only view that shows a trade rather than a number.
+    const rows = new Map<number, readonly (number | undefined)[]>();
+
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              rows.set(event.candidateId, event.instanceScores);
+            }
+          },
+        },
+      ],
+    });
+
+    for (const record of result.candidates) {
+      expect(rows.get(record.id)).toEqual(record.instanceScores);
+    }
+  });
+
+  test("reports the text an accepted candidate was accepted for", async () => {
+    const texts = new Map<number, Candidate>();
+
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              texts.set(event.candidateId, event.candidate);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(texts.get(result.bestCandidateId)).toEqual(result.bestCandidate);
+  });
+
+  test("reports what an accepted candidate produced when outputs are tracked", async () => {
+    let outputs: readonly unknown[] | undefined;
+
+    await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+      trackBestOutputs: true,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              outputs = event.outputs;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(outputs).toHaveLength(KEYWORD_EXAMPLES.length);
+  });
+
+  test("omits accepted outputs when the run is not tracking them", async () => {
+    let seen = 0;
+    let withOutputs = 0;
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              seen += 1;
+              withOutputs += event.outputs === undefined ? 0 : 1;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(seen).toBeGreaterThan(0);
+    expect(withOutputs).toBe(0);
+  });
+
+  test("gives every reporter the same events", async () => {
+    const first: GepaEvent[] = [];
+    const second: GepaEvent[] = [];
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        { onEvent: (event) => first.push(event) },
+        { onEvent: (event) => second.push(event) },
+      ],
+    });
+
+    expect(first).toHaveLength(second.length);
+    expect(first.map((event) => event.type)).toEqual(
+      second.map((event) => event.type),
+    );
+  });
+
+  test("finishes the search when a reporter throws", async () => {
+    // A reporter observes the search. A logging endpoint being down is not a
+    // reason for the run that pays for rollouts to fail.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const survivor: GepaEvent[] = [];
+
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        {
+          onEvent: () => {
+            throw new Error("logging endpoint is down");
+          },
+        },
+        { onEvent: (event) => survivor.push(event) },
+      ],
+    });
+
+    expect(result.stopReason).toBe("budgetExhausted");
+    expect(survivor.at(-1)?.type).toBe("finish");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test("flushes every reporter once the run ends", async () => {
+    const flushed: string[] = [];
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 100,
+      reporters: [
+        { flush: async () => void flushed.push("first") },
+        { flush: async () => void flushed.push("second") },
+      ],
+    });
+
+    expect(flushed.sort()).toEqual(["first", "second"]);
+  });
+
+  test("flushes reporters when the run ends by throwing", async () => {
+    // The run that dies mid-search is the one whose buffered events are worth
+    // the most, and the one that never reaches its last line.
+    let flushed = false;
+
+    await expect(
+      new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+        seedCandidate: SEED,
+        trainingSet: KEYWORD_EXAMPLES,
+        adapter: {
+          ...createKeywordAdapter(),
+          evaluate: () => {
+            throw new Error("provider is down");
+          },
+        },
+        reflect: createKeywordReflector(),
+        maxMetricCalls: 100,
+        reporters: [
+          {
+            flush: async () => {
+              flushed = true;
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("provider is down");
+
+    expect(flushed).toBe(true);
   });
 
   test("stops when the abort signal fires", async () => {
@@ -320,11 +531,15 @@ describe("optimize", () => {
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
       signal: controller.signal,
-      onEvent: (event) => {
-        if (event.type === "candidateAccepted") {
-          controller.abort();
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              controller.abort();
+            }
+          },
+        },
+      ],
     });
 
     expect(result.stopReason).toBe("aborted");
@@ -619,7 +834,7 @@ describe("optimize", () => {
       merge: { enabled: true },
     }).optimize({
       ...mergeRunwayTask(),
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     const merged = events.flatMap((event) =>
@@ -649,7 +864,7 @@ describe("optimize", () => {
       merge: { enabled: true },
     }).optimize({
       ...mergeRunwayTask(),
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     const merged = events.flatMap((event) =>
@@ -814,11 +1029,15 @@ describe("optimize", () => {
       },
       reflect: createKeywordReflector(),
       maxMetricCalls: 100,
-      onEvent: (event) => {
-        if (event.type === "error") {
-          errorEvents += 1;
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "error") {
+              errorEvents += 1;
+            }
+          },
+        },
+      ],
     });
 
     expect(errorEvents).toBe(3);
@@ -1477,7 +1696,7 @@ describe("optimize", () => {
       reflect: createKeywordReflector(),
       maxMetricCalls: 500,
       valEvaluationPolicy: subsampledEvaluationPolicy({ size: 2 }),
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     const validations = events.filter(
@@ -1922,7 +2141,7 @@ describe("optimize proposals", () => {
       ...config,
     }).optimize({
       ...task,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     expect(countProposals(events, 0)).toBe(1);
@@ -1936,7 +2155,7 @@ describe("optimize proposals", () => {
       proposals: { perIteration: 3 },
     }).optimize({
       ...task,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     expect(countProposals(events, 0)).toBe(3);
@@ -1976,12 +2195,12 @@ describe("optimize proposals", () => {
       proposals: { perIteration: 3, selection: "best" },
     }).optimize({
       ...task,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
-    const accepted = events.filter(
-      (event) => event.type === "candidateAccepted",
-    );
+    const accepted = events
+      .filter((event) => event.type === "candidateAccepted")
+      .filter((event) => event.source !== "seed");
     const iterations = accepted.map((event) => event.iteration);
 
     expect(accepted.length).toBeGreaterThan(0);
@@ -1996,7 +2215,7 @@ describe("optimize proposals", () => {
       proposals: { perIteration: 3, selection: "all" },
     }).optimize({
       ...task,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
     const perIteration = new Map<number, number>();
@@ -2021,12 +2240,12 @@ describe("optimize proposals", () => {
       proposals: { perIteration: 3, selection: "best" },
     }).optimize({
       ...task,
-      onEvent: (event) => events.push(event),
+      reporters: [{ onEvent: (event) => events.push(event) }],
     });
 
-    const accepted = events.filter(
-      (event) => event.type === "candidateAccepted",
-    );
+    const accepted = events
+      .filter((event) => event.type === "candidateAccepted")
+      .filter((event) => event.source !== "seed");
     const passedOver = events.filter(
       (event) =>
         event.type === "candidateRejected" && event.reason === "notSelected",
@@ -2430,16 +2649,20 @@ describe("optimize held-out evaluation", () => {
     await new GepaOptimizer(config).optimize({
       ...task,
       testSet: TESTSET,
-      onEvent: (event) => {
-        if (event.type === "evaluation" && event.phase === "test") {
-          phases.push({
-            iteration: event.iteration,
-            phase: event.phase,
-            split: "test",
-            candidateId: event.candidateId,
-          });
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "evaluation" && event.phase === "test") {
+              phases.push({
+                iteration: event.iteration,
+                phase: event.phase,
+                split: "test",
+                candidateId: event.candidateId,
+              });
+            }
+          },
+        },
+      ],
     });
 
     expect(phases).toHaveLength(1);
@@ -2452,14 +2675,127 @@ describe("optimize held-out evaluation", () => {
     const result = await new GepaOptimizer(config).optimize({
       ...task,
       testSet: TESTSET,
-      onEvent: (event) => {
-        if (event.type === "finish") {
-          finished = event;
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              finished = event;
+            }
+          },
+        },
+      ],
     });
 
     expect(finished?.testScore).toBe(result.testScore);
+  });
+
+  test("reports the held-out score for every instance, not just the mean", async () => {
+    let finished: GepaEvent | undefined;
+
+    await new GepaOptimizer(config).optimize({
+      ...task,
+      testSet: TESTSET,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              finished = event;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(finished?.type).toBe("finish");
+    expect(
+      finished?.type === "finish" ? finished.testInstanceScores : undefined,
+    ).toEqual([1, 0]);
+  });
+
+  test("leaves a held-out instance an infrastructure failure lost unknown", async () => {
+    // Reported as a zero it reads as the winner failing an instance it was
+    // never actually measured on, which is the one thing a held-out number is
+    // supposed to be trustworthy about.
+    const adapter = createKeywordAdapter();
+    let finished: GepaEvent | undefined;
+
+    const result = await new GepaOptimizer(config).optimize({
+      ...task,
+      adapter: {
+        ...adapter,
+        evaluate: async (args) => {
+          const evaluation = await adapter.evaluate(args);
+          if (args.run.split !== "test") {
+            return evaluation;
+          }
+          return {
+            ...evaluation,
+            scores: evaluation.scores.map(() => 0),
+            transient: args.batch.map((_datum, index) => index === 0),
+          };
+        },
+      },
+      testSet: TESTSET,
+      retry: { attempts: 0 },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              finished = event;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(
+      finished?.type === "finish" ? finished.testInstanceScores : undefined,
+    ).toEqual([undefined, 0]);
+    expect(result.testScore).toBe(0);
+  });
+
+  test("reports what the winner produced on held-out instances when outputs are tracked", async () => {
+    let finished: GepaEvent | undefined;
+
+    await new GepaOptimizer({ ...config, trackBestOutputs: true }).optimize({
+      ...task,
+      testSet: TESTSET,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              finished = event;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(
+      finished?.type === "finish" ? finished.testOutputs : undefined,
+    ).toHaveLength(TESTSET.length);
+  });
+
+  test("omits held-out outputs when the run is not tracking them", async () => {
+    let finished: GepaEvent | undefined;
+
+    await new GepaOptimizer(config).optimize({
+      ...task,
+      testSet: TESTSET,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              finished = event;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(
+      finished?.type === "finish" ? finished.testOutputs : undefined,
+    ).toBeUndefined();
   });
 
   test("refuses an empty testSet rather than reporting a meaningless zero", async () => {

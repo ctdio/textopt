@@ -109,7 +109,7 @@ const result = await new GepaOptimizer({
   // which is text in and text out and carries no usage, so their spend is real
   // and outside this number.
   maxCostUsd: 5,
-  onEvent: logEvent,
+  reporters: [{ onEvent: logEvent }],
 });
 
 printResult(result);

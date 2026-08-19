@@ -40,6 +40,7 @@ export type {
   ComponentSelector,
   GepaAdapter,
   GepaEvent,
+  GepaReporter,
   GepaSnapshot,
   GepaStopReason,
   MakeReflectiveDatasetArgs,

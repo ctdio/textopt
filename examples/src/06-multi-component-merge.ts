@@ -141,7 +141,7 @@ const result = await gepa.optimize({
   reflect,
   maxMetricCalls: 120,
   instanceId: ({ datum }) => datum.id,
-  onEvent: logEvent,
+  reporters: [{ onEvent: logEvent }],
 });
 
 printResult(result);

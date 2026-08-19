@@ -23,6 +23,7 @@ packages/core        the substrate and every optimizer
   src/file-cache.ts      "./file-cache"         the only entry point using node:fs
   src/testing.ts         "./testing"            fixtures shared by tests
 packages/ai-sdk, packages/braintrust, packages/langchain    adapters
+packages/langsmith                                          run reporting
 examples/                                                   runnable scripts
 bench/                                                      offline seed sweeps
 docs/                                                       long-form guides

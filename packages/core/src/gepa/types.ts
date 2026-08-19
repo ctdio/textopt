@@ -213,6 +213,21 @@ export type GepaEvent<K extends string = string> =
       parentIds: number[];
       aggregateScore: number;
       source: CandidateSource;
+      /** The text that scored, so a move is readable next to the edit. */
+      candidate: Candidate<K>;
+      /**
+       * The row this candidate contributed to the frontier, aligned with the
+       * validation set. `undefined` marks an instance the evaluation policy
+       * did not select — unknown, not zero.
+       *
+       * Handed out by reference rather than copied: a run emits this once per
+       * accepted candidate, and copying a validation-set-sized array that
+       * often to guard against a listener that writes to it costs every run to
+       * protect a listener that should not exist.
+       */
+      instanceScores: readonly (number | undefined)[];
+      /** Aligned with `instanceScores`. Present only under `trackBestOutputs`. */
+      outputs?: readonly unknown[];
     }
   | {
       type: "candidateRejected";
@@ -236,7 +251,37 @@ export type GepaEvent<K extends string = string> =
       metricCalls: number;
       /** The winner's held-out score, when a testSet was given. */
       testScore?: number;
+      /**
+       * The winner's per-instance held-out scores, aligned with the testSet
+       * and present whenever `testScore` is. `undefined` marks an instance an
+       * infrastructure failure left unmeasured, which is what `testScore`
+       * averages over too.
+       *
+       * The mean is the number selection never saw; this is where the gap
+       * below `bestScore` came from.
+       */
+      testInstanceScores?: readonly (number | undefined)[];
+      /** Aligned with `testInstanceScores`. Only under `trackBestOutputs`. */
+      testOutputs?: readonly unknown[];
     };
+
+/**
+ * Where a run's progress goes. Observability only: persisting a run so it can
+ * be resumed is `onCheckpoint`, which is durability and a separate concern.
+ */
+export interface GepaReporter<K extends string = string> {
+  /**
+   * Called on the search's hot path, synchronously. A reporter that ships
+   * anywhere over a network buffers here and uploads in `flush`, or it charges
+   * every iteration for its latency.
+   *
+   * A reporter that throws is warned about and skipped: observability never
+   * fails a run.
+   */
+  onEvent?: (event: GepaEvent<K>) => void;
+  /** Awaited once as the run ends, including when it ends by throwing. */
+  flush?: () => Promise<void>;
+}
 
 /**
  * Everything needed to continue a run: the candidate pool with its scores, the

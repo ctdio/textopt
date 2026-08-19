@@ -128,7 +128,7 @@ const result = await new GepaOptimizer({
   adapter,
   reflect,
   maxMetricCalls: 90,
-  onEvent: logEvent,
+  reporters: [{ onEvent: logEvent }],
 });
 
 printResult(result);

@@ -55,6 +55,7 @@ import type {
   ComponentSelector,
   GepaAdapter,
   GepaEvent,
+  GepaReporter,
   GepaSnapshot,
   GepaStopReason,
   RejectedProposal,
@@ -218,7 +219,13 @@ export interface GepaTask<
    * counts against a reference run directly.
    */
   cache?: EvaluationCache | false;
-  onEvent?: (event: GepaEvent<NoInfer<K>>) => void;
+  /**
+   * Where the run's events go. An array because a run usually has more than
+   * one audience — a progress line on the terminal and a permanent record
+   * somewhere else — and teeing one callback by hand is how one of them ends
+   * up silently dropped.
+   */
+  reporters?: readonly GepaReporter<NoInfer<K>>[];
   /**
    * Called with a resumable snapshot after the seed is scored and after every
    * iteration. Persist it and a killed run costs the last iteration, not all
@@ -316,7 +323,14 @@ export class GepaOptimizer implements Optimizer<GepaStopReason> {
   >(
     task: GepaTask<Datum, Trajectory, Output, K>,
   ): Promise<GepaResult<K, Output>> {
-    return runGepa({ config: this.#config, task });
+    try {
+      return await runGepa({ config: this.#config, task });
+    } finally {
+      // In a finally rather than after the run: a reporter that buffers has
+      // the most to say about a run that aborted or threw, and that is exactly
+      // the run that never reaches its last line.
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -364,7 +378,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
@@ -498,7 +512,40 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   let lastIterationAccepted = resumeFrom?.merge.lastIterationAccepted ?? false;
 
   function emit(event: GepaEvent<K>): void {
-    onEvent?.(event);
+    for (const reporter of reporters) {
+      try {
+        reporter.onEvent?.(event);
+      } catch (err) {
+        // A reporter is an observer of the search, never a participant in it:
+        // a logging endpoint that is down must not decide a run's outcome.
+        console.warn("[textopt] reporter threw while handling an event", {
+          type: event.type,
+          err,
+        });
+      }
+    }
+  }
+
+  /**
+   * Everything an acceptance means, in one event: the text, the aggregate, and
+   * the row it put on the frontier. Emitted from one place because the merge
+   * path and the mutation path accept candidates separately, and a payload
+   * assembled twice is a payload that drifts.
+   */
+  function emitAccepted(record: CandidateRecord<K>): void {
+    const outputs = outputsByCandidate.get(record.id);
+
+    emit({
+      type: "candidateAccepted",
+      iteration,
+      candidateId: record.id,
+      parentIds: record.parentIds,
+      aggregateScore: record.aggregateScore,
+      source: record.source,
+      candidate: record.candidate,
+      instanceScores: record.instanceScores,
+      ...(outputs === undefined ? {} : { outputs }),
+    });
   }
 
   /**
@@ -742,13 +789,18 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       phase: "seed",
       candidateId: 0,
     });
-    addCandidate({
-      candidate: seedCandidate,
-      parentIds: [],
-      evaluation: seedEvaluation,
-      source: "seed",
-      updatedComponents: [],
-    });
+    // Announced like any other candidate: it is the baseline every later
+    // acceptance is read against, and a reporter that never hears about it has
+    // a run whose first row is missing.
+    emitAccepted(
+      addCandidate({
+        candidate: seedCandidate,
+        parentIds: [],
+        evaluation: seedEvaluation,
+        source: "seed",
+        updatedComponents: [],
+      }),
+    );
     lastIterationAccepted = false;
     mergesDue = 0;
     await checkpoint();
@@ -889,14 +941,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     mergesDue -= 1;
     totalMergesTested += 1;
 
-    emit({
-      type: "candidateAccepted",
-      iteration,
-      candidateId: record.id,
-      parentIds: record.parentIds,
-      aggregateScore: record.aggregateScore,
-      source: "merge",
-    });
+    emitAccepted(record);
     return "attempted";
   }
 
@@ -1230,14 +1275,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
         source: "mutation",
         updatedComponents: componentNames(item.outcome.proposed),
       });
-      emit({
-        type: "candidateAccepted",
-        iteration,
-        candidateId: record.id,
-        parentIds: record.parentIds,
-        aggregateScore: record.aggregateScore,
-        source: "mutation",
-      });
+      emitAccepted(record);
     }
 
     return stop;
@@ -1372,20 +1410,19 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
 
   // Run after the winner is chosen, never before: an evaluation the selection
   // could read would make the held-out set another validation set.
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluateCached({
-            candidate: best.candidate,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: bestCandidateId,
-            charge: false,
-          }),
-        );
+      : await evaluateCached({
+          candidate: best.candidate,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: bestCandidateId,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
   emit({
     type: "finish",
@@ -1393,6 +1430,12 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     bestCandidateId,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: unmeasuredAsUnknown(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   const perObjectiveBest = collectPerObjectiveBest(records);
@@ -1420,6 +1463,38 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     stopReason,
     snapshot: takeSnapshot(),
   };
+}
+
+async function flushReporters<K extends string>(
+  reporters: readonly GepaReporter<K>[],
+): Promise<void> {
+  await Promise.all(
+    reporters.map(async (reporter) => {
+      try {
+        await reporter.flush?.();
+      } catch (err) {
+        console.warn("[textopt] reporter threw while flushing", { err });
+      }
+    }),
+  );
+}
+
+/**
+ * A scored batch as the per-instance row a reporter should read: an instance
+ * an infrastructure failure left unmeasured becomes `undefined` rather than
+ * the zero the adapter reported for it.
+ *
+ * The same distinction `measuredMean` makes when it averages, and the same one
+ * `CandidateRecord.instanceScores` carries — a row of zeros and a row of
+ * unknowns describe very different runs.
+ */
+function unmeasuredAsUnknown(batch: {
+  scores: readonly number[];
+  transient: readonly boolean[];
+}): (number | undefined)[] {
+  return batch.scores.map((score, index) =>
+    batch.transient[index] === true ? undefined : score,
+  );
 }
 
 /**

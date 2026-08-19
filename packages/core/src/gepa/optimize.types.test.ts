@@ -83,7 +83,7 @@ test("infers component names from the seed candidate", async () => {
     batchSampler: createEpochShuffledSampler({ minibatchSize: 1 }),
     valEvaluationPolicy: fullEvaluationPolicy(),
     instanceId: ({ datum }) => datum.id,
-    onEvent: (event) => events.push(event),
+    reporters: [{ onEvent: (event) => events.push(event) }],
   });
 
   result.bestCandidate.systemPrompt satisfies string;

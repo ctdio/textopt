@@ -34,18 +34,22 @@ const result = await gepa.optimize({
   adapter: createKeywordAdapter(),
   reflect: createKeywordReflector(),
   maxMetricCalls: 120,
-  onEvent: (event) => {
-    if (event.type === "candidateAccepted") {
-      console.log(
-        `  accepted #${event.candidateId} (${event.source}) score=${event.aggregateScore.toFixed(3)}`,
-      );
-    }
-    if (event.type === "candidateRejected") {
-      console.log(
-        `  rejected child of #${event.parentId}: ${event.childScore.toFixed(3)} <= ${event.parentScore.toFixed(3)}`,
-      );
-    }
-  },
+  reporters: [
+    {
+      onEvent: (event) => {
+        if (event.type === "candidateAccepted") {
+          console.log(
+            `  accepted #${event.candidateId} (${event.source}) score=${event.aggregateScore.toFixed(3)}`,
+          );
+        }
+        if (event.type === "candidateRejected") {
+          console.log(
+            `  rejected child of #${event.parentId}: ${event.childScore.toFixed(3)} <= ${event.parentScore.toFixed(3)}`,
+          );
+        }
+      },
+    },
+  ],
 });
 
 console.log("\nseed score:", result.candidates[0]?.aggregateScore.toFixed(3));

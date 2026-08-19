@@ -195,7 +195,7 @@ Required: `seedCandidate`, `trainingSet`, `adapter` (a `GepaAdapter`), `reflect`
 | `instanceId`          | a content hash of the datum, falling back to its position when it will not serialize |
 | `cache`               | a per-run memory cache. Pass `false` to disable                                      |
 
-`onEvent`, `onCheckpoint`, `resumeFrom`, and `signal` have no defaults.
+`reporters`, `onCheckpoint`, `resumeFrom`, and `signal` have no defaults.
 
 TypeScript infers component names and the datum type from `seedCandidate` and `trainingSet`. Other fields use `NoInfer` and are checked against those inferred types.
 
@@ -270,7 +270,11 @@ Feedback is end-to-end and every module receives the same string. A metric score
 
 **`stopReason`** is one of `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxIterations"`.
 
-**`onEvent`** receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`.
+**`reporters`** is an array of `GepaReporter`, each with an optional `onEvent` and an optional `flush`. `onEvent` receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`. It is called synchronously, on the search's hot path, so a reporter that ships anywhere over a network buffers in `onEvent` and uploads in `flush`, which is awaited once as the run ends — including when it ends by throwing. A reporter that throws is warned about and skipped: observability never fails a run.
+
+`candidateAccepted` fires for the seed too, and carries the `candidate` text, its `instanceScores` over the validation set, and its `outputs` under `trackBestOutputs` — the row a candidate put on the frontier, not just the mean. `finish` carries the same for the held-out sweep in `testInstanceScores` and `testOutputs`. In both, `undefined` marks an instance nothing measured — the evaluation policy skipped it, or an infrastructure failure lost it — and reporting one as a zero shows as a regression that never happened.
+
+Reporting is observability; persisting a run so it can be resumed is `onCheckpoint`, below.
 
 **`onCheckpoint`** runs after seed evaluation and each iteration with a JSON-serializable `GepaSnapshot`. Pass it as `resumeFrom` to continue. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed. Every optimizer here has the same three: `onCheckpoint`, `resumeFrom`, and a `snapshot` on the result. A snapshot handed back as `resumeFrom` is copied, never mutated by the run that continues from it.
 

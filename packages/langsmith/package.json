@@ -1,0 +1,56 @@
+{
+  "name": "@textopt/langsmith",
+  "version": "0.0.0",
+  "private": true,
+  "description": "LangSmith experiment reporting for textopt",
+  "keywords": [
+    "prompt-optimization",
+    "gepa",
+    "langsmith",
+    "evaluation",
+    "llm"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/ctdio/textopt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctdio/textopt.git",
+    "directory": "packages/langsmith"
+  },
+  "bugs": {
+    "url": "https://github.com/ctdio/textopt/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "textopt": "workspace:*"
+  },
+  "devDependencies": {
+    "langsmith": "^0.8.12"
+  }
+}
