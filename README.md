@@ -124,6 +124,7 @@ Each optimizer ships behind its own subpath — `textopt/gepa`, `textopt/simba`,
 | [Adapters and metrics](docs/adapters.md) | The adapter interface, framework adapters, the reflection model, model judges, pipelines |
 | [Tuning a run](docs/tuning.md)           | What a run costs, noisy metrics, cost and wall-clock budgets, caching and resume         |
 | [Measuring a result](docs/evaluation.md) | Held-out evaluation and `compare()`                                                      |
+| [Distilling a run](docs/distillation.md) | Harvesting rollouts, training-set export, checking the student beat the teacher          |
 | [Benchmark](docs/benchmark.md)           | What every optimizer scores on four offline tasks over twenty seeds                      |
 | [Examples](examples/README.md)           | Runnable scripts, offline and against real providers                                     |
 

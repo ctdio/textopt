@@ -32,11 +32,13 @@ import {
   createJudge,
   createMemoryCache,
   formatDemos,
+  harvestRollouts,
   mapWithConcurrency,
   parseDemos,
   parseProposedText,
   priceUsage,
   runFingerprint,
+  toTrainingJsonl,
 } from "textopt";
 import type {
   Adapter,
@@ -118,6 +120,10 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 **`componentNames(candidate)`** returns `Object.keys(candidate)` while preserving the component-name union.
 
 **`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
+
+**`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. Sweeping a validation set is the mistake to avoid — see [Distilling a run](../../docs/distillation.md).
+
+**`toTrainingJsonl({ rollouts, render })`** serializes harvested rollouts as one chat-messages example per line. `render` turns a rollout into `{ messages }` or returns `null` to skip it, and decides how much of the optimized candidate stays in the training input. Returns the text; writing it is the caller's job.
 
 **`harvestFewShotExamples({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps the rollouts the metric rewarded. Omit `minScore` to keep any rollout scoring above zero, as MIPROv2 does without a `metric_threshold`; pass a number to require at least that score. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
 

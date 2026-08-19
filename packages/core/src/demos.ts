@@ -1,5 +1,4 @@
-import { createBudget } from "./budget.js";
-import { createEvaluator } from "./evaluation.js";
+import { harvestRollouts } from "./harvest.js";
 import type { Rng } from "./rng.js";
 import type { Adapter, Candidate } from "./types.js";
 
@@ -100,67 +99,26 @@ export async function harvestFewShotExamples<
     throw new Error("harvestFewShotExamples requires a non-empty trainingSet");
   }
 
-  const budget = createBudget({ maxMetricCalls });
-  // Uncached on purpose: the cache stores scores, and a demo needs the output
-  // the rollout produced, which a cache hit cannot return.
-  const evaluator = createEvaluator<Datum, Trajectory, Output, K>({
+  const harvest = await harvestRollouts<Datum, Trajectory, Output, K>({
     adapter,
-    budget,
+    candidate,
+    data: trainingSet,
+    maxRollouts: maxDemos,
+    batchSize,
+    maxMetricCalls,
+    ...(minScore === undefined ? {} : { minScore }),
+    ...(rng === undefined ? {} : { rng }),
     ...(signal === undefined ? {} : { signal }),
   });
 
-  const order = rng === undefined ? [...trainingSet] : rng.shuffle(trainingSet);
-  const demos: Demo<Datum, Output>[] = [];
-  let attempted = 0;
-
-  for (let start = 0; start < order.length; start += batchSize) {
-    if (demos.length >= maxDemos || signal?.aborted) {
-      break;
-    }
-
-    const batch = order.slice(
-      start,
-      start + Math.min(batchSize, budget.remaining()),
-    );
-    if (batch.length === 0) {
-      break;
-    }
-
-    const evaluation = await evaluator.evaluateTraced({
-      candidate,
-      batch,
-      split: "train",
-      phase: "seed",
-      candidateId: null,
-      iteration: 0,
-    });
-    if (evaluation === null) {
-      break;
-    }
-    attempted += batch.length;
-
-    for (let index = 0; index < batch.length; index += 1) {
-      const score = evaluation.scores[index] as number;
-      const rewarded = minScore === undefined ? score > 0 : score >= minScore;
-      if (!rewarded || demos.length >= maxDemos) {
-        continue;
-      }
-      demos.push({
-        input: batch[index] as Datum,
-        output: evaluation.outputs[index] as Output,
-        score,
-      });
-    }
-  }
-
   return {
-    demos,
+    demos: harvest.rollouts,
     block: formatDemos(
-      demos,
+      harvest.rollouts,
       renderDemo === undefined ? {} : { render: renderDemo },
     ),
-    metricCalls: budget.spent(),
-    attempted,
+    metricCalls: harvest.metricCalls,
+    attempted: harvest.attempted,
   };
 }
 

@@ -17,6 +17,14 @@ export { mapWithConcurrency } from "./concurrency.js";
 export { createDeadline } from "./deadline.js";
 export type { Deadline } from "./deadline.js";
 export { formatDemos, harvestFewShotExamples, parseDemos } from "./demos.js";
+export { toTrainingJsonl } from "./distillation.js";
+export type {
+  ChatMessage,
+  TrainingExample,
+  TrainingExampleRenderer,
+} from "./distillation.js";
+export { harvestRollouts } from "./harvest.js";
+export type { HarvestResult, Rollout } from "./harvest.js";
 export type { BootstrapResult, Demo, DemoRenderer } from "./demos.js";
 export {
   BudgetExhausted,
