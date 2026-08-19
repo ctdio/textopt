@@ -67,6 +67,12 @@ request publishes to npm.
 `.changeset/config.json` under `ignore`, so they neither version nor publish.
 Removing both markers is what promotes one out of beta.
 
+Both published packages are on 0.x, where `^0.1.0` does not cross a minor. So
+`minor` is the breaking lever and `patch` covers additions and fixes. A changed
+default that makes an unmodified call search differently is breaking. The
+`/textopt-changeset` skill in `.claude/skills/textopt-changeset` applies these
+rules against the branch diff.
+
 ## Fidelity to the papers
 
 This library's value is that each optimizer does what its paper says. That puts

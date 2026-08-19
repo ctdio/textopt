@@ -34,7 +34,7 @@
     "ai": "^7.0.66",
     "autoevals": "^0.3.0",
     "braintrust": "^3.27.0",
-    "langsmith": "^0.8.12",
+    "langsmith": "0.8.11",
     "openai": "^7.4.0",
     "textopt": "workspace:*"
   },

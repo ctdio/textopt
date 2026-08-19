@@ -2,3 +2,15 @@ packages:
   - packages/*
   - examples
   - bench
+
+# No dependency runs a build script. pnpm 10 blocked these silently; pnpm 11
+# makes the choice explicit. Nothing here needs one: esbuild ships its platform
+# binary as an optional dependency, and the rest are only ever type-checked.
+allowBuilds:
+  autoevals: false
+  braintrust: false
+  esbuild: false
+
+# pnpm otherwise adds an exclusion silently when a resolved version is younger
+# than the cooldown. Fail instead: a hole in this policy should be a decision.
+minimumReleaseAgeStrict: true

@@ -1,0 +1,9 @@
+# Actions are pinned by commit, so nothing updates them without this.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore

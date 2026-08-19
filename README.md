@@ -27,7 +27,7 @@ result.bestCandidate; // { system: "..." }, same keys as the seed, checked at co
 npm install textopt      # pnpm add textopt, yarn add textopt, bun add textopt
 ```
 
-Requires Node >= 20. `textopt` has no runtime dependencies and ships ESM and CJS builds with type declarations for both. Every optimizer is a subpath of that one package — nothing else to install to use GEPA, SIMBA, OPRO, MIPRO, bootstrap search, or random search.
+Requires Node >= 22. `textopt` has no runtime dependencies and ships ESM and CJS builds with type declarations for both. Every optimizer is a subpath of that one package — nothing else to install to use GEPA, SIMBA, OPRO, MIPRO, bootstrap search, or random search.
 
 Optimizing a LangChain runnable additionally needs the adapter, which takes `@langchain/core` (`>=0.3.0 <2`) as a peer dependency:
 
@@ -129,7 +129,7 @@ Each optimizer ships behind its own subpath — `textopt/gepa`, `textopt/simba`,
 
 ## Development
 
-Requires Node >= 20 and pnpm 10.
+Requires Node >= 22 and pnpm 11.
 
 ```bash
 pnpm install

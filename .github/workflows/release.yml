@@ -15,33 +15,43 @@ permissions: {}
 jobs:
   release:
     runs-on: ubuntu-latest
+    # This job holds the only npm credential in the repository. Add required
+    # reviewers to the `npm` environment in the repository settings so a publish
+    # needs a human, even if something in this job runs code it should not.
+    environment: npm
     permissions:
       contents: write # push the version commit, the tags, and the releases
       pull-requests: write # open and update the version pull request
       id-token: write # sign the published tarballs with npm provenance
     steps:
-      - uses: actions/checkout@v5
+      # Third-party actions are pinned by commit. A tag or branch reference is
+      # mutable; `changesets/action@v2` is a branch, not a tag.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      # No dependency cache here on purpose: a cache this job restores can be
+      # written by any other job in the repository, and this job publishes.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-          cache: pnpm
           # Writes the .npmrc that reads NODE_AUTH_TOKEN. The action stopped
           # handling npm credentials itself in v2.
           registry-url: https://registry.npmjs.org
-      - run: pnpm install --frozen-lockfile
+      # Every dependency is public, so the install needs no credential, and
+      # --ignore-scripts keeps dependency code from executing in the one job
+      # that has one. pnpm already blocks these by default; this is explicit.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       # ci.yml runs on the same push, but nothing orders it before publishing,
       # and the version pull request gets no ci run of its own: GitHub does not
       # trigger workflows for events raised by the default token.
       - run: pnpm test
 
-      - uses: changesets/action@v2
+      - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          # Versioning rewrites the workspace package.json files, so the
-          # lockfile has to be refreshed or the next ci run fails frozen.
-          version-script: pnpm changeset version && pnpm install --no-frozen-lockfile
+          # --lockfile-only rewrites the lockfile for the bumped versions
+          # without linking node_modules or running anything from a dependency.
+          version-script: pnpm changeset version && pnpm install --lockfile-only
           publish-script: pnpm release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"

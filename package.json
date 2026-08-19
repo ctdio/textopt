@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.28.2",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "bench": "pnpm build && pnpm --filter textopt-bench bench",
@@ -21,10 +21,10 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@changesets/cli": "^3.0.1",
+    "@changesets/cli": "3.0.0",
     "@types/node": "^24.10.0",
     "prettier": "^3.9.6",
-    "publint": "^0.3.24",
+    "publint": "0.3.23",
     "tsdown": "^0.22.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
