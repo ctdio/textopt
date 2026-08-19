@@ -18,6 +18,10 @@ export default defineConfig({
         replacement: sourceOf("./packages/core/src/file-cache.ts"),
       },
       {
+        find: "textopt/bootstrap-search",
+        replacement: sourceOf("./packages/core/src/bootstrap-search/index.ts"),
+      },
+      {
         find: "textopt/mipro",
         replacement: sourceOf("./packages/core/src/mipro/index.ts"),
       },
