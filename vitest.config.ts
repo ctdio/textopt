@@ -22,6 +22,10 @@ export default defineConfig({
         replacement: sourceOf("./packages/core/src/bootstrap-search/index.ts"),
       },
       {
+        find: "textopt/simba",
+        replacement: sourceOf("./packages/core/src/simba/index.ts"),
+      },
+      {
         find: "textopt/mipro",
         replacement: sourceOf("./packages/core/src/mipro/index.ts"),
       },

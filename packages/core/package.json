@@ -61,6 +61,16 @@
         "default": "./dist/gepa/index.cjs"
       }
     },
+    "./simba": {
+      "import": {
+        "types": "./dist/simba/index.d.mts",
+        "default": "./dist/simba/index.mjs"
+      },
+      "require": {
+        "types": "./dist/simba/index.d.cts",
+        "default": "./dist/simba/index.cjs"
+      }
+    },
     "./testing": {
       "import": {
         "types": "./dist/testing.d.mts",
