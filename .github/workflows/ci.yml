@@ -26,7 +26,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      # Not on 20: tsdown declares node ^22.18.0 || >=24.11.0, so the build
+      # cannot run on the floor the package supports, and `typecheck` builds
+      # first. The floor is a claim about the output — which targets node20 and
+      # whose tests ran above — not about the toolchain that produces it.
       - run: pnpm typecheck
+        if: matrix.node >= 22
 
   format:
     runs-on: ubuntu-latest
