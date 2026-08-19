@@ -3,7 +3,7 @@ import { candidateHash, createMemoryCache } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { createDeadline } from "../deadline.js";
-import { bootstrapDemos, formatDemos } from "../demos.js";
+import { formatDemos, harvestFewShotExamples } from "../demos.js";
 import type { Demo, DemoRenderer } from "../demos.js";
 import {
   BudgetExhausted,
@@ -657,7 +657,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       return "";
     }
 
-    const harvest = await bootstrapDemos<Datum, Trajectory, Output, K>({
+    const harvest = await harvestFewShotExamples<Datum, Trajectory, Output, K>({
       adapter,
       candidate: seedCandidate,
       trainingSet,

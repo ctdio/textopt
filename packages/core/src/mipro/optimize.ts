@@ -4,7 +4,7 @@ import { createMemoryCache, stableHash } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
-import { bootstrapDemos, formatDemos } from "../demos.js";
+import { formatDemos, harvestFewShotExamples } from "../demos.js";
 import type { Demo, DemoRenderer } from "../demos.js";
 import {
   BudgetExhausted,
@@ -655,7 +655,12 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
           ? maxDemos
           : Math.round(1 + (index * (maxDemos - 1)) / (demoSets - 1));
 
-      const harvest = await bootstrapDemos<Datum, Trajectory, Output, K>({
+      const harvest = await harvestFewShotExamples<
+        Datum,
+        Trajectory,
+        Output,
+        K
+      >({
         adapter,
         candidate: seedCandidate,
         trainingSet,

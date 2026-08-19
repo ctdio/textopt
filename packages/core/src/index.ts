@@ -16,7 +16,7 @@ export type { CachedScore, EvaluationCache } from "./cache.js";
 export { mapWithConcurrency } from "./concurrency.js";
 export { createDeadline } from "./deadline.js";
 export type { Deadline } from "./deadline.js";
-export { bootstrapDemos, formatDemos, parseDemos } from "./demos.js";
+export { formatDemos, harvestFewShotExamples, parseDemos } from "./demos.js";
 export type { BootstrapResult, Demo, DemoRenderer } from "./demos.js";
 export {
   BudgetExhausted,

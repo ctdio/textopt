@@ -48,7 +48,7 @@ const DEFAULT_MAX_DEMOS = 4;
  * examples on what the output should look like — so a seed carrying both
  * starts somewhere neither reaches alone.
  */
-export async function bootstrapDemos<
+export async function harvestFewShotExamples<
   Datum,
   Trajectory,
   Output,
@@ -97,7 +97,7 @@ export async function bootstrapDemos<
   } = args;
 
   if (trainingSet.length === 0) {
-    throw new Error("bootstrapDemos requires a non-empty trainingSet");
+    throw new Error("harvestFewShotExamples requires a non-empty trainingSet");
   }
 
   const budget = createBudget({ maxMetricCalls });

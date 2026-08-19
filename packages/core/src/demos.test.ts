@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bootstrapDemos, formatDemos, parseDemos } from "./demos.js";
+import { formatDemos, harvestFewShotExamples, parseDemos } from "./demos.js";
 import { createSeededRng } from "./rng.js";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "./testing.js";
 import type { Adapter } from "./types.js";
@@ -51,7 +51,7 @@ describe("parseDemos", () => {
   });
 });
 
-describe("bootstrapDemos", () => {
+describe("harvestFewShotExamples", () => {
   const adapter = (): Adapter<
     (typeof KEYWORD_EXAMPLES)[number],
     unknown,
@@ -59,7 +59,7 @@ describe("bootstrapDemos", () => {
   > => createKeywordAdapter();
 
   test("keeps only rollouts that clear the score threshold", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       // Answers two of the four instances perfectly and neither of the others.
       candidate: { instruction: "hold ten seconds ticket portal" },
@@ -74,7 +74,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("keeps every rollout the metric rewarded when given no threshold", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       // Half credit on three instances and nothing on the fourth.
       candidate: { instruction: "hold ticket billing" },
@@ -88,7 +88,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("keeps nothing the metric scored at zero when given no threshold", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
       trainingSet: KEYWORD_EXAMPLES,
@@ -98,7 +98,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("keeps nothing when the candidate never clears the threshold", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
       trainingSet: KEYWORD_EXAMPLES,
@@ -110,7 +110,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("stops once it has enough demos", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: {
         instruction:
@@ -128,7 +128,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("reports what it spent", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
       trainingSet: KEYWORD_EXAMPLES,
@@ -139,7 +139,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("stops at the metric call ceiling", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: { instruction: "nothing useful here" },
       trainingSet: KEYWORD_EXAMPLES,
@@ -151,7 +151,7 @@ describe("bootstrapDemos", () => {
   });
 
   test("produces a block the seed candidate can carry directly", async () => {
-    const result = await bootstrapDemos({
+    const result = await harvestFewShotExamples({
       adapter: adapter(),
       candidate: { instruction: "hold ten seconds" },
       trainingSet: KEYWORD_EXAMPLES,
@@ -164,7 +164,7 @@ describe("bootstrapDemos", () => {
   test("samples the trainingSet in a reproducible order when given an rng", async () => {
     const run = async () =>
       (
-        await bootstrapDemos({
+        await harvestFewShotExamples({
           adapter: adapter(),
           candidate: { instruction: "hold ten seconds ticket portal" },
           trainingSet: KEYWORD_EXAMPLES,
@@ -180,7 +180,7 @@ describe("bootstrapDemos", () => {
 
   test("refuses an empty trainingSet", async () => {
     await expect(
-      bootstrapDemos({
+      harvestFewShotExamples({
         adapter: adapter(),
         candidate: { instruction: "x" },
         trainingSet: [],

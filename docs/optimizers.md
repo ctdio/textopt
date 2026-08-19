@@ -108,12 +108,12 @@ This behavior is opt-in. The default is `buildReflectionPrompt`, adapted from th
 
 Few-shot examples can be stored in a candidate component and optimized with the other text. textopt can populate that component from successful training rollouts.
 
-Before optimization, `bootstrapDemos` evaluates the seed candidate on `trainingSet` and keeps high-scoring rollouts:
+Before optimization, `harvestFewShotExamples` evaluates the seed candidate on `trainingSet` and keeps high-scoring rollouts:
 
 ```ts
-import { bootstrapDemos } from "textopt";
+import { harvestFewShotExamples } from "textopt";
 
-const { block, demos, metricCalls } = await bootstrapDemos({
+const { block, demos, metricCalls } = await harvestFewShotExamples({
   adapter,
   candidate: seedCandidate,
   trainingSet,
