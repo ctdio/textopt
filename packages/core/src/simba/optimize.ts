@@ -1,7 +1,8 @@
 import { createBudget } from "../budget.js";
-import { createMemoryCache } from "../cache.js";
+import { candidateHash, createMemoryCache } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
+import { mapWithConcurrency } from "../concurrency.js";
 import { createDeadline } from "../deadline.js";
 import { formatDemos, parseDemos } from "../demos.js";
 import type { Demo, DemoRenderer } from "../demos.js";
@@ -54,6 +55,17 @@ export interface SimbaConfig {
   minibatchSize?: number;
   /** Programs sampled per step, and candidates built from them. Default 6. */
   candidates?: number;
+  /**
+   * How many evaluations may be in flight at once. Default 1.
+   *
+   * Covers the two places a step's work is independent — scoring the
+   * candidates a step built, and sweeping the finalists at the end of the run
+   * — and nothing else. The trajectory samples and the mutations that read
+   * them are deliberately left in sequence: each of those reads state the one
+   * before it wrote, so overlapping them would make a seeded run depend on
+   * which call returned first.
+   */
+  concurrency?: number;
   /** Steps to run. Default 8. */
   maxSteps?: number;
   /** Demos a candidate may hold before the loop starts dropping them. Default 4. */
@@ -168,6 +180,15 @@ export interface SimbaResult<
   snapshot: SimbaSnapshot;
 }
 
+/**
+ * What one evaluation measured, or that the run stopped before it could.
+ * Carried rather than thrown so the step, or the finalist ranking, still
+ * commits everything ahead of it exactly as the serial version did.
+ */
+type ScoreOutcome =
+  | { score: number | undefined; stop?: undefined }
+  | { score?: undefined; stop: true };
+
 const DEFAULT_MINIBATCH_SIZE = 32;
 const DEFAULT_CANDIDATES = 6;
 const DEFAULT_MAX_STEPS = 8;
@@ -207,6 +228,7 @@ export class SimbaOptimizer implements Optimizer<SimbaStopReason> {
   readonly #config: SimbaConfig;
 
   constructor(config: SimbaConfig = {}) {
+    assertSimbaConfig(config);
     this.#config = config;
   }
 
@@ -231,6 +253,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   const {
     minibatchSize = DEFAULT_MINIBATCH_SIZE,
     candidates: candidateCount = DEFAULT_CANDIDATES,
+    concurrency = 1,
     maxSteps = DEFAULT_MAX_STEPS,
     maxDemos = DEFAULT_MAX_DEMOS,
     samplingTemperature = DEFAULT_TEMPERATURE,
@@ -513,35 +536,71 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
     let stepBest: { candidate: Candidate<K>; score: number } | undefined;
 
+    const batchIds = batch.map((datum, index) => instanceId({ datum, index }));
+
+    // Every candidate the step built is priced against the allowance before
+    // any of them runs. Reserving mid-fan-out instead would decide which of
+    // them the step scores by which one reached the budget first.
+    const scheduled: typeof built = [];
+    let owed = 0;
+
     for (const entry of built) {
-      if (!budget.canAfford(batch.length)) {
+      if (!budget.canAfford(owed + batch.length)) {
         stopReason = "budgetExhausted";
         break;
       }
+      owed += evaluator.countUncached({
+        candidate: entry.candidate,
+        ids: batchIds,
+        split: "train",
+      });
+      scheduled.push(entry);
+    }
 
-      let score: number | undefined;
-      try {
-        score = measuredMean(
-          await evaluator.evaluate({
-            candidate: entry.candidate,
-            batch,
-            ids: batch.map((datum, index) => instanceId({ datum, index })),
-            split: "train",
-            phase: "minibatch",
-            candidateId: programs.length,
-            iteration: step,
-          }),
-        );
-      } catch (err) {
-        if (err instanceof BudgetExhausted) {
-          stopReason = "budgetExhausted";
-          break;
+    // Ids are assigned before the evaluations so concurrent scorers can report
+    // the index their candidate will enter the pool at.
+    const poolBase = programs.length;
+    const scored = await mapDistinct({
+      items: scheduled,
+      limit: concurrency,
+      key: (entry) => candidateHash(entry.candidate),
+      task: async (entry, index): Promise<ScoreOutcome> => {
+        try {
+          return {
+            score: measuredMean(
+              await evaluator.evaluate({
+                candidate: entry.candidate,
+                batch,
+                ids: batchIds,
+                split: "train",
+                phase: "minibatch",
+                candidateId: poolBase + index,
+                iteration: step,
+              }),
+            ),
+          };
+        } catch (err) {
+          if (err instanceof BudgetExhausted) {
+            return { stop: true };
+          }
+          throw err;
         }
-        throw err;
+      },
+    });
+
+    // Committed in the order the step proposed them: a candidate enters the
+    // pool at the index the next step's softmax will sample it by, so letting
+    // completion order decide it would renumber the whole search.
+    for (const [index, outcome] of scored.entries()) {
+      if (outcome.stop === true) {
+        stopReason = "budgetExhausted";
+        break;
       }
+      const { score } = outcome;
       if (score === undefined) {
         continue;
       }
+      const entry = scheduled[index] as (typeof built)[number];
 
       programs.push(entry.candidate);
       programScores.push([score]);
@@ -574,46 +633,80 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     stopReason = "aborted";
   }
 
-  const finalists: SimbaFinalist<K>[] = [];
+  // The sweeps that decide the winner are priced as one schedule before any of
+  // them runs, so which winners get measured is settled by the allowance
+  // rather than by which sweep reserved it first.
+  const contenders: { index: number; candidate: Candidate<K>; step: number }[] =
+    [];
+  let owedForFinalists = 0;
+
   for (const index of evenlySpacedIndices({
     length: winners.length,
     count: candidateCount + 1,
   })) {
     const winner = winners[index] as { candidate: Candidate<K>; step: number };
-    if (
-      !budget.canAfford(
-        evaluator.countUncached({
-          candidate: winner.candidate,
-          ids: validationIds,
-          split: "val",
-        }),
-      )
-    ) {
+    const uncached = evaluator.countUncached({
+      candidate: winner.candidate,
+      ids: validationIds,
+      split: "val",
+    });
+
+    if (!budget.canAfford(owedForFinalists + uncached)) {
       break;
     }
+    owedForFinalists += uncached;
+    contenders.push({ index, candidate: winner.candidate, step: winner.step });
+  }
 
-    let score: number | undefined;
-    try {
-      score = measuredMean(
-        await evaluator.evaluate({
-          candidate: winner.candidate,
-          batch: validationSet,
-          ids: validationIds,
-          split: "val",
-          phase: index === 0 ? "seed" : "validation",
-          candidateId: index,
-          iteration: step,
-        }),
-      );
-    } catch (err) {
-      if (err instanceof BudgetExhausted || signal?.aborted) {
-        break;
+  const sweeps = await mapDistinct({
+    items: contenders,
+    limit: concurrency,
+    key: (contender) => candidateHash(contender.candidate),
+    task: async (contender): Promise<ScoreOutcome> => {
+      if (signal?.aborted) {
+        return { stop: true };
       }
-      throw err;
+      try {
+        return {
+          score: measuredMean(
+            await evaluator.evaluate({
+              candidate: contender.candidate,
+              batch: validationSet,
+              ids: validationIds,
+              split: "val",
+              // The seed is always the first winner, and its sweep is the
+              // baseline the whole result is reported against.
+              phase: contender.index === 0 ? "seed" : "validation",
+              candidateId: contender.index,
+              iteration: step,
+            }),
+          ),
+        };
+      } catch (err) {
+        if (err instanceof BudgetExhausted || signal?.aborted) {
+          return { stop: true };
+        }
+        throw err;
+      }
+    },
+  });
+
+  const finalists: SimbaFinalist<K>[] = [];
+  // Collected in winner order, because the seed's score is read off the head
+  // of this list before it is sorted.
+  for (const [position, outcome] of sweeps.entries()) {
+    if (outcome.stop === true) {
+      break;
     }
-    if (score !== undefined) {
-      finalists.push({ candidate: winner.candidate, score, step: winner.step });
+    if (outcome.score === undefined) {
+      continue;
     }
+    const contender = contenders[position] as (typeof contenders)[number];
+    finalists.push({
+      candidate: contender.candidate,
+      score: outcome.score,
+      step: contender.step,
+    });
   }
 
   const seedScore = finalists[0]?.score ?? 0;
@@ -901,6 +994,60 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       return;
     }
     await onCheckpoint(takeSnapshot(completed));
+  }
+}
+
+/**
+ * Runs `items` concurrently, except that items sharing a key run one after the
+ * other.
+ *
+ * Two identical candidates cost one evaluation and one cache hit when they are
+ * scored in sequence, and two evaluations when they overlap: the cache is only
+ * written once a rollout returns. Serializing the duplicates is what keeps a
+ * fan-out from buying a second copy of a score the run has already paid for.
+ */
+async function mapDistinct<Item, Result>(args: {
+  items: readonly Item[];
+  limit: number;
+  key: (item: Item) => string;
+  task: (item: Item, index: number) => Promise<Result>;
+}): Promise<Result[]> {
+  const { items, limit, key, task } = args;
+
+  const groups = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    const group = groups.get(key(item));
+    if (group === undefined) {
+      groups.set(key(item), [index]);
+      return;
+    }
+    group.push(index);
+  });
+
+  const results = new Array<Result>(items.length);
+  await mapWithConcurrency({
+    items: [...groups.values()],
+    limit,
+    task: async (indices) => {
+      for (const index of indices) {
+        results[index] = await task(items[index] as Item, index);
+      }
+    },
+  });
+  return results;
+}
+
+/**
+ * Range checks on the search knobs, run at construction so a configuration
+ * that could never terminate is refused before a task is ever handed to it.
+ */
+function assertSimbaConfig(config: SimbaConfig): void {
+  const { concurrency = 1 } = config;
+
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(
+      `concurrency must be a positive integer, received ${concurrency}`,
+    );
   }
 }
 

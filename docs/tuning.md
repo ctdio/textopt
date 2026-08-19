@@ -90,8 +90,27 @@ result.usage; // { inputTokens, outputTokens, totalTokens, costUsd, rollouts }
 ```
 
 - **`maxCostUsd`** exists because reflective search grows the text it optimizes, so late rollouts cost more than early ones. It is checked between evaluations and reads whatever usage the adapter reported; an adapter that reports none can never trigger it. `priceUsage` fills in `costUsd` on a rollout's usage from a `TokenPricing` table; adapters call it so there is something to read.
-- **`maxWallClockMs`** exists because a run behind a rate limit spends almost nothing and takes as long as the provider makes it take. This is what makes an optimizer safe to put behind a request timeout or a nightly job. `stopReason` is `"deadlineReached"`.
+- **`maxWallClockMs`** exists because a run behind a rate limit spends almost nothing and takes as long as the provider makes it take. This is what makes an optimizer safe to put behind a request timeout or a nightly job. `stopReason` is `"deadlineReached"`. Both ceilings are checked between evaluations, so a run overruns them by whatever it had in flight when they were reached — one evaluation at the default concurrency, and up to `concurrency` of them above it.
 - **`retry`** re-runs instances the adapter marked `transient`. A rate limit or a 5xx otherwise costs the instance either an unexplained zero or a hole in the candidate's coverage. Retries are charged like any other rollout but never overdraw the budget. Defaults to two attempts, 500 ms apart, doubling.
+
+## Concurrency
+
+Every optimizer runs one evaluation at a time by default. `concurrency` raises that, and each optimizer applies it to the part of its loop where the work is genuinely independent:
+
+| Optimizer             | What overlaps                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| GEPA                  | `proposals.concurrency` — the proposals of an iteration, and then the validation sweeps of the children that survived screening |
+| SIMBA                 | the candidates a step built, scored on its minibatch, and the finalist sweeps that pick the winner                              |
+| OPRO                  | the proposals of a round, and the screen each of them is scored on                                                              |
+| Random search         | the variants of a round, and the sweep each of them is scored on                                                                |
+| Bootstrapped few-shot | a candidate's sweep with the harvest of the candidates behind it                                                                |
+| MIPRO                 | the instruction proposals for one component                                                                                     |
+
+Raising it does not change what a run finds. Every one of these fans out only after the random stream has been drawn and the whole schedule has been priced against the allowance, and commits results in the order the search proposed them rather than the order they returned — so a seeded run reaches the same candidates, the same winner and the same rollout count at any concurrency. The parts that would not survive that are left in sequence: MIPRO's trials condition on the observations before them, and SIMBA's trajectory samples and mutations read state the sample before them wrote.
+
+What does change is what the provider sees. The limits multiply — `compare` concurrency, then the optimizer's, then the adapter's — so GEPA at `proposals: { concurrency: 4 }` over an adapter at `concurrency: 4` is sixteen calls in flight. Past what a provider tolerates this stops being a timing question: a throttled rollout comes back marked `transient`, which is left out of the candidate's mean rather than scored as a zero, retried at the run's expense, and never cached. A run that spends its allowance on retries and measures its candidates on fewer instances than it asked for looks, from the outside, like a seed that went badly.
+
+Two smaller costs come with raising it. The cost and deadline ceilings overrun by whatever was in flight when they were hit. And bootstrapped few-shot search checkpoints once per wave rather than once per candidate, so a killed run loses up to `concurrency` candidates instead of one; it also ignores `concurrency` when `stopAtScore` is set, since a wave cannot know it has already passed the target.
 
 ## Caching, checkpoints, resume
 

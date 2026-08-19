@@ -320,3 +320,158 @@ describe("SimbaOptimizer", () => {
     ).rejects.toThrow(/checkpoint does not belong to this run/);
   });
 });
+
+describe("SimbaOptimizer concurrency", () => {
+  test("scores a step's candidates at the same time", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await optimizer({ candidates: 4, concurrency: 4 }).optimize({
+      ...ruleTask(),
+      adapter: tracked.adapter,
+    });
+
+    expect(tracked.maxInFlight()).toBeGreaterThan(1);
+  });
+
+  test("scores them one at a time by default", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await optimizer({ candidates: 4 }).optimize({
+      ...ruleTask(),
+      adapter: tracked.adapter,
+    });
+
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("reaches the same finalists whether or not the evaluations overlap", async () => {
+    const serial = await optimizer({ candidates: 4, maxSteps: 3 }).optimize(
+      ruleTask(),
+    );
+    const concurrent = await optimizer({
+      candidates: 4,
+      maxSteps: 3,
+      concurrency: 4,
+    }).optimize(ruleTask());
+
+    expect(concurrent.finalists).toEqual(serial.finalists);
+    expect(concurrent.bestCandidate).toEqual(serial.bestCandidate);
+    expect(concurrent.bestScore).toBe(serial.bestScore);
+    expect(concurrent.seedScore).toBe(serial.seedScore);
+    expect(concurrent.metricCalls).toBe(serial.metricCalls);
+    expect(concurrent.snapshot.programs).toEqual(serial.snapshot.programs);
+    expect(concurrent.snapshot.programScores).toEqual(
+      serial.snapshot.programScores,
+    );
+  });
+
+  test("builds the same program pool whichever order the evaluations finish in", async () => {
+    // A step's candidates enter the pool at the index the next step's softmax
+    // will sample them by, so the pool has to be built in the order the step
+    // proposed them rather than the order the network returned them in.
+    const run = async (pace: (candidate: string) => number) => {
+      const result = await optimizer({
+        candidates: 4,
+        maxSteps: 3,
+        concurrency: 4,
+      }).optimize({
+        ...ruleTask(),
+        adapter: withPacing(baseAdapter(), pace),
+      });
+
+      return result.snapshot;
+    };
+
+    const shortestFirst = await run((candidate) => candidate.length % 7);
+    const longestFirst = await run((candidate) => 7 - (candidate.length % 7));
+
+    expect(shortestFirst.programs).toEqual(longestFirst.programs);
+    expect(shortestFirst.programScores).toEqual(longestFirst.programScores);
+    expect(shortestFirst.winners).toEqual(longestFirst.winners);
+  });
+
+  test("sweeps the finalists at the same time", async () => {
+    const phases: string[] = [];
+    const adapter = baseAdapter();
+    let inFlight = 0;
+    let peak = 0;
+
+    await optimizer({ candidates: 4, concurrency: 4 }).optimize({
+      ...ruleTask(),
+      adapter: {
+        evaluate: async (args) => {
+          const validation = args.run.split === "val";
+          inFlight += validation ? 1 : 0;
+          peak = Math.max(peak, inFlight);
+          phases.push(args.run.phase);
+          try {
+            await Promise.resolve();
+            return await adapter.evaluate(args);
+          } finally {
+            inFlight -= validation ? 1 : 0;
+          }
+        },
+      },
+    });
+
+    expect(phases).toContain("validation");
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  test("never spends past the budget when the evaluations overlap", async () => {
+    const result = await optimizer({
+      candidates: 4,
+      maxSteps: 10,
+      concurrency: 4,
+    }).optimize({ ...ruleTask(), maxMetricCalls: 60 });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(60);
+  });
+
+  test("rejects a concurrency below one", () => {
+    expect(() => new SimbaOptimizer({ concurrency: 0 })).toThrow(/concurrency/);
+  });
+});
+
+/** Wraps an adapter to observe how many evaluations are ever in flight at once. */
+function withOverlapTracking<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+): {
+  adapter: Adapter<Datum, Trajectory, Output>;
+  maxInFlight: () => number;
+} {
+  let inFlight = 0;
+  let peak = 0;
+
+  return {
+    maxInFlight: () => peak,
+    adapter: {
+      evaluate: async (args) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          await Promise.resolve();
+          return await adapter.evaluate(args);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    },
+  };
+}
+
+/** Settles each evaluation after a delay the candidate's own text decides. */
+function withPacing<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+  pace: (candidate: string) => number,
+): Adapter<Datum, Trajectory, Output> {
+  return {
+    evaluate: async (args) => {
+      const ticks = pace(Object.values(args.candidate).join(" "));
+      for (let tick = 0; tick < ticks; tick += 1) {
+        await Promise.resolve();
+      }
+      return adapter.evaluate(args);
+    },
+  };
+}

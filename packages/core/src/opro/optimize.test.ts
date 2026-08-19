@@ -782,3 +782,131 @@ describe("OproOptimizer checkpoints", () => {
     expect(interrupted.snapshot.cache?.length).toBeGreaterThan(0);
   });
 });
+
+describe("OproOptimizer concurrency", () => {
+  test("screens a round's proposals at the same time", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new OproOptimizer({
+      proposalsPerRound: 4,
+      concurrency: 4,
+      maxRounds: 2,
+    }).optimize({ ...task(), adapter: tracked.adapter });
+
+    expect(tracked.maxInFlight()).toBeGreaterThan(1);
+  });
+
+  test("screens them one at a time by default", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new OproOptimizer({ proposalsPerRound: 4, maxRounds: 2 }).optimize({
+      ...task(),
+      adapter: tracked.adapter,
+    });
+
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("reaches the same trajectory whether or not the screens overlap", async () => {
+    const serial = await new OproOptimizer({
+      proposalsPerRound: 4,
+      maxRounds: 3,
+    }).optimize(task());
+    const concurrent = await new OproOptimizer({
+      proposalsPerRound: 4,
+      concurrency: 4,
+      maxRounds: 3,
+    }).optimize(task());
+
+    expect(concurrent.trajectory).toEqual(serial.trajectory);
+    expect(concurrent.bestCandidate).toEqual(serial.bestCandidate);
+    expect(concurrent.bestScore).toBe(serial.bestScore);
+    expect(concurrent.metricCalls).toBe(serial.metricCalls);
+    expect(concurrent.stopReason).toBe(serial.stopReason);
+  });
+
+  test("records the same history whichever order the screens finish in", async () => {
+    // The history is what the next round's meta-prompt reads, and an attempt
+    // is marked accepted only if it beat every attempt before it. Both are
+    // decided in draw order, never by whichever screen returned first.
+    const run = async (pace: (candidate: string) => number) => {
+      const accepted: string[] = [];
+
+      const result = await new OproOptimizer({
+        proposalsPerRound: 4,
+        concurrency: 4,
+        maxRounds: 3,
+      }).optimize({
+        ...task(),
+        adapter: withPacing(baseAdapter(), pace),
+        onEvent: (event) => {
+          if (event.type === "attempt") {
+            accepted.push(`${event.round}:${event.score}:${event.accepted}`);
+          }
+        },
+      });
+
+      return { accepted, history: result.snapshot.histories };
+    };
+
+    const shortestFirst = await run((candidate) => candidate.length);
+    const longestFirst = await run((candidate) => 100 - candidate.length);
+
+    expect(shortestFirst.accepted).toEqual(longestFirst.accepted);
+    expect(shortestFirst.history).toEqual(longestFirst.history);
+    expect(shortestFirst.accepted.length).toBeGreaterThan(0);
+  });
+
+  test("never spends past the budget when the screens overlap", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 4,
+      concurrency: 4,
+      maxRounds: 20,
+    }).optimize({ ...task(), maxMetricCalls: 30 });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(30);
+  });
+});
+
+/** Wraps an adapter to observe how many evaluations are ever in flight at once. */
+function withOverlapTracking<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+): {
+  adapter: Adapter<Datum, Trajectory, Output>;
+  maxInFlight: () => number;
+} {
+  let inFlight = 0;
+  let peak = 0;
+
+  return {
+    maxInFlight: () => peak,
+    adapter: {
+      evaluate: async (args) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          await Promise.resolve();
+          return await adapter.evaluate(args);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    },
+  };
+}
+
+/** Settles each evaluation after a delay the candidate's own text decides. */
+function withPacing<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+  pace: (candidate: string) => number,
+): Adapter<Datum, Trajectory, Output> {
+  return {
+    evaluate: async (args) => {
+      const ticks = pace(Object.values(args.candidate).join(" "));
+      for (let tick = 0; tick < ticks; tick += 1) {
+        await Promise.resolve();
+      }
+      return adapter.evaluate(args);
+    },
+  };
+}

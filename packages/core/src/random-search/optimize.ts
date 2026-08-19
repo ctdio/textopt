@@ -11,7 +11,7 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent } from "../evaluation.js";
+import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
@@ -146,6 +146,15 @@ export interface RandomSearchResult<
   /** State as of the last round, ready to hand back as `resumeFrom`. */
   snapshot: RandomSearchSnapshot;
 }
+
+/**
+ * What one variant's sweep produced, or why it never ran. Carried rather than
+ * thrown so a round that ran out of allowance or was cancelled still commits
+ * the variants ahead of it, exactly as the serial round did.
+ */
+type VariantOutcome<Output> =
+  | { evaluation: ScoredBatch<Output>; stop?: undefined }
+  | { evaluation?: undefined; stop: RandomSearchStopReason };
 
 const DEFAULT_VARIANTS = 4;
 
@@ -448,26 +457,69 @@ async function runRandomSearch<
 
     let roundStop: RandomSearchStopReason | undefined;
 
-    for (const text of unique) {
-      const candidate = { ...best, [component]: text } as Candidate<K>;
+    // Every sweep in the round is priced against the allowance before any of
+    // them runs. Reserving mid-fan-out instead would hand the round to
+    // whichever variant reached the budget first, so which variants a round
+    // scores would stop being a property of the search.
+    const scheduled: Candidate<K>[] = [];
+    let owed = 0;
 
-      let evaluation: Awaited<ReturnType<typeof sweep>>;
-      try {
-        evaluation = await sweep({ candidate, phase: "validation" });
-      } catch (err) {
-        if (err instanceof BudgetExhausted) {
-          roundStop = "budgetExhausted";
-          break;
-        }
+    for (const text of unique) {
+      // Every variant replaces the same component of the same incumbent, so a
+      // sibling that wins mid-round changes nothing about what the rest are:
+      // building them all here is the candidate the serial round would reach.
+      const candidate = { ...best, [component]: text } as Candidate<K>;
+      const uncached = evaluator.countUncached({
+        candidate,
+        ids: validationIds,
+        split: "val",
+      });
+
+      if (!budget.canAfford(owed + uncached)) {
+        roundStop = "budgetExhausted";
+        break;
+      }
+      owed += uncached;
+      scheduled.push(candidate);
+    }
+
+    const swept = await mapWithConcurrency({
+      items: scheduled,
+      limit: concurrency,
+      // Cancellation is reported per variant rather than thrown out of the
+      // fan-out, so an aborted round still commits the sweeps it paid for.
+      task: async (candidate): Promise<VariantOutcome<Output>> => {
         if (signal?.aborted) {
-          roundStop = "aborted";
-          break;
+          return { stop: "aborted" };
         }
-        throw err;
+        try {
+          return {
+            evaluation: await sweep({ candidate, phase: "validation" }),
+          };
+        } catch (err) {
+          if (err instanceof BudgetExhausted) {
+            return { stop: "budgetExhausted" };
+          }
+          if (signal?.aborted) {
+            return { stop: "aborted" };
+          }
+          throw err;
+        }
+      },
+    });
+
+    // Committed in draw order, not completion order: a variant is accepted
+    // only if it beats every variant drawn before it, and deciding that on
+    // whichever sweep returned first would make the run's lineage a property
+    // of the network.
+    for (const [index, outcome] of swept.entries()) {
+      if (outcome.stop !== undefined) {
+        roundStop = outcome.stop;
+        break;
       }
       variantsEvaluated += 1;
 
-      const score = measuredMean(evaluation);
+      const score = measuredMean(outcome.evaluation);
       // The variant measured the provider rather than its own text, so there
       // is nothing here to compare the incumbent against.
       if (score !== undefined && score > bestScore) {
@@ -478,9 +530,9 @@ async function runRandomSearch<
           score,
           previousScore: bestScore,
         });
-        best = candidate;
+        best = scheduled[index] as Candidate<K>;
         bestScore = score;
-        bestOutputs = evaluation.outputs;
+        bestOutputs = outcome.evaluation.outputs;
       }
     }
 

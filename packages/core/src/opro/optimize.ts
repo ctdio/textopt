@@ -11,7 +11,7 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent } from "../evaluation.js";
+import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
@@ -220,6 +220,15 @@ export interface OproResult<
   /** State as of the last round, ready to hand back as `resumeFrom`. */
   snapshot: OproSnapshot;
 }
+
+/**
+ * What one proposal's screen produced, or why it never ran. Carried rather
+ * than thrown so a round that ran out of allowance or was cancelled still
+ * commits the proposals ahead of it, exactly as the serial round did.
+ */
+type AttemptOutcome<Output> =
+  | { evaluation: ScoredBatch<Output>; stop?: undefined }
+  | { evaluation?: undefined; stop: OproStopReason };
 
 /**
  * Rounds that may pass without a proposal nobody has tried before, per
@@ -528,6 +537,17 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     });
   }
 
+  /** What screening a candidate would cost, in rollouts nothing has cached. */
+  function screenCost(candidate: Candidate<K>): number {
+    return scoringSet === undefined
+      ? evaluator.countUncached({ candidate, ids: validationIds, split: "val" })
+      : evaluator.countUncached({
+          candidate,
+          ids: scoringIds as string[],
+          split: "train",
+        });
+  }
+
   // A resumed run already knows what the seed scored. Re-sweeping it would
   // charge the budget a second time for a number the checkpoint carries.
   const seedEvaluation =
@@ -724,23 +744,62 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
 
     let roundStop: OproStopReason | undefined;
 
-    for (const text of unique) {
-      const candidate = { ...best, [component]: text } as Candidate<K>;
+    // Every screen in the round is priced against the allowance before any of
+    // them runs. Reserving mid-fan-out instead would hand the round to
+    // whichever proposal reached the budget first, so which proposals a round
+    // screens would stop being a property of the search.
+    const scheduled: Candidate<K>[] = [];
+    let owed = 0;
 
-      let evaluation: Awaited<ReturnType<typeof sweep>>;
-      try {
-        evaluation = await screen(candidate, "validation");
-      } catch (err) {
-        if (err instanceof BudgetExhausted) {
-          roundStop = "budgetExhausted";
-          break;
-        }
-        if (signal?.aborted) {
-          roundStop = "aborted";
-          break;
-        }
-        throw err;
+    for (const text of unique) {
+      // Every proposal in a round replaces the same component of the same
+      // incumbent, so a sibling accepted mid-round changes nothing about what
+      // the rest are: building them all here is what the serial round reached.
+      const candidate = { ...best, [component]: text } as Candidate<K>;
+      const cost = screenCost(candidate);
+
+      if (!budget.canAfford(owed + cost)) {
+        roundStop = "budgetExhausted";
+        break;
       }
+      owed += cost;
+      scheduled.push(candidate);
+    }
+
+    const screened = await mapWithConcurrency({
+      items: scheduled,
+      limit: concurrency,
+      // Cancellation is reported per proposal rather than thrown out of the
+      // fan-out, so an aborted round still records the screens it paid for.
+      task: async (candidate): Promise<AttemptOutcome<Output>> => {
+        if (signal?.aborted) {
+          return { stop: "aborted" };
+        }
+        try {
+          return { evaluation: await screen(candidate, "validation") };
+        } catch (err) {
+          if (err instanceof BudgetExhausted) {
+            return { stop: "budgetExhausted" };
+          }
+          if (signal?.aborted) {
+            return { stop: "aborted" };
+          }
+          throw err;
+        }
+      },
+    });
+
+    // Committed in draw order, not completion order: the history is what the
+    // next round's meta-prompt reads as a gradient, and an attempt counts as
+    // accepted only if it beat every attempt drawn before it.
+    for (const [index, outcome] of screened.entries()) {
+      if (outcome.stop !== undefined) {
+        roundStop = outcome.stop;
+        break;
+      }
+      const candidate = scheduled[index] as Candidate<K>;
+      const text = candidate[component];
+      const evaluation = outcome.evaluation;
 
       const score = measuredMean(evaluation);
       // The attempt measured the provider rather than the text. Recording it

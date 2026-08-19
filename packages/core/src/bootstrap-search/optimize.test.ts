@@ -177,3 +177,143 @@ describe("BootstrapSearchOptimizer", () => {
     ).rejects.toThrow("does not belong to this run");
   });
 });
+
+describe("BootstrapSearchOptimizer concurrency", () => {
+  test("sweeps several candidates at the same time", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new BootstrapSearchOptimizer({
+      candidates: 4,
+      concurrency: 4,
+      seed: 1,
+    }).optimize({ ...task(), adapter: tracked.adapter });
+
+    expect(tracked.maxInFlight()).toBeGreaterThan(1);
+  });
+
+  test("sweeps them one at a time by default", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new BootstrapSearchOptimizer({ candidates: 4, seed: 1 }).optimize({
+      ...task(),
+      adapter: tracked.adapter,
+    });
+
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("tries the same candidates whether or not the sweeps overlap", async () => {
+    const serial = await new BootstrapSearchOptimizer({
+      candidates: 6,
+      seed: 1,
+    }).optimize(task());
+    const concurrent = await new BootstrapSearchOptimizer({
+      candidates: 6,
+      concurrency: 3,
+      seed: 1,
+    }).optimize(task());
+
+    expect(concurrent.candidates).toEqual(serial.candidates);
+    expect(concurrent.bestCandidate).toEqual(serial.bestCandidate);
+    expect(concurrent.bestScore).toBe(serial.bestScore);
+    expect(concurrent.metricCalls).toBe(serial.metricCalls);
+    expect(concurrent.bootstrapMetricCalls).toBe(serial.bootstrapMetricCalls);
+    expect(concurrent.stopReason).toBe(serial.stopReason);
+  });
+
+  test("harvests in plan order however the sweeps interleave", async () => {
+    // Every harvest draws from the same random stream, so a run whose harvests
+    // ran in a different order is a different run at the same seed.
+    const run = async (pace: (candidate: string) => number) => {
+      const result = await new BootstrapSearchOptimizer({
+        candidates: 6,
+        concurrency: 3,
+        seed: 1,
+      }).optimize({ ...task(), adapter: withPacing(baseAdapter(), pace) });
+
+      return result.snapshot;
+    };
+
+    const shortestFirst = await run((candidate) => candidate.length % 5);
+    const longestFirst = await run((candidate) => 5 - (candidate.length % 5));
+
+    expect(shortestFirst.rngState).toBe(longestFirst.rngState);
+    expect(shortestFirst.candidates).toEqual(longestFirst.candidates);
+  });
+
+  test("never spends past the budget when the sweeps overlap", async () => {
+    const result = await new BootstrapSearchOptimizer({
+      candidates: 8,
+      concurrency: 4,
+      seed: 1,
+    }).optimize({ ...task(), maxMetricCalls: 40 });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(40);
+  });
+
+  test("stops at the target score without sweeping past it", async () => {
+    // A target score is a serial stopping condition: a wave that had already
+    // bought the candidates behind the winner would pay for readings the
+    // search asked it not to take.
+    const tracked = withOverlapTracking(baseAdapter());
+
+    const result = await new BootstrapSearchOptimizer({
+      candidates: 8,
+      concurrency: 4,
+      stopAtScore: 0.1,
+      seed: 1,
+    }).optimize({ ...task(), adapter: tracked.adapter });
+
+    expect(result.stopReason).toBe("scoreReached");
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("rejects a concurrency below one", () => {
+    expect(() => new BootstrapSearchOptimizer({ concurrency: 0 })).toThrow(
+      /concurrency/,
+    );
+  });
+});
+
+/** Wraps an adapter to observe how many evaluations are ever in flight at once. */
+function withOverlapTracking<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+): {
+  adapter: Adapter<Datum, Trajectory, Output>;
+  maxInFlight: () => number;
+} {
+  let inFlight = 0;
+  let peak = 0;
+
+  return {
+    maxInFlight: () => peak,
+    adapter: {
+      evaluate: async (args) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          await Promise.resolve();
+          return await adapter.evaluate(args);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    },
+  };
+}
+
+/** Settles each evaluation after a delay the candidate's own text decides. */
+function withPacing<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+  pace: (candidate: string) => number,
+): Adapter<Datum, Trajectory, Output> {
+  return {
+    evaluate: async (args) => {
+      const ticks = pace(Object.values(args.candidate).join(" "));
+      for (let tick = 0; tick < ticks; tick += 1) {
+        await Promise.resolve();
+      }
+      return adapter.evaluate(args);
+    },
+  };
+}

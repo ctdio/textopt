@@ -379,3 +379,137 @@ describe("RandomSearchOptimizer checkpoints", () => {
     expect(interrupted.snapshot.cache).toBeUndefined();
   });
 });
+
+describe("RandomSearchOptimizer concurrency", () => {
+  test("scores a round's variants at the same time", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new RandomSearchOptimizer({
+      variants: 4,
+      concurrency: 4,
+      maxRounds: 2,
+    }).optimize({ ...task(), adapter: tracked.adapter });
+
+    expect(tracked.maxInFlight()).toBeGreaterThan(1);
+  });
+
+  test("scores them one at a time by default", async () => {
+    const tracked = withOverlapTracking(baseAdapter());
+
+    await new RandomSearchOptimizer({ variants: 4, maxRounds: 2 }).optimize({
+      ...task(),
+      adapter: tracked.adapter,
+    });
+
+    expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("reaches the same incumbent whether or not the sweeps overlap", async () => {
+    const serial = await new RandomSearchOptimizer({
+      variants: 4,
+      maxRounds: 3,
+    }).optimize(task());
+    const concurrent = await new RandomSearchOptimizer({
+      variants: 4,
+      concurrency: 4,
+      maxRounds: 3,
+    }).optimize(task());
+
+    expect(concurrent.bestCandidate).toEqual(serial.bestCandidate);
+    expect(concurrent.bestScore).toBe(serial.bestScore);
+    expect(concurrent.metricCalls).toBe(serial.metricCalls);
+    expect(concurrent.variantsEvaluated).toBe(serial.variantsEvaluated);
+    expect(concurrent.stopReason).toBe(serial.stopReason);
+  });
+
+  test("reports the same acceptances whichever order the sweeps finish in", async () => {
+    // The incumbent ratchet is the one piece of a round that is order
+    // dependent: a variant is accepted only if it beats every variant before
+    // it. Deciding that on whichever sweep returned first would make the
+    // reported lineage a property of the network rather than of the search.
+    const run = async (pace: (candidate: string) => number) => {
+      const events: string[] = [];
+
+      await new RandomSearchOptimizer({
+        variants: 4,
+        concurrency: 4,
+        maxRounds: 3,
+      }).optimize({
+        ...task(),
+        adapter: withPacing(baseAdapter(), pace),
+        onEvent: (event) => {
+          if (event.type === "candidateAccepted") {
+            events.push(`${event.round}:${event.score}`);
+          }
+        },
+      });
+
+      return events;
+    };
+
+    const shortestFirst = await run((candidate) => candidate.length);
+    const longestFirst = await run((candidate) => 100 - candidate.length);
+
+    expect(shortestFirst).toEqual(longestFirst);
+    expect(shortestFirst.length).toBeGreaterThan(0);
+  });
+
+  test("never spends past the budget when the sweeps overlap", async () => {
+    const result = await new RandomSearchOptimizer({
+      variants: 4,
+      concurrency: 4,
+      maxRounds: 20,
+    }).optimize({ ...task(), maxMetricCalls: 30 });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(30);
+  });
+
+  test("rejects a concurrency below one", () => {
+    expect(() => new RandomSearchOptimizer({ concurrency: 0 })).toThrow(
+      /concurrency/,
+    );
+  });
+});
+
+/** Wraps an adapter to observe how many evaluations are ever in flight at once. */
+function withOverlapTracking<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+): {
+  adapter: Adapter<Datum, Trajectory, Output>;
+  maxInFlight: () => number;
+} {
+  let inFlight = 0;
+  let peak = 0;
+
+  return {
+    maxInFlight: () => peak,
+    adapter: {
+      evaluate: async (args) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          await Promise.resolve();
+          return await adapter.evaluate(args);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    },
+  };
+}
+
+/** Settles each evaluation after a delay the candidate's own text decides. */
+function withPacing<Datum, Trajectory, Output>(
+  adapter: Adapter<Datum, Trajectory, Output>,
+  pace: (candidate: string) => number,
+): Adapter<Datum, Trajectory, Output> {
+  return {
+    evaluate: async (args) => {
+      const ticks = pace(Object.values(args.candidate).join(" "));
+      for (let tick = 0; tick < ticks; tick += 1) {
+        await Promise.resolve();
+      }
+      return adapter.evaluate(args);
+    },
+  };
+}

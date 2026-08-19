@@ -1,5 +1,5 @@
 import { createBudget } from "../budget.js";
-import { createMemoryCache } from "../cache.js";
+import { candidateHash, createMemoryCache } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { createDeadline } from "../deadline.js";
@@ -12,7 +12,7 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent } from "../evaluation.js";
+import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
@@ -56,6 +56,18 @@ export interface BootstrapSearchConfig {
    * every candidate, which is the reliable reading and the expensive one.
    */
   stopAtScore?: number;
+  /**
+   * How many candidates may be swept at once. Default 1.
+   *
+   * Harvesting stays in plan order however this is set — every harvest draws
+   * from the same random stream, and reordering them would make a seeded run
+   * unreproducible — so what overlaps is a sweep with the harvest of the
+   * candidates behind it. Two costs come with raising it: a checkpoint is
+   * taken per wave rather than per candidate, so a killed run loses up to this
+   * many candidates instead of one, and `stopAtScore` is honoured by sweeping
+   * one at a time, since a wave cannot know it has already passed the target.
+   */
+  concurrency?: number;
   seed?: number;
   trackBestOutputs?: boolean;
   /**
@@ -165,6 +177,15 @@ export interface BootstrapSearchResult<
   snapshot: BootstrapSearchSnapshot;
 }
 
+/**
+ * What one candidate's sweep produced, or the failure it raised. Sweeps are
+ * dispatched before the harvest behind them runs, so a rejection has to be
+ * caught the moment it is dispatched and reported where the wave is committed.
+ */
+type SweepOutcome<Output> =
+  | { evaluation: ScoredBatch<Output>; failed?: undefined }
+  | { failed: true; err: unknown };
+
 const DEFAULT_CANDIDATES = 16;
 const DEFAULT_MAX_DEMOS = 4;
 const DEFAULT_MIN_DEMOS = 1;
@@ -198,6 +219,7 @@ export class BootstrapSearchOptimizer implements Optimizer<BootstrapSearchStopRe
   readonly #config: BootstrapSearchConfig;
 
   constructor(config: BootstrapSearchConfig = {}) {
+    assertBootstrapSearchConfig(config);
     this.#config = config;
   }
 
@@ -226,6 +248,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     maxLabeledDemos = DEFAULT_MAX_LABELED_DEMOS,
     demoMinScore,
     stopAtScore,
+    concurrency = 1,
     seed = 0,
     trackBestOutputs = false,
     checkpointCache = true,
@@ -387,7 +410,12 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     labeled: goldOutput !== undefined,
   });
 
-  for (; drawn < plan.length; drawn += 1) {
+  // A target score is a serial stopping condition: a wave that had already
+  // bought the candidates behind the winner would pay for readings the search
+  // was told to stop before taking.
+  const waveSize = stopAtScore === undefined ? concurrency : 1;
+
+  while (drawn < plan.length) {
     if (signal?.aborted) {
       stopReason = "aborted";
       break;
@@ -400,66 +428,108 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       stopReason = "deadlineReached";
       break;
     }
-    // A harvest and its sweep are one purchase: harvesting demos the run
-    // cannot afford to score buys nothing at all.
-    if (!budget.canAfford(validationSet.length + 1)) {
-      stopReason = "budgetExhausted";
-      break;
-    }
 
-    const source = plan[drawn] as DemoSource;
-    const block = await buildBlock(source);
-    const candidate = withDemos(block);
+    const wave: {
+      source: DemoSource;
+      candidate: Candidate<K>;
+      block: string;
+      sweep: Promise<SweepOutcome<Output>>;
+    }[] = [];
+    // A candidate identical to one already in flight is chained behind it
+    // rather than run alongside it. The cache is only written once a sweep
+    // returns, so two copies in the air would both miss and the run would buy
+    // the same score twice.
+    const inFlight = new Map<string, Promise<SweepOutcome<Output>>>();
+    let waveStop: BootstrapSearchStopReason | undefined;
 
-    let evaluation: Awaited<ReturnType<typeof sweep>>;
-    try {
-      evaluation = await sweep(candidate, "validation");
-    } catch (err) {
-      if (err instanceof BudgetExhausted) {
-        stopReason = "budgetExhausted";
+    while (wave.length < waveSize && drawn + wave.length < plan.length) {
+      // A harvest and its sweep are one purchase: harvesting demos the run
+      // cannot afford to score buys nothing at all.
+      if (!budget.canAfford(validationSet.length + 1)) {
+        waveStop = "budgetExhausted";
         break;
       }
-      if (signal?.aborted) {
-        stopReason = "aborted";
+
+      const source = plan[drawn + wave.length] as DemoSource;
+      const block = await buildBlock(source);
+      const candidate = withDemos(block);
+      const key = candidateHash(candidate);
+      const prior = inFlight.get(key);
+
+      // Dispatched rather than awaited, and its failure handled as it is
+      // dispatched: the next harvest overlaps this sweep, and a rejection left
+      // unhandled while that harvest runs would escape the loop entirely. The
+      // sweep debits the allowance synchronously, so the harvest behind it
+      // still reads the allowance the serial run would have left it.
+      const sweeping =
+        prior === undefined
+          ? settled(sweep(candidate, "validation"))
+          : prior.then(() => settled(sweep(candidate, "validation")));
+
+      inFlight.set(key, sweeping);
+      wave.push({ source, candidate, block, sweep: sweeping });
+    }
+
+    for (const entry of wave) {
+      const outcome = await entry.sweep;
+      drawn += 1;
+
+      if (outcome.failed === true) {
+        if (outcome.err instanceof BudgetExhausted) {
+          waveStop = "budgetExhausted";
+          break;
+        }
+        if (signal?.aborted) {
+          waveStop = "aborted";
+          break;
+        }
+        throw outcome.err;
+      }
+
+      const evaluation = outcome.evaluation;
+      const score = measuredMean(evaluation);
+      // The sweep measured the provider rather than the demos, so there is
+      // nothing to compare the incumbent against.
+      if (score === undefined) {
+        continue;
+      }
+
+      const accepted = score > bestScore;
+      evaluated.push({
+        candidate: entry.candidate,
+        source: entry.source,
+        demos: countDemos(entry.block),
+        score,
+      });
+      onEvent?.({
+        type: "candidate",
+        index: evaluated.length - 1,
+        source: entry.source,
+        demos: countDemos(entry.block),
+        score,
+        accepted,
+      });
+
+      if (accepted) {
+        best = entry.candidate;
+        bestScore = score;
+        bestOutputs = evaluation.outputs;
+      }
+
+      if (stopAtScore !== undefined && score >= stopAtScore) {
+        waveStop = "scoreReached";
         break;
       }
-      throw err;
     }
 
-    const score = measuredMean(evaluation);
-    // The sweep measured the provider rather than the demos, so there is
-    // nothing to compare the incumbent against.
-    if (score === undefined) {
-      continue;
-    }
-
-    const accepted = score > bestScore;
-    evaluated.push({
-      candidate,
-      source,
-      demos: countDemos(block),
-      score,
-    });
-    onEvent?.({
-      type: "candidate",
-      index: evaluated.length - 1,
-      source,
-      demos: countDemos(block),
-      score,
-      accepted,
-    });
-
-    if (accepted) {
-      best = candidate;
-      bestScore = score;
-      bestOutputs = evaluation.outputs;
-    }
-
+    // Taken once the wave has drained, never inside it: the harvests of a wave
+    // still in flight have already drawn from the random stream, and a
+    // snapshot carrying that state without the candidates it produced would
+    // resume somewhere the run has never been.
     await checkpoint();
 
-    if (stopAtScore !== undefined && score >= stopAtScore) {
-      stopReason = "scoreReached";
-      drawn += 1;
+    if (waveStop !== undefined) {
+      stopReason = waveStop;
       break;
     }
   }
@@ -589,6 +659,30 @@ function candidatePlan(args: {
     "unshuffled" as const,
     ...Array.from({ length: shuffledHarvests }, () => "bootstrapped" as const),
   ];
+}
+
+/** Turns a sweep into a value, so a dispatched one never rejects unobserved. */
+function settled<Output>(
+  sweeping: Promise<ScoredBatch<Output>>,
+): Promise<SweepOutcome<Output>> {
+  return sweeping.then(
+    (evaluation) => ({ evaluation }),
+    (err: unknown) => ({ failed: true as const, err }),
+  );
+}
+
+/**
+ * Range checks on the search knobs, run at construction so a configuration
+ * that could never terminate is refused before a task is ever handed to it.
+ */
+function assertBootstrapSearchConfig(config: BootstrapSearchConfig): void {
+  const { concurrency = 1 } = config;
+
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(
+      `concurrency must be a positive integer, received ${concurrency}`,
+    );
+  }
 }
 
 function countDemos(block: string): number {

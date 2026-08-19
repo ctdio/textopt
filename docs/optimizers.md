@@ -182,6 +182,8 @@ Only the finalists are scored on the full validation set: the step winners are s
 
 Its batch defaults are wide on purpose: a step reads the disagreement between programs over a batch, and a narrow batch leaves little to rank. When a run has to get cheaper, lower `candidates` first — it shrinks both the step and the reserve, where `minibatchSize` shrinks the step alone and narrows the batch the ranking reads.
 
+`concurrency` overlaps the two places a step's work is independent: scoring the candidates it built, and the finalist sweeps at the end. The trajectory samples and the mutations that read them stay in sequence — each reads what the one before it wrote — so the ceiling on what it buys is the reserve and the scoring, not the whole step. See [Concurrency](./tuning.md#concurrency).
+
 ### Bootstrapped few-shot search
 
 ```ts
@@ -208,6 +210,8 @@ DSPy's `BootstrapFewShotWithRandomSearch`. It calls no model to write text: ever
 
 Zero-shot stays in the running throughout. Demonstrations can hurt, and a search that cannot return "no demos" has no baseline to report against.
 
+`concurrency` overlaps a candidate's sweep with the harvest of the candidates behind it, which is most of the wall clock on a run whose harvests are as expensive as its sweeps. Harvesting itself stays in plan order, because every harvest draws from the same random stream. It is ignored when `stopAtScore` is set, and it moves checkpointing from once per candidate to once per wave — see [Concurrency](./tuning.md#concurrency).
+
 `candidates` is the whole search: each one is a fresh harvest and a full sweep, so it sets both the breadth and the bill. `demoMinScore` is the knob that surprises — a strict threshold does not cost less, it costs more, because a harvest keeps rolling out training instances until it has collected `maxDemos` of them or run out of set. If harvests come back with no demos, the seed cannot yet produce work its own metric rewards, and few-shot search is the wrong tool until it can.
 
 ### OPRO
@@ -233,6 +237,8 @@ result.trajectory; // every candidate scored, in the order it was tried
 By default, every proposal is scored on the full `validationSet`. With `scoringSetSize`, proposals are screened on a fixed subset of `trainingSet`, and the incumbent receives a full sweep every `fullEvalInterval` rounds. In a 30-instance validation set, screening on 12 instances halved rollout count without reducing the measured best score.
 
 The meta-prompt lists the strongest attempts in ascending score order, placing the best attempt nearest the request. `scoreScale` converts scores to integers (100 by default), because models distinguish values such as 41 and 68 more reliably than 0.41 and 0.68.
+
+Because every proposal in a round sees the same history and is screened against the same incumbent, `concurrency` runs a whole round — proposals and screens together — at once, and the round still records its attempts in the order it drew them.
 
 Rounds are where OPRO gets its signal: every proposal in a round sees the same history, so `proposalsPerRound` widens a round rather than deepening the search, and the history a later prompt reads only grows between rounds. A run also moves one component per round, in turn, so a two-component candidate needs twice the rounds to revise each as often. Budget for rounds first, then set `proposalsPerRound` to what a round can afford — `maxReflectionCalls` caps the two together, at `maxReflectionCalls / proposalsPerRound` rounds.
 
@@ -281,5 +287,7 @@ const result = await new RandomSearchOptimizer({
 ```
 
 Random search paraphrases one component per round and keeps the highest-scoring candidate. Its prompt receives no performance data. Compare it with a reflective optimizer under the same metric budget to measure the benefit of reflection.
+
+`concurrency` runs a round's variants at once, proposal and sweep together, and is the one setting here that changes nothing about the search — the round still accepts a variant only if it beat every variant drawn before it.
 
 Being a baseline is the whole configuration: give it the `maxMetricCalls` and `validationSet` of the run it stands against, and change nothing else. A baseline on a smaller budget answers a different question than the one being asked of it. [`compare()`](./evaluation.md#comparing-optimizers) runs both over the same seeds and ranks them on the held-out score, but each entrant builds its own task, so keeping the budgets equal is still yours to do.
