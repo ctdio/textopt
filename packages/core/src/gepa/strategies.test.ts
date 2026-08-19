@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { createSeededRng } from "../rng.js";
 import {
   currentBestSelector,
+  lowerBoundEvaluationPolicy,
+  pairedPermutationAcceptance,
   epsilonGreedySelector,
   fullEvaluationPolicy,
   improvementAcceptance,
@@ -267,3 +269,95 @@ function buildRecord(args: {
     componentCursor: 0,
   };
 }
+
+describe("pairedPermutationAcceptance", () => {
+  test("accepts a child that improved on every instance of the batch", () => {
+    const accepted = pairedPermutationAcceptance()({
+      parentScores: [0, 0, 0],
+      childScores: [1, 1, 1],
+    });
+
+    expect(accepted).toBe(true);
+  });
+
+  test("rejects a child carried by one instance out of four", () => {
+    // Sum improvement accepts this: +1 on one instance beats three ties. One
+    // rollout is not evidence, and promoting on it is how a run fills its
+    // pool with candidates the validation sweep then throws away.
+    const scores = { parentScores: [1, 1, 1, 0], childScores: [1, 1, 1, 1] };
+
+    expect(improvementAcceptance()(scores)).toBe(true);
+    expect(pairedPermutationAcceptance()(scores)).toBe(false);
+  });
+
+  test("rejects a child that lost ground overall", () => {
+    const accepted = pairedPermutationAcceptance()({
+      parentScores: [1, 1, 1],
+      childScores: [1, 0, 1],
+    });
+
+    expect(accepted).toBe(false);
+  });
+
+  test("rejects a batch in which nothing moved", () => {
+    const accepted = pairedPermutationAcceptance()({
+      parentScores: [1, 1, 1],
+      childScores: [1, 1, 1],
+    });
+
+    expect(accepted).toBe(false);
+  });
+
+  test("accepts a consistent gain over a batch too large to enumerate", () => {
+    // Past `maxExact` the p-value comes from a normal approximation rather
+    // than every sign flip, and has to reach the same verdict.
+    const parentScores = Array.from({ length: 24 }, () => 0.5);
+    const childScores = Array.from({ length: 24 }, () => 0.6);
+
+    expect(
+      pairedPermutationAcceptance({ maxExact: 12 })({
+        parentScores,
+        childScores,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("lowerBoundEvaluationPolicy", () => {
+  test("prefers the steadier of two candidates swept over the same instances", () => {
+    // The spiky candidate has the higher mean, carried by four instances out
+    // of six. That is the shape of a candidate fitted to the validation set
+    // rather than to the task, and it is what the run then reports.
+    const records = [
+      buildRecord({
+        id: 0,
+        instanceScores: [0.55, 0.55, 0.55, 0.55, 0.55, 0.55],
+      }),
+      buildRecord({ id: 1, instanceScores: [1, 1, 1, 1, 0, 0.2] }),
+    ];
+
+    expect(fullEvaluationPolicy().bestCandidate(records)).toBe(1);
+    expect(lowerBoundEvaluationPolicy({ z: 2 }).bestCandidate(records)).toBe(0);
+  });
+
+  test("returns the higher mean when both candidates are equally steady", () => {
+    const records = [
+      buildRecord({ id: 0, instanceScores: [0.5, 0.5, 0.5, 0.5] }),
+      buildRecord({ id: 1, instanceScores: [0.6, 0.6, 0.6, 0.6] }),
+    ];
+
+    expect(lowerBoundEvaluationPolicy().bestCandidate(records)).toBe(1);
+  });
+
+  test("selects every validation instance, as a full sweep does", () => {
+    const selected = lowerBoundEvaluationPolicy().selectInstances({
+      validationSet: [1, 2, 3],
+      candidate: { instruction: "text" },
+      records: [],
+      iteration: 0,
+      rng: createSeededRng(1),
+    });
+
+    expect(selected).toEqual([0, 1, 2]);
+  });
+});

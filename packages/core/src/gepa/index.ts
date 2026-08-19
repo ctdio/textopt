@@ -1,4 +1,10 @@
 export { createDemoProposer } from "./demos.js";
+export { createPipelineAdapter } from "./pipeline.js";
+export type {
+  PipelineModule,
+  PipelineStep,
+  PipelineTrace,
+} from "./pipeline.js";
 export { GepaOptimizer } from "./optimize.js";
 export type { GepaConfig, GepaResult, GepaTask } from "./optimize.js";
 export {
@@ -18,6 +24,8 @@ export {
   epsilonGreedySelector,
   fullEvaluationPolicy,
   improvementAcceptance,
+  lowerBoundEvaluationPolicy,
+  pairedPermutationAcceptance,
   paretoSelector,
   roundRobinComponentSelector,
   subsampledEvaluationPolicy,

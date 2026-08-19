@@ -1,4 +1,4 @@
-import { argmax, sum } from "../math.js";
+import { argmax, signFlipPValue, sum } from "../math.js";
 import { componentNames } from "../types.js";
 import {
   buildInstanceFronts,
@@ -127,6 +127,33 @@ export function fullEvaluationPolicy<
 }
 
 /**
+ * A full sweep, with the winner chosen by a lower confidence bound on its mean
+ * rather than by the mean itself: `mean - z * standardError`, over the
+ * instances the candidate was scored on.
+ *
+ * The reference picks the highest mean. That is an argmax over every candidate
+ * a run produced, all measured on the same instances, so the winner is
+ * systematically the one whose instance-level noise happened to land in its
+ * favour — the gap this library reports between `bestScore` and `testScore`.
+ * Penalising spread prefers a candidate that was even across the set to one
+ * carried by a few instances, at the cost of sometimes returning a genuinely
+ * better but less consistent candidate. It changes only which candidate is
+ * reported, never which ones the search explores.
+ */
+export function lowerBoundEvaluationPolicy<
+  Datum = unknown,
+  K extends string = string,
+>(args: { z?: number } = {}): ValEvaluationPolicy<Datum, K> {
+  const { z = 1 } = args;
+
+  return {
+    selectInstances: ({ validationSet }) =>
+      validationSet.map((_, index) => index),
+    bestCandidate: (records) => bestByLowerBound({ records, z }),
+  };
+}
+
+/**
  * Score each candidate on a random subset of the validation set. Cheaper per
  * acceptance, at the cost of comparing candidates measured on different
  * instances — coverage breaks ties, so a candidate cannot win by having been
@@ -194,6 +221,40 @@ export function improvementAcceptance(
 }
 
 /**
+ * Accepts a child only when a paired permutation test over the minibatch says
+ * its gain is unlikely to be noise. Pairs are the same instances run by both
+ * candidates, so the test is over the per-instance differences.
+ *
+ * The reference accepts on any sum improvement. On a minibatch of three that
+ * promotes a candidate one lucky rollout ahead, which is what fills a pool
+ * with children the validation sweep then discards. The cost is that small
+ * batches cannot produce small p-values at all — with three instances the
+ * smallest attainable is 0.125 — so this accepts only a clean sweep there.
+ * That is the honest reading of three rollouts, not a limitation to tune
+ * around: raise `minibatchSize` to buy the power to detect smaller gains.
+ */
+export function pairedPermutationAcceptance(
+  args: { alpha?: number; maxExact?: number } = {},
+): AcceptancePolicy {
+  const { alpha = 0.2, maxExact = 16 } = args;
+
+  return ({ parentScores, childScores }) => {
+    const differences: number[] = [];
+    for (let index = 0; index < parentScores.length; index += 1) {
+      differences.push(
+        (childScores[index] as number) - (parentScores[index] as number),
+      );
+    }
+
+    const observed = sum(differences);
+    if (observed <= 0) {
+      return false;
+    }
+    return signFlipPValue({ differences, observed, maxExact }) <= alpha;
+  };
+}
+
+/**
  * Highest mean over the instances it was scored on, with wider coverage
  * winning a tie: a candidate measured on more instances has earned the same
  * mean against more evidence.
@@ -220,4 +281,49 @@ function bestByMeanThenCoverage<K extends string>(
     }
   }
   return bestId;
+}
+
+/**
+ * Highest lower bound on the mean, over the instances each candidate was
+ * scored on. The bound is `mean - z * standardError`; a candidate scored on
+ * one instance has no spread to measure, so it is ranked on its mean alone
+ * rather than being flattered by an undefined variance.
+ */
+function bestByLowerBound<K extends string>(args: {
+  records: readonly CandidateRecord<K>[];
+  z: number;
+}): number {
+  const { records, z } = args;
+
+  let bestId = 0;
+  let bestBound = Number.NEGATIVE_INFINITY;
+
+  for (const record of records) {
+    const scored = record.instanceScores.filter(
+      (score): score is number => score !== undefined,
+    );
+    if (scored.length === 0) {
+      continue;
+    }
+
+    const bound =
+      scored.length < 2
+        ? record.aggregateScore
+        : record.aggregateScore - z * standardError(scored);
+    if (bound > bestBound) {
+      bestBound = bound;
+      bestId = record.id;
+    }
+  }
+  return bestId;
+}
+
+function standardError(scores: readonly number[]): number {
+  const mean =
+    scores.reduce((total, score) => total + score, 0) / scores.length;
+  const variance =
+    scores.reduce((total, score) => total + (score - mean) ** 2, 0) /
+    (scores.length - 1);
+
+  return Math.sqrt(variance / scores.length);
 }
