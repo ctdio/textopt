@@ -1,7 +1,7 @@
 # Working in this repository
 
 textopt is a TypeScript library for optimizing the text inside an LLM system —
-prompts, instructions, few-shot blocks. It implements four published search
+prompts, instructions, few-shot blocks. It implements six published search
 algorithms over a shared substrate, plus adapters for common frameworks.
 
 Read this before changing anything. The conventions below are not stylistic
@@ -12,14 +12,19 @@ a day.
 
 ```
 packages/core        the substrate and every optimizer
-  src/               "."            evaluation, budget, cache, demos, rng, types
-  src/gepa/          "./gepa"       reflective evolution over a Pareto frontier
-  src/opro/          "./opro"       score-history meta-prompting
-  src/mipro/         "./mipro"      joint search with a TPE surrogate
-  src/random-search/ "./random-search"
-  src/testing.ts     "./testing"    fixtures shared by tests
+  src/                   "."         evaluation, budget, cache, demos, judge,
+                                     compare, deadline, checkpoint, rng, types
+  src/gepa/              "./gepa"    reflective evolution over a Pareto frontier
+  src/simba/             "./simba"   mini-batch ascent on program disagreement
+  src/opro/              "./opro"    score-history meta-prompting
+  src/mipro/             "./mipro"   joint search with a TPE surrogate
+  src/bootstrap-search/  "./bootstrap-search"   few-shot search, no proposal model
+  src/random-search/     "./random-search"
+  src/file-cache.ts      "./file-cache"         the only entry point using node:fs
+  src/testing.ts         "./testing"            fixtures shared by tests
 packages/ai-sdk, packages/braintrust, packages/langchain    adapters
 examples/                                                   runnable scripts
+bench/                                                      offline seed sweeps
 ```
 
 Each optimizer owns its directory and exports through its own entrypoint. The
@@ -36,11 +41,29 @@ npx vitest run 2>&1 | tee /tmp/test.log     # always capture, then read the file
 npx vitest run packages/core/src/mipro      # one directory
 npx vitest run -t "name of the test"        # one test
 pnpm typecheck                              # builds first, then tsc --noEmit
-npx prettier --write <paths>                # before committing
+pnpm format                                 # prettier over the repository
+pnpm lint:packages                          # publint + attw on the built packages
+pnpm bench                                  # builds, then sweeps every optimizer
+pnpm changeset                              # record a release note for a change
 ```
 
 Never re-run a suite just to re-read a failure. The output is already in the
 log file.
+
+`lint:packages` checks the published surface — subpath exports, dual type
+declarations — which the tests cannot see, because they import through source.
+It needs a build, so it runs after `pnpm build`.
+
+## Releasing
+
+Changesets owns versions. Add a changeset with the change that needs one; never
+edit a `version` field or write a release commit by hand. On `main`, the release
+workflow opens a `chore: version packages` pull request, and merging that pull
+request publishes to npm.
+
+`@textopt/ai-sdk` and `@textopt/braintrust` are `private` and listed in
+`.changeset/config.json` under `ignore`, so they neither version nor publish.
+Removing both markers is what promotes one out of beta.
 
 ## Fidelity to the papers
 
@@ -73,9 +96,26 @@ sweeps, not intuition. Two rules follow:
   every number measured under the old one. Re-run the sweep and update the
   figures, or delete them.
 
-Use a scratch script under the session scratchpad for sweeps, and delete it
-afterwards. Sweeps do not belong in the test suite; a focused regression test
-pinned to one seed does.
+`bench/` is where sweeps live. It runs every optimizer against the same offline
+tasks across seeds, with no network and no model: `bench/src/tasks.ts` supplies
+a simulated proposer that reads whichever evidence a prompt carries — written
+feedback, a score history, or neither — so what a run measures is the search
+rather than the prompt it happened to send.
+
+```bash
+pnpm bench          # 3 tasks x 5 configurations x 10 seeds, ~2 minutes
+```
+
+It rewrites `bench/results/latest.json`, which is committed: a diff there is the
+review artifact for any change to search behaviour. Commit the regenerated file
+with the change that moved it.
+
+The tasks are tuned to sit off both ceilings — an optimizer that scores 1.000 on
+every seed is measuring nothing. If a change makes a task saturate, widen the
+task rather than keeping the number.
+
+Sweeps do not belong in the test suite; a focused regression test pinned to one
+seed does.
 
 ## Tests
 

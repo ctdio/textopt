@@ -2,31 +2,41 @@
 
 Core interfaces and optimizers for textopt.
 
-This package has no runtime dependencies. For an overview of the algorithms and guidance on choosing one, see the [project README](../../README.md).
+This package has no runtime dependencies. For an overview of the algorithms and guidance on choosing one, see the [project README](https://github.com/ctdio/textopt#readme).
 
 ## Entry points
 
-| Import                  | Contains                                                                                                        |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `textopt`               | Shared contracts, evaluator, demo utilities, cache, and concurrency helper. Optimizer classes are not exported. |
-| `textopt/gepa`          | `GepaOptimizer`, GEPA types, events, checkpoints, and configurable strategies.                                  |
-| `textopt/opro`          | `OproOptimizer` and its types and events.                                                                       |
-| `textopt/mipro`         | `MiproOptimizer`, its types, and the standalone `proposeConfiguration` TPE function.                            |
-| `textopt/random-search` | `RandomSearchOptimizer` and its types.                                                                          |
-| `textopt/testing`       | Deterministic fixtures for testing optimizers and adapters without an LLM.                                      |
+| Import                     | Contains                                                                                                                            |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `textopt`                  | Shared contracts, evaluator, judge, `compare()`, demo utilities, cache, and concurrency helper. Optimizer classes are not exported. |
+| `textopt/gepa`             | `GepaOptimizer`, GEPA types, events, checkpoints, the pipeline adapter, and configurable strategies.                                |
+| `textopt/simba`            | `SimbaOptimizer`, its advice prompt, and its bucket-ranking helpers.                                                                |
+| `textopt/opro`             | `OproOptimizer` and its types and events.                                                                                           |
+| `textopt/mipro`            | `MiproOptimizer`, its types, and the standalone `proposeConfiguration` TPE function.                                                |
+| `textopt/bootstrap-search` | `BootstrapSearchOptimizer` and its types.                                                                                           |
+| `textopt/random-search`    | `RandomSearchOptimizer` and its types.                                                                                              |
+| `textopt/file-cache`       | `createFileCache`, an append-only durable `EvaluationCache`. The only entry point that uses `node:fs`.                              |
+| `textopt/testing`          | Deterministic fixtures for testing optimizers and adapters without an LLM.                                                          |
 
 ## `textopt`
 
 ```ts
 import {
+  assertResumable,
   bootstrapDemos,
+  buildJudgePrompt,
+  compare,
   componentNames,
+  createDeadline,
   createEvaluator,
+  createJudge,
   createMemoryCache,
   formatDemos,
   mapWithConcurrency,
   parseDemos,
   parseProposedText,
+  priceUsage,
+  runFingerprint,
 } from "textopt";
 import type {
   Adapter,
@@ -34,6 +44,10 @@ import type {
   BootstrapResult,
   Candidate,
   CachedScore,
+  Comparison,
+  ComparisonRun,
+  ComparisonSummary,
+  Deadline,
   Demo,
   DemoRenderer,
   EvaluationEvent,
@@ -45,12 +59,19 @@ import type {
   EvaluationContext,
   EvaluationPhase,
   EvaluationSplit,
+  Judge,
+  JudgeCriterion,
+  JudgePromptBuilder,
   Optimizer,
   OptimizerResult,
   OptimizerTask,
+  RetryPolicy,
   Rng,
+  RolloutUsage,
   ScoreResult,
   TextModel,
+  TokenPricing,
+  UsageTotals,
 } from "textopt";
 ```
 
@@ -72,7 +93,15 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 
 **`transient`** marks scores caused by infrastructure failures such as rate limits, 5xx responses, or network errors. Transient scores are not cached.
 
-**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `testScore`, `testMetricCalls`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
+**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, `maxCostUsd`, `maxWallClockMs`, `cacheNamespace`, `retry`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `usage`, `testScore`, `testMetricCalls`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
+
+**`maxCostUsd`** and **`maxWallClockMs`** are checked between evaluations, so a run overruns by at most one of them. Neither follows from `maxMetricCalls`: reflective search grows the text it optimizes, so late rollouts cost more than early ones, and a run behind a rate limit spends almost nothing while taking as long as the provider makes it take.
+
+**`cacheNamespace`** scopes every cache key to the system the rollouts were measured under — model id, decoding settings, scorer version. Change it whenever anything outside the candidate text changes.
+
+**`retry`** is a `RetryPolicy` of `{ attempts = 2, delayMs = 500 }`. Instances the adapter marked `transient` are re-run, with the delay doubling per attempt. Retries are charged like any other rollout and never overdraw the budget.
+
+**`UsageTotals`** (`inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `rollouts`) is summed from the `RolloutUsage` entries an adapter reports. Zero throughout when the adapter reports none.
 
 **`testSet`** is excluded from search and evaluated once against the winner. Because candidates are selected on `validationSet`, `bestScore` may be fitted to it. `testScore` measures held-out performance. Test rollouts are reported as `testMetricCalls` and do not count against `maxMetricCalls`.
 
@@ -88,13 +117,23 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`componentNames(candidate)`** returns `Object.keys(candidate)` while preserving the component-name union.
 
-**`createEvaluator({ adapter, budget, cache, trackOutputs, onEvaluation, signal })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
+**`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
 **`bootstrapDemos({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps the rollouts the metric rewarded. Omit `minScore` to keep any rollout scoring above zero, as MIPROv2 does without a `metric_threshold`; pass a number to require at least that score. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
 
 **`formatDemos(demos, { render })`** and **`parseDemos(text)`** write and read the `<demo>`, `<input>`, and `<output>` block format.
 
 **`parseProposedText(text)`** extracts a proposal from a reflection response, including responses with fenced blocks or surrounding commentary.
+
+**`createJudge({ model, criteria, scale = 5, renderInput, renderOutput, buildPrompt })`** returns a `Judge<Datum, Output>`: `({ input, output, expected, signal }) => Promise<ScoreResult>`. Each `JudgeCriterion` is graded on a small integer scale and normalized; per-criterion values are returned as `objectiveScores` and the aggregate `score` is their mean. A criterion the judge failed to grade returns a transient score rather than a zero, so the instance is retried instead of recorded as a failure. **`buildJudgePrompt`** is the default template and implements `JudgePromptBuilder`.
+
+**`compare({ entrants, seeds, concurrency = 1 })`** runs each entrant over every seed and returns a `Comparison` of `winner`, `summaries`, and `runs`. Entrants are `({ seed }) => Promise<OptimizerResult>`, so the caller builds the optimizer-specific task. Ranking is on `testScore` where a run reports one, because the validation score is the number the search selected against. Each `ComparisonSummary` carries `meanScore`, `sdScore`, `minScore`, `maxScore`, `meanMetricCalls`, `meanCostUsd`, and a paired sign-flip `pValueVsWinner`.
+
+**`priceUsage({ usage, pricing })`** fills in `costUsd` on one rollout's `RolloutUsage` from a `TokenPricing` table. Adapters call it so a run's `usage.costUsd` and its `maxCostUsd` ceiling have something to read; without it both stay zero.
+
+**`createDeadline({ maxWallClockMs, now })`** returns a `Deadline` with `exceeded()` and `remainingMs()`. The optimizers build one from `maxWallClockMs`; `now` is injectable so a deadline can be tested without waiting.
+
+**`runFingerprint({ seedCandidate, trainingIds, validationIds, seed, cacheNamespace })`** and **`assertResumable({ fingerprint, snapshot })`** are the shared checkpoint guard. Every optimizer stamps its snapshot with a fingerprint and refuses one that does not match, rather than silently scoring old candidates against new data. **`candidateFingerprint(candidate)`** hashes a candidate's text.
 
 **`BatchSampler<Datum>`** and **`Rng`** are type-only exports. Their default implementations are internal.
 
@@ -182,10 +221,14 @@ When `proposeNewTexts` is implemented, the adapter generates proposals without c
 | `roundRobinComponentSelector` | none                                     | One component per iteration, walking a per-candidate cursor.                                  |
 | `allComponentsSelector`       | none                                     | Every component, every iteration.                                                             |
 | `improvementAcceptance`       | `{ minImprovement = 0 }`                 | Accepts a child whose minibatch total beats its parent's.                                     |
+| `pairedPermutationAcceptance` | `{ alpha = 0.2, maxExact = 16 }`         | Accepts only when the paired improvement survives a sign-flip test.                           |
 | `fullEvaluationPolicy`        | none                                     | Scores every validation instance per accepted candidate.                                      |
 | `subsampledEvaluationPolicy`  | `{ size }`                               | Scores `size` instances, trading frontier fidelity for rollouts.                              |
+| `lowerBoundEvaluationPolicy`  | `{ z = 1 }`                              | Full coverage, but picks the winner by mean minus `z` standard errors.                        |
 
 Each export is a factory. Selector and acceptance interfaces accept custom functions. A `ValEvaluationPolicy` is an object with `selectInstances` and `bestCandidate` methods.
+
+`pairedPermutationAcceptance` and `lowerBoundEvaluationPolicy` exist for metrics whose readings vary between runs of the same text. Both are strictly more conservative than the defaults, and on a metric that does not vary that is pure cost: in the twenty-seed benchmark the pair drops GEPA from 0.729 to 0.175 on the noiseless task and ties it on the noisy one. A sign-flip test also needs a wide enough minibatch to say anything — over three instances the smallest p-value it can produce is 0.125, so at the default `minibatchSize` no proposal clears an `alpha` below that.
 
 ### Reflection prompts
 
@@ -207,15 +250,95 @@ createDemoProposer({ components, minScore, maxDemos, render, fallback });
 
 This `proposeNewTexts` implementation fills selected components with few-shot examples from the reflective dataset. It uses existing record inputs, outputs, and scores, so it requires no additional rollouts or reflection calls. Examples are deduplicated by input and appended to the parent's block. `fallback` handles components not listed in `components`.
 
+### `createPipelineAdapter`
+
+```ts
+createPipelineAdapter({ modules, input, score, concurrency });
+```
+
+A `GepaAdapter` for a system built from several modules in sequence, where each module's instruction is its own candidate component. Each `PipelineModule` has a `component` and a `run({ instruction, input, datum, signal })`; the first module receives `input(datum)`, and each subsequent module receives the previous module's output. `score({ datum, output, steps })` returns a `ScoreResult` for the whole rollout.
+
+The trajectory is a `PipelineTrace` of `PipelineStep` entries, and the reflective dataset gives each component only its own step. That attribution is the point: reflection is only as good as the evidence it sees, and a module needs what it received and produced, not the pipeline's input and final answer.
+
+Feedback is end-to-end and every module receives the same string. A metric scores the final output, so nothing in a score alone says which module lost the point; `score` is handed the whole trace for callers who can attribute better. Errors from a module are not caught — a helper cannot tell a rate limit from a bug, so classify inside `run` and return a transient `ScoreResult`, or let `raiseOnError` decide.
+
 ### Results, events, and resuming
 
 **`GepaResult`** extends `OptimizerResult` with `bestCandidateId`, the complete candidate pool, lineage and per-instance scores, `paretoFrontier`, `scoreMatrix`, `perObjectiveBest`, `iterations`, `reflectionCalls`, `cacheHits`, and the final `snapshot`.
 
-**`stopReason`** is one of `"budgetExhausted"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxIterations"`.
+**`stopReason`** is one of `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxIterations"`.
 
 **`onEvent`** receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`.
 
-**`onCheckpoint`** runs after seed evaluation and each iteration with a JSON-serializable `GepaSnapshot`. Pass it as `resumeFrom` to continue. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed.
+**`onCheckpoint`** runs after seed evaluation and each iteration with a JSON-serializable `GepaSnapshot`. Pass it as `resumeFrom` to continue. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed. Every optimizer here has the same three: `onCheckpoint`, `resumeFrom`, and a `snapshot` on the result. A snapshot handed back as `resumeFrom` is copied, never mutated by the run that continues from it.
+
+## `textopt/simba`
+
+```ts
+import { SimbaOptimizer, buildAdvicePrompt, parseAdvice } from "textopt/simba";
+```
+
+SIMBA uses the base `Adapter`: it reads outputs, scores, and feedback and builds its own evidence, so it needs no `makeReflectiveDataset`. `SimbaTask` adds `reflect`, `demoComponents`, `instructionComponents`, `renderDemo`, `buildAdvicePrompt`, `sampler`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, and `resumeFrom`.
+
+| Option                 | Default              | Effect                                                                     |
+| ---------------------- | -------------------- | -------------------------------------------------------------------------- |
+| `minibatchSize`        | `32`                 | Instances per step. Must not exceed the trainingSet.                       |
+| `candidates`           | `6`                  | Programs sampled per step, and the ceiling on candidates built from them.  |
+| `maxSteps`             | `8`                  | Steps to run.                                                              |
+| `maxDemos`             | `4`                  | Demos a candidate may hold before the loop starts dropping them.           |
+| `samplingTemperature`  | `0.2`                | Sharpness of the pick between programs when sampling trajectories.         |
+| `candidateTemperature` | `0.2`                | Sharpness of the pick between programs when choosing what to mutate.       |
+| `strategies`           | both, or rules alone | Pins the mutation to `"appendDemo"`, `"appendRule"`, or leaves both drawn. |
+| `maxReflectionCalls`   | unbounded            | Advice calls the run may make. Bounded separately from rollouts.           |
+| `seed`                 | `0`                  | Seeds the run's random stream.                                             |
+| `checkpointCache`      | `true`               | Include cached scores in every snapshot.                                   |
+| `trackBestOutputs`     | `false`              | Keep the winner's validation outputs.                                      |
+
+Each step samples `candidates` programs from the pool over one minibatch, groups the results by instance, and ranks the instances by how much the programs disagreed — max-to-min gap first, then best score, then max-to-avg gap. Wide disagreement is a controlled experiment with the input held fixed, so the difference in reward is attributable to behaviour rather than to difficulty.
+
+Two mutations are drawn at random per instance. `appendDemo` keeps the winning rollout as a few-shot example and costs no model call; it requires `demoComponents` and is unavailable without one. `appendRule` shows the better and worse run to `reflect` and appends the returned advice to each instruction component. Neither replaces text, so demos are dropped at a Poisson rate to stop a growing block from crowding out the instruction. When the advice budget is spent, `appendDemo` carries the run alone, or the run stops with `"reflectionBudgetExhausted"` if it was the only mutation enabled.
+
+Guards keep uninformative contrasts out: a winner below the batch's tenth percentile is not a success to imitate, and a loser above the ninetieth is not a failure to avoid. When the two runs tied, the uninformative side is withheld and the model advises from one trajectory.
+
+Only the step winners are scored on the full validation set, sampled evenly across the run so early winners stay in the running — minibatch scores are noisy and the genuine best is often not the most recent. Those rollouts are reserved before the search starts, so a small `maxMetricCalls` buys fewer steps than the arithmetic suggests.
+
+**`buildAdvicePrompt`** implements `AdvicePromptBuilder` and asks for one `<advice component="name">…</advice>` block per component. **`parseAdvice(response)`** reads them back, ignoring prose written around them; a component the model had nothing to say about is absent rather than empty.
+
+`SimbaResult` adds `seedScore`, `steps`, `finalists` (the step winners with their validation scores, best first), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"maxSteps"`, or `"aborted"`.
+
+`textopt/simba` also exports the pure functions the loop is built from: `buildBuckets`, `percentile`, `softmaxWeights`, `topKPlusBaseline`, `samplePoisson`, and `evenlySpacedIndices`.
+
+Ported from DSPy's SIMBA with two deliberate changes. A trajectory sample runs one program across the whole minibatch rather than resampling a program per instance: the adapter owns decoding here, so there is no temperature knob to vary and the variability comes from the program pool. And the percentile guards are strict rather than inclusive, because on a step where every rollout ties an inclusive guard blocks every mutation and the run does nothing at all — the one case where the guard's own premise does not hold.
+
+## `textopt/bootstrap-search`
+
+```ts
+import { BootstrapSearchOptimizer } from "textopt/bootstrap-search";
+```
+
+DSPy's `BootstrapFewShotWithRandomSearch`. It uses the base `Adapter` and no reflection model at all: every candidate is assembled from outputs the system itself produced, so the search costs rollouts and nothing else. `BootstrapSearchTask` adds `demoComponents` (required), `renderDemo`, `goldOutput`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, and `resumeFrom`.
+
+| Option             | Default | Effect                                                               |
+| ------------------ | ------- | -------------------------------------------------------------------- |
+| `candidates`       | `16`    | Shuffled harvests attempted, beyond the fixed candidates.            |
+| `maxDemos`         | `4`     | Most demos a harvested set may hold.                                 |
+| `minDemos`         | `1`     | Fewest demos a shuffled harvest may ask for.                         |
+| `maxLabeledDemos`  | `16`    | Most demos the labels-only candidate may hold.                       |
+| `demoMinScore`     | unset   | Score a rollout must reach to be kept. Unset keeps any rewarded one. |
+| `stopAtScore`      | unset   | Stop as soon as a candidate reaches this validation score.           |
+| `seed`             | `0`     | Seeds the run's random stream.                                       |
+| `checkpointCache`  | `true`  | Include cached scores in every snapshot.                             |
+| `trackBestOutputs` | `false` | Keep the winner's validation outputs.                                |
+
+Candidates are tried cheapest and most reliable first, following DSPy's special seeds: zero-shot, then labels-only when `goldOutput` is supplied, then one unshuffled full-size harvest, then the shuffled ones. A run cut short by its budget therefore still has the baseline it needs to report against.
+
+Zero-shot stays in the running throughout. Demonstrations can hurt, and a search that cannot return "no demos" has no baseline. The labels-only candidate costs no rollout to build and is the only candidate available at all to a system too weak to bootstrap from.
+
+Sizes vary across the shuffled harvests because more demos is not monotonically better: a long block crowds out the instruction, and which length wins is what this search settles. A harvest and its validation sweep are treated as one purchase, so the run never harvests demos it cannot afford to score.
+
+Unlike DSPy, which bootstraps each predictor separately from the traces of one pass, this adapter interface runs the whole system: a harvest is a set of end-to-end rollouts and every demo component receives the same block. For per-module demos, use `createPipelineAdapter` with GEPA.
+
+`BootstrapSearchResult` adds `seedScore`, `candidates` (each with its `source`, demo count, and score), `bootstrapMetricCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"scoreReached"`, `"candidatesExhausted"`, or `"aborted"`.
 
 ## `textopt/opro`
 
@@ -254,7 +377,7 @@ In this sweep, 12 screening instances cut rollout count by 48% without changing 
 
 The reference implementation selects its winner by training-subset score. textopt instead returns the best candidate evaluated on the full validation set, so `bestScore` never falls below `seedScore`. Screening scores still guide the search but cannot determine the returned winner.
 
-`OproResult` adds `seedScore`, `rounds`, `trajectory` (every candidate scored, in order), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxRounds"`.
+`OproResult` adds `seedScore`, `rounds`, `trajectory` (every candidate scored, in order), `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"maxRounds"`, or `"aborted"`.
 
 History is sorted by ascending score so the strongest attempt appears nearest the request. Scores are shown as integers because models distinguish 41 from 68 more reliably than 0.41 from 0.68.
 
@@ -301,7 +424,9 @@ The surrogate includes both minibatch and full-evaluation observations, matching
 
 One difference from MIPROv2 is that textopt keeps labelled demo sets as separate menu options; MIPROv2 pads bootstrapped sets with labelled examples.
 
-`MiproResult` adds `seedScore`, `trials`, `menu`, `observations`, `fullEvaluations`, `bootstrapMetricCalls`, `reflectionCalls`, and `cacheHits`. Only full validation evaluations update the incumbent; minibatch scores select configurations for full evaluation.
+`MiproResult` adds `seedScore`, `trials`, `menu`, `observations`, `fullEvaluations`, `bootstrapMetricCalls`, `reflectionCalls`, and `cacheHits`. Only full validation evaluations update the incumbent; minibatch scores select configurations for full evaluation. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"maxTrials"`, or `"aborted"`.
+
+A `MiproSnapshot` carries the option menus alongside the usual budget and RNG state. The menus matter most: building them is the expensive half of a run — a reflection call per instruction and a harvesting pass per demo set — and they are also what every trial's choice vector indexes into, so a resumed run that rebuilt them would both pay twice and reinterpret every observation it had already made.
 
 **`proposeConfiguration({ observations, menuSizes, gamma, samples, startupTrials, multivariate, rng })`** exposes the TPE surrogate separately. It splits observations into good and remaining groups, models each density, samples from the good density, and ranks samples by the log density ratio.
 
@@ -324,9 +449,27 @@ import { RandomSearchOptimizer } from "textopt/random-search";
 | `maxRounds`   | `Infinity`              | Round ceiling.                                    |
 | `buildPrompt` | `buildParaphrasePrompt` | Replaces the paraphrase template.                 |
 
-`RandomSearchResult` adds `seedScore`, `rounds`, `variantsEvaluated`, `reflectionCalls`, and `cacheHits`.
+`RandomSearchResult` adds `seedScore`, `rounds`, `variantsEvaluated`, `reflectionCalls`, and `cacheHits`. `stopReason` is `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"maxRounds"`, `"proposerStalled"`, or `"aborted"`.
+
+`"proposerStalled"` is the guard against a livelock: a proposer that returns duplicates, or texts already in the cache, spends no budget at all, so with `maxRounds` unset the loop would spin forever burning reflection calls. A full pass over the components that buys neither a rollout nor an improvement ends the run.
 
 The paraphrase prompt receives no score or feedback. Compare random search with a reflective optimizer under the same metric budget to measure the effect of reflection.
+
+## `textopt/file-cache`
+
+```ts
+import { createFileCache } from "textopt/file-cache";
+
+const cache = createFileCache({ path: ".textopt/scores.jsonl" });
+```
+
+An `EvaluationCache` that outlives the process, as an append-only JSONL log. A long run against a real provider is measured in hours and dollars, and an in-memory cache throws all of it away when the run ends.
+
+Append-only rather than rewritten: a score is never invalidated, because the key names the candidate, the instance, and the environment — and a log survives a process killed mid-write, which a file rewritten in place does not. A record that does not parse is dropped rather than fatal, since the last line of an interrupted log is routinely half-written. Later records win, so a re-measured instance replaces its earlier reading.
+
+`maxEntries` (default 1,000,000) bounds what is held in memory; the file itself is never trimmed. `entries()` is deliberately absent — it exists so a checkpoint can carry scores that would otherwise be lost, and these are already on disk.
+
+This is the only entry point that imports `node:fs`.
 
 ## `textopt/testing`
 
@@ -345,7 +488,7 @@ Deterministic keyword-coverage fixtures for testing optimizers and adapters with
 
 ## Adapters
 
-Prebuilt adapters for common stacks live alongside this package: [`@textopt/ai-sdk`](../ai-sdk), [`@textopt/langchain`](../langchain), and [`@textopt/braintrust`](../braintrust).
+Prebuilt adapters for common stacks live alongside this package: [`@textopt/ai-sdk`](https://github.com/ctdio/textopt/tree/main/packages/ai-sdk), [`@textopt/langchain`](https://github.com/ctdio/textopt/tree/main/packages/langchain), and [`@textopt/braintrust`](https://github.com/ctdio/textopt/tree/main/packages/braintrust).
 
 ## License
 

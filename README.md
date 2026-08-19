@@ -1,6 +1,6 @@
 # textopt
 
-Prompt optimization for TypeScript, with GEPA, OPRO, MIPRO, and random search behind a shared interface.
+Prompt optimization for TypeScript, with GEPA, SIMBA, OPRO, MIPRO, bootstrapped few-shot search, and random search behind a shared interface.
 
 A run takes a seed candidate, a dataset, and an adapter that evaluates each rollout. Reflective optimizers use the adapter's textual feedback to propose better candidates.
 
@@ -21,36 +21,60 @@ const result = await new GepaOptimizer({ minibatchSize: 3, seed: 11 }).optimize(
 result.bestCandidate; // { system: "..." }, same keys as the seed, checked at compile time
 ```
 
-A candidate is a record of named strings. Components can be system prompts, tool descriptions, routing rules, few-shot blocks, regexes, or configuration. All four optimizers use the same call shape.
+A candidate is a record of named strings. Components can be system prompts, tool descriptions, routing rules, few-shot blocks, regexes, or configuration. Every optimizer uses the same call shape.
 
 ## Status
 
-Pre-release. The packages are private and not yet published to npm. The test suite has more than 400 tests and runs without network access.
+`textopt` and `@textopt/langchain` are the packages this repository releases. The test suite has more than 550 tests and runs without network access.
+
+`@textopt/ai-sdk` and `@textopt/braintrust` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle.
 
 ## Choosing an optimizer
 
-All four use the same `Optimizer` interface, adapter, and budget accounting.
+All six use the same `Optimizer` interface, adapter, and budget accounting.
 
-| Optimizer               | Required signal                   | Use it for                                              |
-| ----------------------- | --------------------------------- | ------------------------------------------------------- |
-| `GepaOptimizer`         | per-instance **textual feedback** | revising text from written explanations of failures     |
-| `OproOptimizer`         | a **scalar** score                | proposing text from a history of scored attempts        |
-| `MiproOptimizer`        | a **scalar** score                | searching combinations of interacting component options |
-| `RandomSearchOptimizer` | a **scalar** score                | establishing a score-independent paraphrasing baseline  |
+| Optimizer                  | Required signal                   | Use it for                                                        |
+| -------------------------- | --------------------------------- | ----------------------------------------------------------------- |
+| `GepaOptimizer`            | per-instance **textual feedback** | revising text from written explanations of failures               |
+| `SimbaOptimizer`           | per-instance **textual feedback** | noisy metrics, where the same instance scores differently per run |
+| `OproOptimizer`            | a **scalar** score                | proposing text from a history of scored attempts                  |
+| `MiproOptimizer`           | a **scalar** score                | searching combinations of interacting component options           |
+| `BootstrapSearchOptimizer` | a **scalar** score                | few-shot demonstrations, with no proposal model at all            |
+| `RandomSearchOptimizer`    | a **scalar** score                | establishing a score-independent paraphrasing baseline            |
 
 Use GEPA when the metric can explain failures in text. A scalar such as `0.0` gives its reflection step little useful information. OPRO only needs scalar scores: its prompt lists previous attempts by score and asks the model to improve on them.
+
+SIMBA also needs textual feedback, but reads a different signal. Instead of reflecting on a failure, it runs several programs over the same instance and reflects on the _contrast_ between the best and worst run of it — a comparison with the input held fixed. That contrast has to exist to be worth paying for, so SIMBA earns its extra rollouts on metrics that vary between runs and wastes them on ones that do not.
 
 GEPA and OPRO update components separately. MIPRO instead searches combinations of per-component options, which lets it find options that work well only together. It screens configurations on minibatches and evaluates promising ones against the full validation set.
 
 MIPRO's default multivariate TPE models complete configurations. Set `multivariate: false` to model each component independently; that usually needs fewer observations but cannot model interactions between components.
 
+`BootstrapSearchOptimizer` writes no text at all. It harvests demonstrations from rollouts the metric already rewarded and searches over which set of them to keep, so it needs no proposal model and no textual feedback. Try it first when the instruction is roughly right and the output format is not.
+
 `RandomSearchOptimizer` paraphrases components without using their scores. Run it as a baseline to check whether reflection improves enough to justify its model calls.
 
 ```ts
+import { SimbaOptimizer } from "textopt/simba";
 import { OproOptimizer } from "textopt/opro";
 import { MiproOptimizer } from "textopt/mipro";
+import { BootstrapSearchOptimizer } from "textopt/bootstrap-search";
 import { RandomSearchOptimizer } from "textopt/random-search";
 ```
+
+### What the benchmark says
+
+`pnpm bench` runs every text-proposing optimizer over three offline tasks and twenty seeds, and writes [`bench/results/latest.json`](bench/results/latest.json). Scores are held-out; `p` is a paired sign-flip test against that task's winner.
+
+| Task          | Winner  | Score | Runner-up      | Score | p     |
+| ------------- | ------- | ----- | -------------- | ----- | ----- |
+| `clean`       | `gepa`  | 0.729 | `simba`        | 0.381 | 0.000 |
+| `noisy`       | `simba` | 0.511 | `gepa`         | 0.389 | 0.002 |
+| `interacting` | `gepa`  | 0.750 | `randomSearch` | 0.235 | 0.000 |
+
+The tasks differ only in their metric: `noisy` adds per-instance jitter to the same scoring function `clean` uses, and `interacting` pays only when two components are correct together. The split is the one SIMBA's premise predicts — mining disagreement costs rollouts that a noiseless metric never repays, and pays for itself once the metric is noisy.
+
+Read these as evidence about the search, not about your task. The proposal model is a deterministic stand-in, so the benchmark holds proposal quality fixed and measures what each search does with it. Use `compare()` on your own task and metric before choosing.
 
 ## How GEPA works
 
@@ -71,17 +95,20 @@ Based on _GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learnin
 
 ## Packages
 
-| Package                 | Contents                                                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `textopt`               | Shared contracts, evaluator, demo utilities, cache, sampler, and RNG types. No runtime dependencies. |
-| `textopt/gepa`          | `GepaOptimizer`, GEPA types, and configurable selection, acceptance, and evaluation strategies.      |
-| `textopt/opro`          | `OproOptimizer` and score-history prompting.                                                         |
-| `textopt/mipro`         | `MiproOptimizer`, per-component option menus, TPE search, and minibatch screening.                   |
-| `textopt/random-search` | `RandomSearchOptimizer`, a score-independent paraphrasing baseline.                                  |
-| `textopt/testing`       | Deterministic fixtures for testing optimizers and adapters without an LLM.                           |
-| `@textopt/ai-sdk`       | Vercel AI SDK adapter for `generateText` and `generateObject`, including multi-step tool traces.     |
-| `@textopt/langchain`    | Adapter for LangChain runnables, chains, agents, and LangGraph graphs.                               |
-| `@textopt/braintrust`   | autoevals scorer integration and a Braintrust logging decorator.                                     |
+| Package                    | Contents                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `textopt`                  | Shared contracts, evaluator, judge, `compare()`, demo utilities, cache, sampler, and RNG types. No runtime dependencies. |
+| `textopt/gepa`             | `GepaOptimizer`, GEPA types, the pipeline adapter, and configurable selection, acceptance, and evaluation strategies.    |
+| `textopt/simba`            | `SimbaOptimizer`, its advice prompt, and its bucket-ranking helpers.                                                     |
+| `textopt/opro`             | `OproOptimizer` and score-history prompting.                                                                             |
+| `textopt/mipro`            | `MiproOptimizer`, per-component option menus, TPE search, and minibatch screening.                                       |
+| `textopt/bootstrap-search` | `BootstrapSearchOptimizer`, few-shot search that calls no proposal model.                                                |
+| `textopt/random-search`    | `RandomSearchOptimizer`, a score-independent paraphrasing baseline.                                                      |
+| `textopt/file-cache`       | An append-only evaluation cache that outlives the process. Uses `node:fs`.                                               |
+| `textopt/testing`          | Deterministic fixtures for testing optimizers and adapters without an LLM.                                               |
+| `@textopt/ai-sdk`          | Vercel AI SDK adapter for `generateText` and `generateObject`, including multi-step tool traces. **Beta, unpublished.**  |
+| `@textopt/langchain`       | Adapter for LangChain runnables, chains, agents, and LangGraph graphs.                                                   |
+| `@textopt/braintrust`      | autoevals scorer integration and a Braintrust logging decorator. **Beta, unpublished.**                                  |
 
 ## Quickstart, offline
 
@@ -305,11 +332,96 @@ new GepaOptimizer({
 
 Component names are inferred from `seedCandidate`. Other positions use `NoInfer`, so misspelled component names fail type checking.
 
-`textopt/gepa` exports the following strategies: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `fullEvaluationPolicy`, and `subsampledEvaluationPolicy`.
+`textopt/gepa` exports the following strategies: `paretoSelector`, `currentBestSelector`, `epsilonGreedySelector`, `topKParetoSelector`, `roundRobinComponentSelector`, `allComponentsSelector`, `improvementAcceptance`, `pairedPermutationAcceptance`, `fullEvaluationPolicy`, `subsampledEvaluationPolicy`, and `lowerBoundEvaluationPolicy`.
+
+### Noisy metrics
+
+The default acceptance rule takes any minibatch improvement, and the default winner is the highest validation mean. Both are the right reading when a rollout of the same text on the same instance always scores the same. When it does not — a sampled model, a judge, a flaky tool — a run accumulates changes that only ever won a coin flip.
+
+```ts
+import {
+  lowerBoundEvaluationPolicy,
+  pairedPermutationAcceptance,
+} from "textopt/gepa";
+
+new GepaOptimizer({
+  minibatchSize: 8,
+  acceptance: pairedPermutationAcceptance({ alpha: 0.2 }),
+}).optimize({
+  ...task,
+  valEvaluationPolicy: lowerBoundEvaluationPolicy({ z: 1 }),
+});
+```
+
+`pairedPermutationAcceptance` accepts only when the paired per-instance improvement survives a sign-flip test at `alpha`. `lowerBoundEvaluationPolicy` returns the candidate with the best mean minus `z` standard errors, rather than the best mean.
+
+Both are strictly more conservative, and that costs something real. On the benchmark's noiseless tasks the pair drops GEPA from 0.729 to 0.175, because every genuine improvement now has to clear a significance bar as well; on the noisy task it neither helps nor hurts, scoring 0.389 against plain GEPA's 0.389. Turn them on when you have measured the metric's own variance and found it large, not on principle.
+
+A minibatch also has to be wide enough for the test to say anything: a sign-flip test over three instances cannot produce a p-value below 0.125, so at the default `minibatchSize` of 3 no proposal can ever be accepted at `alpha` below that.
 
 ## The other optimizers
 
-These optimizers use the base `Adapter` because they do not require GEPA's reflective dataset. Their results include both `seedScore` and `bestScore`.
+Apart from SIMBA, these use the base `Adapter`: they need no reflective dataset. Their results include both `seedScore` and `bestScore`.
+
+### SIMBA
+
+```ts
+import { SimbaOptimizer } from "textopt/simba";
+
+const result = await new SimbaOptimizer({
+  minibatchSize: 16,
+  candidates: 4,
+  maxSteps: 8,
+  seed: 11,
+}).optimize({
+  seedCandidate,
+  trainingSet,
+  validationSet,
+  adapter, // the base Adapter — no makeReflectiveDataset needed
+  reflect,
+  demoComponents: ["demos"], // optional; enables the appendDemo mutation
+  maxMetricCalls: 600,
+});
+
+result.finalists; // the step winners, scored on the full validation set, best first
+```
+
+Each step samples several programs from the pool over one minibatch, ranks the instances by how much those programs disagreed, and mutates toward whichever run won. Two mutations are drawn at random per instance:
+
+- **`appendDemo`** keeps the winning rollout as a few-shot example. Costs no model call. Requires `demoComponents`.
+- **`appendRule`** shows the better and worse run of the same instance to `reflect` and appends the advice it returns to each instruction component.
+
+Neither replaces text, so candidates accumulate; demonstrations are dropped at a Poisson rate so a growing block cannot crowd out the instruction. `strategies` pins the mutation to one of the two.
+
+Ported from DSPy's SIMBA with two deliberate changes. A trajectory sample runs one program across the whole minibatch rather than resampling a program per instance, because the adapter owns decoding here and there is no temperature knob to vary — the variability comes from the program pool instead. And the percentile guards are strict rather than inclusive, so a step on which every rollout ties still produces a mutation instead of doing nothing at all.
+
+Only the finalists are scored on the full validation set: the step winners are sampled evenly across the run, so early winners stay in the running. Those rollouts are reserved before the search starts, which is why a small `maxMetricCalls` buys fewer steps than the arithmetic suggests.
+
+### Bootstrapped few-shot search
+
+```ts
+import { BootstrapSearchOptimizer } from "textopt/bootstrap-search";
+
+const result = await new BootstrapSearchOptimizer({
+  candidates: 16,
+  maxDemos: 4,
+  seed: 11,
+}).optimize({
+  seedCandidate: { instruction, demos: "" },
+  trainingSet,
+  validationSet,
+  adapter,
+  demoComponents: ["demos"],
+  goldOutput: (datum) => datum.answer, // optional; enables the labels-only candidate
+  maxMetricCalls: 600,
+});
+
+result.candidates; // every set tried, with its source and how many demos it held
+```
+
+DSPy's `BootstrapFewShotWithRandomSearch`. It calls no model to write text: every candidate is assembled from outputs the system itself produced, so the search costs rollouts and nothing else. The fixed candidates come first — zero-shot, then labels-only when `goldOutput` is given, then one unshuffled full-size harvest — followed by shuffled harvests of random size.
+
+Zero-shot stays in the running throughout. Demonstrations can hurt, and a search that cannot return "no demos" has no baseline to report against.
 
 ### OPRO
 
@@ -405,12 +517,113 @@ The gap between `bestScore` and `testScore` estimates validation overfitting. Te
 
 All optimizers expose these fields through `OptimizerTask` and `OptimizerResult`.
 
-## Budget, caching, resume
+## Comparing optimizers
+
+A difference in means over a handful of seeds is usually noise. `compare()` runs each entrant over the same seeds, ranks them on `testScore` where a run reports one, and reports a paired sign-flip p-value against the winner:
+
+```ts
+import { compare } from "textopt";
+
+const comparison = await compare({
+  seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  concurrency: 4,
+  entrants: {
+    gepa: ({ seed }) => new GepaOptimizer({ seed }).optimize(task()),
+    opro: ({ seed }) => new OproOptimizer({ seed }).optimize(task()),
+  },
+});
+
+comparison.winner; // highest mean score
+comparison.summaries; // mean, sd, min, max, rollouts, cost, pValueVsWinner
+comparison.runs; // every individual run
+```
+
+Entrants are functions of a seed, not optimizer instances: the seed is constructor config, and every optimizer here is deterministic given one, so comparing two entrants at a single seed compares two anecdotes. Build a fresh task inside each entrant — a shared reflection model with internal state would make each result depend on the runs before it.
+
+Ranking on `testScore` matters. The validation score is the number the search selected against for its whole run, so an entrant that overfits looks strongest on exactly the number it fitted.
+
+## Judging with a model
+
+When the metric cannot be written as a string match, `createJudge` builds one from a model and returns written feedback alongside the score, which is what reflective search actually runs on:
+
+```ts
+import { createJudge } from "textopt";
+
+const judge = createJudge<Ticket, string>({
+  model: reflect,
+  scale: 5,
+  criteria: [
+    {
+      name: "accuracy",
+      description: "Every claim is supported by the ticket.",
+    },
+    { name: "tone", description: "Direct and free of filler." },
+  ],
+});
+
+const { score, feedback, objectiveScores } = await judge({
+  input: ticket,
+  output: answer,
+});
+```
+
+Each criterion is graded on a small integer scale and normalized afterwards, because models discriminate between 2 and 4 far more reliably than between 0.4 and 0.8. Per-criterion scores are returned as `objectiveScores`, so a Pareto frontier can be taken over them; the aggregate `score` is their mean.
+
+The prompt asks for feedback addressed to the _instructions_ rather than to the graded output. "The instruction never says to state the refund window" is something a rewriting model can act on; "this answer should have mentioned the refund window" is not. A criterion the judge failed to grade comes back as a transient score, so the instance is retried rather than recorded as a zero.
+
+## Multi-module pipelines
+
+When a system runs several modules in sequence and each has its own instruction, reflection is only as good as the evidence it sees — and the evidence a module needs is what _it_ received and produced, not the pipeline's input and final answer. `createPipelineAdapter` builds that attribution:
+
+```ts
+import { createPipelineAdapter } from "textopt/gepa";
+
+const adapter = createPipelineAdapter<Ticket, string, "planner" | "writer">({
+  modules: [
+    {
+      component: "planner",
+      run: ({ instruction, datum }) => plan(instruction, datum),
+    },
+    {
+      component: "writer",
+      run: ({ instruction, input }) => write(instruction, input),
+    },
+  ],
+  score: ({ datum, output, steps }) => judgeAnswer(datum, output, steps),
+  concurrency: 4,
+});
+```
+
+Each module's output is threaded into the next, and the reflective dataset gives each component only its own step. The feedback is end-to-end and every module sees the same string: a metric scores the final output, so nothing in a score alone says which module lost the point. `score` is handed the whole trace for callers who can attribute better.
+
+## Budgets, cost, and time
+
+`maxMetricCalls` bounds rollouts. It does not bound money or time, and on a long run neither of those follows from it:
+
+```ts
+await optimizer.optimize({
+  ...task,
+  maxMetricCalls: 2000,
+  maxCostUsd: 25, // stops at the first decision point past the ceiling
+  maxWallClockMs: 30 * 60_000, // overruns by at most one evaluation
+  retry: { attempts: 2, delayMs: 500 },
+});
+
+result.usage; // { inputTokens, outputTokens, totalTokens, costUsd, rollouts }
+```
+
+- **`maxCostUsd`** exists because reflective search grows the text it optimizes, so late rollouts cost more than early ones. It is checked between evaluations and reads whatever usage the adapter reported; an adapter that reports none can never trigger it. `priceUsage` fills in `costUsd` on a rollout's usage from a `TokenPricing` table; adapters call it so there is something to read.
+- **`maxWallClockMs`** exists because a run behind a rate limit spends almost nothing and takes as long as the provider makes it take. This is what makes an optimizer safe to put behind a request timeout or a nightly job. `stopReason` is `"deadlineReached"`.
+- **`retry`** re-runs instances the adapter marked `transient`. A rate limit or a 5xx otherwise costs the instance either an unexplained zero or a hole in the candidate's coverage. Retries are charged like any other rollout but never overdraw the budget. Defaults to two attempts, 500 ms apart, doubling.
+
+## Caching, checkpoints, resume
 
 - **Caching.** Cache keys include the split, complete candidate, and instance ID. Cache hits do not count against the metric budget. Instance IDs default to a content hash, with the row position as a fallback for values that cannot be serialized. Provide `instanceId` for non-serializable data or readable trace IDs. Set `cache: false` to disable caching.
-- **Checkpoints.** `onCheckpoint` runs after seed evaluation and each iteration. Its `GepaSnapshot` contains the candidate pool, budgets, RNG and sampler state, rejected proposals, merge state, and cached scores. Resume with `resumeFrom`. A fingerprint prevents resuming with a different seed candidate, instance set, or random seed.
-- **Events.** `onEvent` receives `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected`, `error`, and `finish` events.
-- **Result.** The result includes scores, held-out test results, candidate lineage, the Pareto frontier, score matrix, per-objective best candidates, call counts, stop reason, and final snapshot.
+- **`cacheNamespace`.** A cached score is a measurement of a whole system, not of a candidate. Set `cacheNamespace` to name the model id, decoding settings, and scorer version, and change it whenever anything outside the candidate text changes — otherwise a run silently reuses scores measured under a system it is no longer running.
+- **Durable caching.** `createFileCache({ path })` from `textopt/file-cache` is an append-only log that outlives the process, so a crashed run, a re-run with a changed budget, and a second experiment over the same validation set do not pay for identical rollouts again. It needs `node:fs`; for Redis or SQLite, implement `EvaluationCache` yourself.
+- **Checkpoints.** Every optimizer takes `onCheckpoint` and `resumeFrom`, and returns its final `snapshot`. Each restores exactly the state that is expensive or unrepeatable: GEPA's candidate pool, rejections and merge state; MIPRO's option menus and surrogate observations; OPRO's screening slice and score histories; SIMBA's program pool and step winners; the search's budget, RNG, sampler position and cached scores throughout. A fingerprint refuses a checkpoint from a different seed candidate, instance set, or random seed. Snapshots are plain JSON and are never mutated by the run that resumes from them.
+- **Events.** `onEvent` receives a discriminated union per optimizer. Every one of them emits `start`, `evaluation`, and `finish`.
+- **Result.** Every result carries `bestCandidate`, `bestScore`, `metricCalls`, `usage`, `stopReason`, and `snapshot`, plus whatever its own search can report.
 
 ## Examples
 
@@ -437,7 +650,12 @@ pnpm install
 pnpm test          # vitest, runs against source via workspace aliases
 pnpm build         # tsdown, per package
 pnpm typecheck     # build, then tsc --noEmit everywhere
+pnpm format        # prettier --write
+pnpm lint:packages # publint and are-the-types-wrong, against the built output
+pnpm bench         # 20-seed sweep, rewrites bench/results/latest.json
 ```
+
+`pnpm bench` takes a few minutes and makes no network calls. Its output is committed, so a change that moves an optimizer's numbers shows up in the diff.
 
 ## License
 
