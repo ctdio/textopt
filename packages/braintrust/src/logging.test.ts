@@ -1,4 +1,5 @@
-import type { EvaluationContext } from "textopt";
+import type { EvaluateArgs, EvaluationContext } from "textopt";
+import type { KeywordExample } from "textopt/testing";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "textopt/testing";
 import { describe, expect, test } from "vitest";
 import type { BraintrustEvent, BraintrustLoggerLike } from "./logging.js";
@@ -244,5 +245,85 @@ describe("withBraintrustLogging", () => {
     });
 
     expect(logger.events[0]?.expected).toEqual(["hold", "ten seconds"]);
+  });
+
+  test("logs what a rollout spent under the metric names braintrust reads", async () => {
+    // Braintrust derives an experiment's token and cost columns from `metrics`
+    // under these exact names. Reporting them anywhere else leaves the columns
+    // empty, which is the whole reason to log rollouts there.
+    const logger = createRecordingLogger();
+    const keyword = createKeywordAdapter();
+    const adapter = withBraintrustLogging({
+      adapter: {
+        ...keyword,
+        evaluate: async (args: EvaluateArgs<KeywordExample>) => ({
+          ...(await keyword.evaluate(args)),
+          usage: args.batch.map(() => ({
+            inputTokens: 120,
+            outputTokens: 30,
+            totalTokens: 150,
+            costUsd: 0.002,
+          })),
+        }),
+      },
+      logger,
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(logger.events[0]?.metrics).toEqual({
+      prompt_tokens: 120,
+      completion_tokens: 30,
+      tokens: 150,
+      cost_usd: 0.002,
+    });
+  });
+
+  test("logs no metrics for an adapter that reports no usage", async () => {
+    // An absent reading is not a zero one: a zero token count would read as a
+    // free rollout rather than an unmeasured one.
+    const logger = createRecordingLogger();
+    const adapter = withBraintrustLogging({
+      adapter: createKeywordAdapter(),
+      logger,
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(logger.events[0]?.metrics).toBeUndefined();
+  });
+
+  test("logs only the readings an adapter actually reported", async () => {
+    const logger = createRecordingLogger();
+    const keyword = createKeywordAdapter();
+    const adapter = withBraintrustLogging({
+      adapter: {
+        ...keyword,
+        evaluate: async (args: EvaluateArgs<KeywordExample>) => ({
+          ...(await keyword.evaluate(args)),
+          usage: args.batch.map(() => ({ costUsd: 0.5 })),
+        }),
+      },
+      logger,
+    });
+
+    await adapter.evaluate({
+      batch: KEYWORD_EXAMPLES.slice(0, 1),
+      candidate: CANDIDATE,
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(logger.events[0]?.metrics).toEqual({ cost_usd: 0.5 });
   });
 });

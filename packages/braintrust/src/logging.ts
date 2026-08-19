@@ -1,10 +1,11 @@
-import type { Adapter, EvaluateArgs } from "textopt";
+import type { Adapter, EvaluateArgs, RolloutUsage } from "textopt";
 
 export interface BraintrustEvent {
   input?: unknown;
   output?: unknown;
   expected?: unknown;
   scores?: Record<string, number>;
+  metrics?: Record<string, number>;
   metadata?: Record<string, unknown>;
 }
 
@@ -62,6 +63,7 @@ export function withBraintrustLogging<
       const evaluation = await adapter.evaluate(args);
 
       args.batch.forEach((datum, index) => {
+        const metrics = toMetrics(evaluation.usage?.[index]);
         const event: BraintrustEvent = {
           input: toInput === undefined ? datum : toInput(datum),
           output: evaluation.outputs[index],
@@ -85,6 +87,9 @@ export function withBraintrustLogging<
         if (toExpected !== undefined) {
           event.expected = toExpected(datum);
         }
+        if (metrics !== undefined) {
+          event.metrics = metrics;
+        }
 
         try {
           logger.log(event);
@@ -98,4 +103,36 @@ export function withBraintrustLogging<
       return evaluation;
     },
   };
+}
+
+/**
+ * A rollout's usage under the names Braintrust reads: it derives an
+ * experiment's token columns from `prompt_tokens`, `completion_tokens` and
+ * `tokens`, and reporting the same numbers under this library's own names
+ * would leave those columns empty.
+ *
+ * A reading the adapter did not report is left out rather than zeroed, since a
+ * zero token count reads as a free rollout rather than an unmeasured one.
+ */
+function toMetrics(
+  usage: RolloutUsage | undefined,
+): Record<string, number> | undefined {
+  if (usage === undefined) {
+    return undefined;
+  }
+
+  const metrics: Record<string, number> = {};
+  const named = [
+    ["prompt_tokens", usage.inputTokens],
+    ["completion_tokens", usage.outputTokens],
+    ["tokens", usage.totalTokens],
+    ["cost_usd", usage.costUsd],
+  ] as const;
+
+  for (const [name, value] of named) {
+    if (value !== undefined) {
+      metrics[name] = value;
+    }
+  }
+  return Object.keys(metrics).length === 0 ? undefined : metrics;
 }

@@ -54,6 +54,8 @@ The decorator works with [`@textopt/ai-sdk`](https://github.com/ctdio/textopt/tr
 
 Logged events include the candidate, instance feedback, `iteration`, `phase`, `split`, and `candidateId` for grouping rollouts by their place in the optimization run.
 
+When the wrapped adapter reports `usage`, each event carries `metrics` under the names Braintrust reads — `prompt_tokens`, `completion_tokens`, `tokens`, and `cost_usd` — so an experiment shows what a run spent. A reading the adapter did not report is omitted rather than logged as zero.
+
 | Option       | Default        | Effect                                                                            |
 | ------------ | -------------- | --------------------------------------------------------------------------------- |
 | `adapter`    | required       | The adapter to wrap.                                                              |
