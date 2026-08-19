@@ -36,7 +36,6 @@ const DEMO_BLOCK = /<demo>\s*([\s\S]*?)\s*<\/demo>/g;
 const DEMO_PARTS =
   /<input>\s*([\s\S]*?)\s*<\/input>\s*<output>\s*([\s\S]*?)\s*<\/output>/;
 const DEFAULT_MAX_DEMOS = 4;
-const DEFAULT_MIN_SCORE = 1;
 
 /**
  * Harvest demonstrations by running a candidate over the training set and keeping
@@ -59,7 +58,16 @@ export async function bootstrapDemos<
   /** The candidate to run. Usually the seed, sometimes a run's winner. */
   candidate: Candidate<K>;
   trainingSet: readonly Datum[];
-  /** Score a rollout must reach to be kept. Default 1. */
+  /**
+   * Score a rollout must reach to be kept. Unset keeps every rollout the
+   * metric rewarded at all, which is what MIPROv2's bootstrapper does without
+   * a `metric_threshold`: it keeps a trace on any truthy score and only
+   * compares against a number once one is configured.
+   *
+   * Demanding a perfect score instead is the right call for a boolean metric
+   * and the wrong one for a graded metric, where it throws away every rollout
+   * that was most of the way there — which on a hard task is all of them.
+   */
   minScore?: number;
   /** Demos to collect before stopping. Default 4. */
   maxDemos?: number;
@@ -79,7 +87,7 @@ export async function bootstrapDemos<
     adapter,
     candidate,
     trainingSet,
-    minScore = DEFAULT_MIN_SCORE,
+    minScore,
     maxDemos = DEFAULT_MAX_DEMOS,
     batchSize = maxDemos,
     maxMetricCalls = trainingSet.length,
@@ -133,7 +141,8 @@ export async function bootstrapDemos<
 
     for (let index = 0; index < batch.length; index += 1) {
       const score = evaluation.scores[index] as number;
-      if (score < minScore || demos.length >= maxDemos) {
+      const rewarded = minScore === undefined ? score > 0 : score >= minScore;
+      if (!rewarded || demos.length >= maxDemos) {
         continue;
       }
       demos.push({

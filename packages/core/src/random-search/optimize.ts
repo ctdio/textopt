@@ -32,7 +32,6 @@ export interface RandomSearchConfig {
   /** How many of them may be in flight at once. Default 1. */
   concurrency?: number;
   maxRounds?: number;
-  seed?: number;
   /** Replaces the default paraphrase template. */
   buildPrompt?: ParaphrasePromptBuilder;
   /** Keep what the winner produced on each validation instance. */
@@ -99,10 +98,23 @@ const DEFAULT_VARIANTS = 4;
  * The ablation baseline: propose blind, evaluate in full, keep what wins.
  *
  * It exists to be beaten. Reflective search costs a frontier-model call per
- * proposal on top of its rollouts, and the only way to know whether that call
- * bought anything on *your* task is to run the same budget through a search
- * that cannot read feedback at all. A GEPA run that does not clear this one is
- * paying for reflection it is not using.
+ * proposal on top of its rollouts, and running the same budget through a
+ * search that cannot read feedback at all puts a floor under what that call
+ * has to buy. A GEPA run that does not clear this one is paying for machinery
+ * it is not using.
+ *
+ * What the gap measures is the whole of that machinery, not reflection alone:
+ * this drops feedback, Pareto parent selection, and minibatch screening
+ * together, and GEPA's own ablations put candidate selection at several points
+ * by itself. For reflection in isolation, keep GEPA and hand it a
+ * `reflection.buildPrompt` that withholds the evidence — same frontier, same
+ * screening, one variable.
+ *
+ * Not DSPy's `BootstrapFewShotWithRandomSearch`, which the literature usually
+ * means by "random search" and which searches bootstrapped demo sets; nor
+ * random search in the Bergstra–Bengio sense, since proposals are paraphrases
+ * of the incumbent rather than independent draws. No reference implements this
+ * baseline — it is original here, and the GEPA paper has no equivalent.
  */
 export class RandomSearchOptimizer implements Optimizer<RandomSearchStopReason> {
   readonly #config: RandomSearchConfig;

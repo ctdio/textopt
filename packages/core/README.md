@@ -90,7 +90,7 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`createEvaluator({ adapter, budget, cache, trackOutputs, onEvaluation, signal })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
-**`bootstrapDemos({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps rollouts scoring at least `minScore`. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
+**`bootstrapDemos({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps the rollouts the metric rewarded. Omit `minScore` to keep any rollout scoring above zero, as MIPROv2 does without a `metric_threshold`; pass a number to require at least that score. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
 
 **`formatDemos(demos, { render })`** and **`parseDemos(text)`** write and read the `<demo>`, `<input>`, and `<output>` block format.
 
@@ -232,7 +232,7 @@ OPRO uses the base `Adapter`. `OproTask` adds `reflect` and optional `renderDatu
 | `maxRounds`          | `Infinity`        | Round ceiling.                                             |
 | `maxReflectionCalls` | unbounded         | Bounded separately; no metric budget covers reflection.    |
 | `historySize`        | `20`              | Maximum scored attempts included in the prompt.            |
-| `exemplars`          | `3`               | Task inputs shown for grounding.                           |
+| `exemplars`          | `3`               | Task inputs shown for grounding, redrawn each round.       |
 | `scoringSetSize`     | unset             | Instances drawn once from the trainingSet to screen on.    |
 | `fullEvalInterval`   | `3`               | Rounds between full validationSet sweeps of the incumbent. |
 | `scoreScale`         | `100`             | What scores are multiplied by before being shown.          |
@@ -268,24 +268,24 @@ import { MiproOptimizer, proposeConfiguration } from "textopt/mipro";
 
 MIPRO uses the base `Adapter`. `MiproTask` adds `reflect`, `componentOptions`, `renderDatum`, `batchSampler`, `instanceId`, `cache`, and `onEvent`.
 
-| Option                     | Default            | Effect                                                                                       |
-| -------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| `instructionsPerComponent` | `3`                | Menu entries generated per component, beyond the seed.                                       |
-| `minibatchSize`            | `5`                | Instances a trial is scored on.                                                              |
-| `fullEvalInterval`         | `6`                | Trials between full evaluations. Equivalent to DSPy's `minibatch_full_eval_steps=5` cadence. |
-| `demoSets`                 | `3`                | Bootstrapped demo sets generated per demo component.                                         |
-| `maxDemos`                 | `4`                | Demos in the largest generated set.                                                          |
-| `demoMinScore`             | `1`                | Score a rollout must reach to be kept as a demo.                                             |
-| `maxTrials`                | `30`               | Configurations evaluated.                                                                    |
-| `startupTrials`            | `10`               | Trials drawn uniformly before the surrogate takes over.                                      |
-| `gamma`                    | Optuna's rule      | Observations assigned to the good density: `ceil(10%)`, capped at 25.                        |
-| `surrogateSamples`         | `24`               | Candidate configurations sampled by the surrogate per trial.                                 |
-| `multivariate`             | `true`             | Model components jointly rather than one at a time.                                          |
-| `exemplars`                | `3`                | Task inputs shown when generating instructions.                                              |
-| `datasetSummary`           | `true`             | Generate a `trainingSet` summary for the proposer. Uses one reflection call.                 |
-| `summaryExamples`          | `10`               | Training examples used to generate the summary.                                              |
-| `tips`                     | built-in           | Style hints used when generating menu options.                                               |
-| `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                              |
+| Option                     | Default            | Effect                                                                             |
+| -------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `instructionsPerComponent` | `3`                | Menu entries generated per component, beyond the seed.                             |
+| `minibatchSize`            | `35`               | Instances a trial is scored on. MIPROv2's `minibatch_size`.                        |
+| `fullEvalInterval`         | `5`                | Trials between full evaluations. MIPROv2's `minibatch_full_eval_steps`.            |
+| `demoSets`                 | `3`                | Bootstrapped demo sets generated per demo component.                               |
+| `maxDemos`                 | `4`                | Demos in the largest generated set.                                                |
+| `demoMinScore`             | unset              | Score a rollout must reach to be kept as a demo. Unset keeps any rewarded rollout. |
+| `maxTrials`                | `30`               | Configurations evaluated.                                                          |
+| `startupTrials`            | `10`               | Trials drawn uniformly before the surrogate takes over.                            |
+| `gamma`                    | Optuna's rule      | Observations assigned to the good density: `ceil(10%)`, capped at 25.              |
+| `surrogateSamples`         | `24`               | Candidate configurations sampled by the surrogate per trial.                       |
+| `multivariate`             | `true`             | Model components jointly rather than one at a time.                                |
+| `exemplars`                | `3`                | Task inputs shown when generating instructions.                                    |
+| `datasetSummary`           | `true`             | Generate a `trainingSet` summary for the proposer. Uses one reflection call.       |
+| `summaryExamples`          | `10`               | Training examples used to generate the summary.                                    |
+| `tips`                     | built-in           | Style hints used when generating menu options.                                     |
+| `buildPrompt`              | `buildMiproPrompt` | Replaces the proposal template.                                                    |
 
 The proposer receives the current text of other components, a generated summary of `trainingSet`, and task exemplars. The summary uses one reflection call and is skipped when all menus are supplied through `componentOptions`. Unlike DSPy's MIPROv2 implementation, textopt does not include program source because the adapter interface has no generic representation for it.
 
@@ -307,7 +307,7 @@ One difference from MIPROv2 is that textopt keeps labelled demo sets as separate
 
 With `multivariate: true`, each density is a mixture of kernels centered on observed configurations. This preserves dependencies between component options. With `multivariate: false`, each component uses an independent smoothed histogram, which learns from fewer trials but cannot represent interactions.
 
-In a measured space of 3,125 configurations with 60 trials, the joint model reached a mean best score of 0.87 and solved 8 of 15 runs; the independent model reached 0.78 and solved 5. In a 16-configuration space with 30 trials, the independent model found the optimum in 16 of 20 runs, compared with 14 for the joint model. The multivariate model is the default because it performs better when the space cannot be nearly enumerated.
+Measured on an objective where each component pays off only when the preceding one is also correct, across 15 seeds: in a space of 3,125 configurations with 60 trials, the joint model reached a mean best score of 0.91 and solved 10 runs, against 0.80 and 6 for the independent model. In a 16-configuration space with 30 trials over 20 seeds, the joint model found the optimum in every run, against 16 for the independent model. The multivariate model is the default because it leads on both.
 
 Before `startupTrials`, or when all observations have the same score, sampling is uniform. TPE's good/bad split requires ranked observations; using it on tied scores can repeatedly select configurations already evaluated. This tie handling differs from published TPE and Optuna.
 
@@ -322,7 +322,6 @@ import { RandomSearchOptimizer } from "textopt/random-search";
 | `variants`    | `4`                     | Variants drawn per round, each evaluated in full. |
 | `concurrency` | `1`                     | How many may be in flight at once.                |
 | `maxRounds`   | `Infinity`              | Round ceiling.                                    |
-| `seed`        | `0`                     | Seeds the run's random stream.                    |
 | `buildPrompt` | `buildParaphrasePrompt` | Replaces the paraphrase template.                 |
 
 `RandomSearchResult` adds `seedScore`, `rounds`, `variantsEvaluated`, `reflectionCalls`, and `cacheHits`.

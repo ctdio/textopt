@@ -73,6 +73,30 @@ describe("bootstrapDemos", () => {
     }
   });
 
+  test("keeps every rollout the metric rewarded when given no threshold", async () => {
+    const result = await bootstrapDemos({
+      adapter: adapter(),
+      // Half credit on three instances and nothing on the fourth.
+      candidate: { instruction: "hold ticket billing" },
+      trainingSet: KEYWORD_EXAMPLES,
+    });
+
+    expect(result.demos).toHaveLength(3);
+    for (const demo of result.demos) {
+      expect(demo.score).toBe(0.5);
+    }
+  });
+
+  test("keeps nothing the metric scored at zero when given no threshold", async () => {
+    const result = await bootstrapDemos({
+      adapter: adapter(),
+      candidate: { instruction: "nothing useful here" },
+      trainingSet: KEYWORD_EXAMPLES,
+    });
+
+    expect(result.demos).toEqual([]);
+  });
+
   test("keeps nothing when the candidate never clears the threshold", async () => {
     const result = await bootstrapDemos({
       adapter: adapter(),

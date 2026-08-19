@@ -36,7 +36,20 @@ export interface MiproConfig {
    * component the caller supplied a menu for. Default 3.
    */
   instructionsPerComponent?: number;
-  /** Instances a trial is scored on. Default 5. */
+  /**
+   * Instances a trial is scored on. Default 35, MIPROv2's `minibatch_size`.
+   *
+   * The surrogate reads these means as evidence, so the size sets how much of
+   * what it learns is signal. Shrinking it is the cheapest way to buy trials
+   * and the fastest way to make them worthless: the good/bad split at thirty
+   * trials is three or four observations, and a lucky small minibatch is
+   * enough to put the wrong configuration among them.
+   *
+   * MIPROv2 also abandons minibatching altogether when the validation set is
+   * 50 instances or fewer (`MIN_MINIBATCH_SIZE`), evaluating every trial in
+   * full. textopt has no such mode; on a small validation set, set this to the
+   * set's size to get the same behaviour.
+   */
   minibatchSize?: number;
   /** Configurations evaluated. Default 30. */
   maxTrials?: number;
@@ -61,9 +74,15 @@ export interface MiproConfig {
    * with the best *average* minibatch reading that has not been swept yet is
    * evaluated in full. Averaging is the point: a single minibatch is a noisy
    * reading, and promoting on one alone lets a lucky draw decide the run.
-   * Default 6. dspy spells the same cadence as `minibatch_full_eval_steps=5`
-   * and sweeps when `trial % (steps + 1) == 0`, so its 5 and this 6 describe
-   * the same schedule — do not "align" the numbers.
+   * Default 5, MIPROv2's `minibatch_full_eval_steps`.
+   *
+   * MIPROv2 sweeps when `trial_num % (minibatch_full_eval_steps + 1) == 0`,
+   * which reads like every sixth trial but is not: Optuna numbers the seed
+   * baseline and each full evaluation as trials of their own, so the six slots
+   * hold five minibatch trials and one sweep. Its own budgeting says the same
+   * thing directly — `num_trials // minibatch_full_eval_steps + 1` sweeps for
+   * `num_trials` trials. This counts only minibatch trials, so 5 here and 5
+   * there describe one schedule.
    */
   fullEvalInterval?: number;
   /**
@@ -73,7 +92,12 @@ export interface MiproConfig {
   demoSets?: number;
   /** Demos in the largest generated set. Default 4. */
   maxDemos?: number;
-  /** Score a rollout must reach to be kept as a demo. Default 1. */
+  /**
+   * Score a rollout must reach to be kept as a demo. Unset keeps every rollout
+   * the metric rewarded at all, as MIPROv2 does without a `metric_threshold`.
+   * Set 1 to demand a perfect score, which suits a boolean metric and discards
+   * most of a graded one.
+   */
   demoMinScore?: number;
   /** Task inputs shown when generating instructions. Default 3. */
   exemplars?: number;
@@ -198,12 +222,11 @@ export interface MiproResult<
 }
 
 const DEFAULT_INSTRUCTIONS = 3;
-const DEFAULT_MINIBATCH_SIZE = 5;
+const DEFAULT_MINIBATCH_SIZE = 35;
 const DEFAULT_MAX_TRIALS = 30;
-const DEFAULT_FULL_EVAL_INTERVAL = 6;
+const DEFAULT_FULL_EVAL_INTERVAL = 5;
 const DEFAULT_DEMO_SETS = 3;
 const DEFAULT_MAX_DEMOS = 4;
-const DEFAULT_DEMO_MIN_SCORE = 1;
 const DEFAULT_EXEMPLARS = 3;
 const DEFAULT_SUMMARY_EXAMPLES = 10;
 
@@ -358,7 +381,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     fullEvalInterval = DEFAULT_FULL_EVAL_INTERVAL,
     demoSets = DEFAULT_DEMO_SETS,
     maxDemos = DEFAULT_MAX_DEMOS,
-    demoMinScore = DEFAULT_DEMO_MIN_SCORE,
+    demoMinScore,
     exemplars = DEFAULT_EXEMPLARS,
     datasetSummary = true,
     summaryExamples = DEFAULT_SUMMARY_EXAMPLES,
@@ -536,7 +559,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
         adapter,
         candidate: seedCandidate,
         trainingSet,
-        minScore: demoMinScore,
+        ...(demoMinScore === undefined ? {} : { minScore: demoMinScore }),
         maxDemos: requested,
         maxMetricCalls: affordable,
         rng,

@@ -570,6 +570,33 @@ describe("optimize", () => {
     }
   });
 
+  test("returns to mutation after a merge is accepted", async () => {
+    // A merge is worth attempting because a *mutation* put something new on
+    // the frontier. An accepted merge is not that: it recombines what two
+    // lineages already had, so the reference clears the flag and goes back to
+    // mutating rather than merging the merge.
+    const events: GepaEvent[] = [];
+
+    await new GepaOptimizer({
+      ...mergeRunwayConfig(),
+      merge: { enabled: true },
+    }).optimize({
+      ...mergeRunwayTask(),
+      onEvent: (event) => events.push(event),
+    });
+
+    const merged = events.flatMap((event) =>
+      event.type === "candidateAccepted" && event.source === "merge"
+        ? [event.iteration]
+        : [],
+    );
+
+    expect(merged.length).toBeGreaterThan(0);
+    for (const iteration of merged) {
+      expect(merged).not.toContain(iteration + 1);
+    }
+  });
+
   test("rejects an empty validation set", async () => {
     await expect(
       new GepaOptimizer({

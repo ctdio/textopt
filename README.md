@@ -240,7 +240,7 @@ new GepaOptimizer({
 
 The included rotation alternates the standard prompt with prompts that simplify, generalize, or rewrite the candidate. The builders are exported as `buildReflectionPrompt`, `buildSimplifyPrompt`, `buildGeneralizePrompt`, and `buildRewritePrompt`; custom `ReflectionPromptBuilder` functions use the same interface.
 
-This behavior is opt-in. The default is the prompt from the GEPA reference implementation.
+This behavior is opt-in. The default is `buildReflectionPrompt`, adapted from the GEPA paper's reflection prompt rather than copied from it: it carries the same evidence and asks for the same thing, but tags and wording differ from the reference implementation's template, so proposals drawn from identical evidence will not match it.
 
 ## Few-shot demos
 
@@ -340,7 +340,6 @@ The meta-prompt lists the strongest attempts in ascending score order, placing t
 ```ts
 const result = await new MiproOptimizer({
   instructionsPerComponent: 5,
-  minibatchSize: 5,
   maxTrials: 30,
   seed: 11,
 }).optimize({
@@ -368,7 +367,6 @@ Every `fullEvalInterval` trials, MIPRO fully evaluates the unswept configuration
 ```ts
 const result = await new RandomSearchOptimizer({
   variants: 4,
-  seed: 11,
 }).optimize({
   seedCandidate,
   trainingSet,

@@ -69,6 +69,16 @@ export interface GepaConfig {
   /**
    * System-aware merge. Enabled by default for multi-component candidates,
    * where two lineages can improve different components independently.
+   *
+   * The reference defaults `use_merge=False`, and the paper reports merge as
+   * the separate GEPA+Merge variant rather than as part of GEPA — a variant
+   * that helped on most models it was tried on and hurt on one. On by default
+   * here because the case it needs, several components moving along different
+   * lineages, is the case this library is usually pointed at. The cost is that
+   * a multi-component run is GEPA+Merge unless this is turned off, which
+   * spends rollouts on merge attempts and consumes the random stream
+   * differently, so trajectories will not line up with a reference run at the
+   * same seed. Set `enabled: false` for GEPA as published.
    */
   merge?: {
     enabled?: boolean;
@@ -94,9 +104,14 @@ export interface GepaConfig {
    * How many rejected proposals per component are shown back to the reflection
    * model, most recent first. 0 disables the feedback. Default 3.
    *
-   * Not in the paper or the reference implementation, and the only extension
-   * here that is on by default: whenever a proposal has been rejected, the
-   * prompt this builds is not the published one. Set 0 for GEPA as written.
+   * Not in the paper or the reference implementation, where a rejected
+   * proposal fires a callback and is otherwise forgotten: whenever a proposal
+   * has been rejected, the prompt this builds is not the published one. Set 0
+   * for GEPA as written.
+   *
+   * It is not the only default that departs from the reference — the
+   * evaluation cache and, for multi-component seeds, merge are both on here
+   * and off there. See those options.
    */
   rejectedProposalMemory?: number;
   /**
@@ -182,7 +197,15 @@ export interface GepaTask<
    */
   valEvaluationPolicy?: ValEvaluationPolicy<NoInfer<Datum>, NoInfer<K>>;
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
-  /** Pass `false` to disable caching entirely. */
+  /**
+   * Pass `false` to disable caching entirely.
+   *
+   * On by default, where the reference defaults `cache_evaluation=False`. A
+   * cache hit is free and uncharged, so the same `maxMetricCalls` buys a
+   * longer run here than there — the budget counts fresh rollouts, which is
+   * what costs money, rather than scorings. Pass `false` to compare rollout
+   * counts against a reference run directly.
+   */
   cache?: EvaluationCache | false;
   onEvent?: (event: GepaEvent<NoInfer<K>>) => void;
   /**
@@ -627,11 +650,19 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       outputsByCandidate.set(record.id, args.evaluation.outputs);
     }
 
-    // A new frontier member is what makes a merge worth attempting, so every
-    // acceptance schedules one.
-    lastIterationAccepted = true;
-    if (mergeConfig.enabled && totalMergesTested < mergeConfig.maxInvocations) {
-      mergesDue += 1;
+    // A new frontier member is what makes a merge worth attempting, so an
+    // accepted *mutation* schedules one. An accepted merge does not: it
+    // recombines components two lineages already held, so there is no new
+    // material for a second merge to find, and the reference clears the flag
+    // on the merge path and returns to mutation rather than chaining.
+    if (args.source !== "merge") {
+      lastIterationAccepted = true;
+      if (
+        mergeConfig.enabled &&
+        totalMergesTested < mergeConfig.maxInvocations
+      ) {
+        mergesDue += 1;
+      }
     }
 
     return record;
@@ -889,6 +920,14 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
         candidate: parent.candidate,
         source: "componentSelector",
       });
+      // Advanced here, when the component is chosen. The reference chooses
+      // after its skip checks, so a parent whose minibatch came back perfect
+      // leaves its cursor where it was and offers the same component again;
+      // here that iteration still costs the parent its turn. Moving the
+      // advance past the skip would put it inside the concurrent phase, where
+      // several proposals can share a parent and the order they finish in
+      // would decide the cursor — trading a component's turn for a run that no
+      // longer reproduces at a fixed seed.
       parent.componentCursor =
         (parent.componentCursor + 1) %
         Math.max(1, componentNames(parent.candidate).length);

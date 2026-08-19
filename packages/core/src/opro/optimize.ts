@@ -35,7 +35,16 @@ export type OproPromptBuilder = (args: {
 }) => string;
 
 export interface OproConfig {
-  /** Instructions drawn per round. Default 8, as in the paper. */
+  /**
+   * Instructions drawn per round. Default 8, as in the paper.
+   *
+   * All eight come from one prompt, so they differ only by the sampling
+   * temperature of `reflect`. The paper runs its optimizer at 1.0 and finds
+   * below 0.5 explores too little to escape a plateau. At temperature 0 the
+   * eight drafts are identical, dedup collapses them to one, and the round
+   * costs eight reflection calls to try a single instruction — set a
+   * temperature on the model before raising this.
+   */
   proposalsPerRound?: number;
   /** How many of them may be in flight at once. Default 1. */
   concurrency?: number;
@@ -49,9 +58,19 @@ export interface OproConfig {
   /**
    * Scored attempts the prompt carries, strongest kept. Default 20, matching
    * the paper's `max_num_instructions`.
+   *
+   * The reference also drops attempts below an absolute score threshold
+   * (`old_instruction_score_threshold`, 0.3 for its GPT scorers) before this
+   * cut. Nothing here does: the weak tail is what marks the bottom of the
+   * range the model is reading a gradient across, and once twenty decent
+   * attempts exist the strongest-kept rule has retired it anyway.
    */
   historySize?: number;
-  /** Task inputs shown for grounding. Default 3. */
+  /**
+   * Task inputs shown for grounding, redrawn each round. Default 3, the
+   * reference's `num_few_shot_questions_for_instruction_refinement`, which
+   * resamples them per step under its default `random` selection.
+   */
   exemplars?: number;
   /**
    * Instances drawn once from the training set to screen proposals on. Unset means
@@ -313,9 +332,14 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
   });
 
-  const shown = rng
-    .sample(trainingSet, Math.min(exemplars, trainingSet.length))
-    .map(renderDatum);
+  // Redrawn every round, as the reference does with its `random` few-shot
+  // selection. A slice held fixed for the whole run lets the search tune its
+  // instruction to those particular inputs and call the result a gain.
+  function drawExemplars(): string[] {
+    return rng
+      .sample(trainingSet, Math.min(exemplars, trainingSet.length))
+      .map(renderDatum);
+  }
 
   // Drawn once. Every attempt is screened on these same instances, because the
   // meta-prompt asks the model to read a gradient across scores and a gradient
@@ -496,7 +520,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     const prompt = buildPrompt({
       componentName: component,
       history: topAttempts({ history: comparable, keep: historySize }),
-      exemplars: shown,
+      exemplars: drawExemplars(),
     });
 
     reflectionCalls += affordableProposals;

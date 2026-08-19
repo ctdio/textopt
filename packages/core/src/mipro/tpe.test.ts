@@ -230,6 +230,44 @@ describe("proposeConfiguration", () => {
     expect(drawn.has("1,1")).toBe(true);
   });
 
+  test("sharpens each kernel as the good set grows", () => {
+    // Twelve good observations all naming the same configuration. Optuna's
+    // kernels carry a prior share of `priorWeight / kernelCount`, so the more
+    // observations back a kernel the more sharply it sits on what it observed.
+    // A kernel whose smoothing does not move with the count leaves an observed
+    // option only twice as likely as its neighbour however much evidence backs
+    // it, and a single draw then lands on the observed configuration about an
+    // eighth of the time rather than most of the time.
+    const observations = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        choices: [1, 1, 1],
+        score: 0.9 - index / 1000,
+      })),
+      ...Array.from({ length: 12 }, (_, index) => ({
+        choices: [index % 3, (index + 1) % 3, (index + 2) % 3],
+        score: 0.1 - index / 1000,
+      })),
+    ];
+
+    const rng = RNG();
+    // One draw per proposal, so what comes back is a sample from the good
+    // density rather than the best of a batch — which is what makes the
+    // kernel's width readable from the outside at all.
+    const draws = Array.from({ length: 200 }, () =>
+      proposeConfiguration({
+        observations,
+        menuSizes: [3, 3, 3],
+        gamma: 0.5,
+        samples: 1,
+        startupTrials: 1,
+        rng,
+      }).join(","),
+    );
+    const onCentre = draws.filter((draw) => draw === "1,1,1").length;
+
+    expect(onCentre / draws.length).toBeGreaterThan(0.45);
+  });
+
   test("refuses a component with an empty menu", () => {
     expect(() =>
       proposeConfiguration({

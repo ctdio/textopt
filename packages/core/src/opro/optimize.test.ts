@@ -106,6 +106,34 @@ describe("OproOptimizer", () => {
     expect([...inputs.matchAll(/<INS>/g)]).toHaveLength(2);
   });
 
+  test("draws fresh exemplars each round", async () => {
+    // The reference resamples its few-shot questions every step. Holding one
+    // slice fixed for the whole run lets the search tune its instruction to
+    // three particular inputs, which is the overfitting the resampling exists
+    // to prevent.
+    const prompts: string[] = [];
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 6,
+      exemplars: 1,
+      seed: 1,
+    }).optimize({
+      ...task(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nnew instruction\n```";
+      },
+    });
+
+    const shown = prompts.map((prompt) =>
+      prompt.slice(prompt.indexOf("<inputs>"), prompt.indexOf("</inputs>")),
+    );
+
+    expect(shown.length).toBeGreaterThan(1);
+    expect(new Set(shown).size).toBeGreaterThan(1);
+  });
+
   test("shows the proposer the attempts in ascending score order", async () => {
     const prompts: string[] = [];
 

@@ -52,8 +52,11 @@ export function proposeConfiguration(args: {
   /** Observations required before the model is trusted at all. Default 10. */
   startupTrials?: number;
   /**
-   * Weight of the uniform prior inside every kernel. Optuna's `prior_weight`;
-   * 1 leaves an observed option twice as likely as one beside it.
+   * Total weight of the uniform prior, shared out across the kernels. Optuna's
+   * `prior_weight`. Each kernel carries `priorWeight / kernelCount` of it, so
+   * an observed option stands at `1 + kernelCount / priorWeight` against one
+   * beside it — twice as likely under a single kernel, and progressively
+   * sharper as observations accumulate.
    */
   priorWeight?: number;
   /**
@@ -66,15 +69,20 @@ export function proposeConfiguration(args: {
    * to combinations nobody has drawn; independent histograms generalize from
    * far fewer trials but cannot express a dependency at all.
    *
-   * Which way that trades depends on how much of the space a run can cover.
-   * Measured here on five components of five options — 3125 configurations
-   * against 60 trials — joint reaches a mean best of 0.87 and solves 8 runs in
-   * 15, where independent reaches 0.78 and solves 5. On a 16-configuration
-   * space that 30 trials nearly enumerate, the ordering reverses and
-   * independent lands on the best configuration in 16 runs of 20 against 14,
-   * because there the surrogate is barely steering anything. Joint is the
-   * default because the case it loses is the case that needed a surrogate
-   * least.
+   * Measured on a chained objective, where a component pays off only when the
+   * one before it is also right — the dependency independent histograms cannot
+   * represent. On five components of five options, 3125 configurations against
+   * 60 trials over 15 seeds, joint reaches a mean best of 0.91 and solves 10
+   * runs where independent reaches 0.80 and solves 6. On a 16-configuration
+   * space that 30 trials nearly enumerate, joint solves 20 runs of 20 against
+   * independent's 16.
+   *
+   * Joint led on the small space only once the kernels were given Optuna's
+   * smoothing. While each kernel stayed as wide as it was on the first trial,
+   * joint lost that case 15 runs to 16, and the default was argued for on the
+   * grounds that the case it lost was the one that needed a surrogate least.
+   * It no longer loses it, so that argument is retired: re-measure before
+   * repeating either number.
    */
   multivariate?: boolean;
   rng: Rng;
@@ -193,6 +201,11 @@ function fit(args: {
 }): Density {
   const { observations, menuSizes, priorWeight, multivariate } = args;
 
+  // One kernel per observation plus the uniform one, matching Optuna's
+  // `n_kernels = len(observations) + 1`. The prior kernel takes no observed
+  // choice, so it stays uniform and keeps every option reachable.
+  const kernelCount = observations.length + 1;
+
   if (multivariate) {
     return {
       density: (choices) => {
@@ -203,20 +216,22 @@ function fit(args: {
             center: observation.choices,
             menuSizes,
             priorWeight,
+            kernelCount,
           });
         }
-        return total / (observations.length + 1);
+        return total / kernelCount;
       },
       sample: (rng) => {
-        const picked = rng.nextInt(observations.length + 1);
+        const picked = rng.nextInt(kernelCount);
         if (picked === observations.length) {
           return menuSizes.map((size) => rng.nextInt(size));
         }
         const center = (observations[picked] as Observation).choices;
+        const share = priorWeight / kernelCount;
         return menuSizes.map((size, component) =>
           drawWeighted(
             Array.from({ length: size }, (_, option) =>
-              option === center[component] ? priorWeight + 1 : priorWeight,
+              option === center[component] ? share + 1 : share,
             ),
             rng,
           ),
@@ -251,19 +266,34 @@ function fit(args: {
   };
 }
 
+/**
+ * One kernel of the mixture, centred on a single observation.
+ *
+ * The prior is spread across the kernels rather than added whole to each, so
+ * `share` shrinks as the mixture grows and a kernel sits more sharply on what
+ * it observed: matched and unmatched options stand at `1 + kernelCount /
+ * priorWeight`, which is 2:1 for a lone kernel and 13:1 once twelve
+ * observations back it. Optuna spells the same thing as a weight matrix filled
+ * with `prior_weight / n_kernels` and incremented at each observed choice
+ * (`_calculate_categorical_distributions`); dividing the prior by the count is
+ * what makes accumulated evidence narrow the density instead of leaving it as
+ * flat as it was on the first trial.
+ */
 function kernel(args: {
   choices: readonly number[];
   center: readonly number[];
   menuSizes: readonly number[];
   priorWeight: number;
+  kernelCount: number;
 }): number {
-  const { choices, center, menuSizes, priorWeight } = args;
+  const { choices, center, menuSizes, priorWeight, kernelCount } = args;
 
+  const share = priorWeight / kernelCount;
   let product = 1;
   for (let component = 0; component < menuSizes.length; component += 1) {
     const size = menuSizes[component] as number;
     const matched = choices[component] === center[component];
-    product *= (priorWeight + (matched ? 1 : 0)) / (priorWeight * size + 1);
+    product *= (share + (matched ? 1 : 0)) / (share * size + 1);
   }
   return product;
 }
