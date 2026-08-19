@@ -24,12 +24,18 @@ result.bestCandidate; // { system: "..." }, same keys as the seed, checked at co
 ## Install
 
 ```bash
-npm install textopt
+npm install textopt      # pnpm add textopt, yarn add textopt, bun add textopt
 ```
 
-`textopt` and `@textopt/langchain` are the packages this repository releases. The test suite has more than 550 tests and runs without network access.
+Requires Node >= 20. `textopt` has no runtime dependencies and ships ESM and CJS builds with type declarations for both. Every optimizer is a subpath of that one package — nothing else to install to use GEPA, SIMBA, OPRO, MIPRO, bootstrap search, or random search.
 
-`@textopt/ai-sdk` and `@textopt/braintrust` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle.
+Optimizing a LangChain runnable additionally needs the adapter, which takes `@langchain/core` (`>=0.3.0 <2`) as a peer dependency:
+
+```bash
+npm install @textopt/langchain
+```
+
+`@textopt/ai-sdk` and `@textopt/braintrust` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle. Both match their framework's types structurally, so neither declares that framework as a dependency.
 
 ## Concepts
 
@@ -130,7 +136,7 @@ pnpm lint:packages # publint and are-the-types-wrong, against the built output
 pnpm bench         # 20-seed sweep, rewrites bench/results/latest.json
 ```
 
-`pnpm bench` takes a few minutes and makes no network calls. Its output is committed, so a change that moves an optimizer's numbers shows up in the diff.
+The suite is over 600 tests and makes no network calls; neither does `pnpm bench`, which takes a few minutes. Its output is committed, so a change that moves an optimizer's numbers shows up in the diff.
 
 [AGENTS.md](AGENTS.md) is the guide for working in this repository.
 
