@@ -159,14 +159,18 @@ const result = await new BootstrapSearchOptimizer({
   // all to a system too weak to bootstrap anything.
   goldOutput: (row) => row.iso,
   maxMetricCalls: 300,
-  onEvent: (event) => {
-    if (event.type === "candidate") {
-      console.log(
-        `  ${event.source.padEnd(12)} ${event.demos} demos` +
-          ` scored ${event.score.toFixed(3)}${event.accepted ? "  <- new best" : ""}`,
-      );
-    }
-  },
+  reporters: [
+    {
+      onEvent: (event) => {
+        if (event.type === "candidate") {
+          console.log(
+            `  ${event.source.padEnd(12)} ${event.demos} demos` +
+              ` scored ${event.score.toFixed(3)}${event.accepted ? "  <- new best" : ""}`,
+          );
+        }
+      },
+    },
+  ],
 });
 
 console.log(

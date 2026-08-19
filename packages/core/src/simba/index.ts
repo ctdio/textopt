@@ -24,3 +24,11 @@ export {
   topKPlusBaseline,
 } from "./strategies.js";
 export type { SimbaBucket, SimbaRollout, SimbaSample } from "./strategies.js";
+export { isCandidateAccepted, isRunFinished } from "../reporting.js";
+export type {
+  CandidateAccepted,
+  OptimizerEvent,
+  Reporter,
+  ReportableEvent,
+  RunFinished,
+} from "../reporting.js";

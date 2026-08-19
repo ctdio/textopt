@@ -112,7 +112,7 @@ All six use the same `Optimizer` interface, adapter, and budget accounting, so s
 | `@textopt/langchain`  | Adapter for LangChain runnables, chains, agents, and LangGraph graphs.                                                 |
 | `@textopt/ai-sdk`     | Vercel AI SDK adapter for `generateText` and `generateObject`. **Beta, unpublished.**                                  |
 | `@textopt/braintrust` | autoevals scorer integration and a Braintrust logging decorator. **Beta, unpublished.**                                |
-| `@textopt/langsmith`  | Reports a GEPA run to LangSmith as one experiment per candidate. **Beta, unpublished.**                                |
+| `@textopt/langsmith`  | Reports any optimizer's run to LangSmith, one experiment per candidate. **Beta, unpublished.**                         |
 
 Each optimizer ships behind its own subpath — `textopt/gepa`, `textopt/simba`, `textopt/opro`, `textopt/mipro`, `textopt/bootstrap-search`, `textopt/random-search` — alongside `textopt/file-cache` for a durable cache and `textopt/testing` for fixtures that need no LLM. [`packages/core/README.md`](packages/core/README.md) is the API reference.
 

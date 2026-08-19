@@ -8,3 +8,11 @@ export type {
   RandomSearchStopReason,
   RandomSearchTask,
 } from "./optimize.js";
+export { isCandidateAccepted, isRunFinished } from "../reporting.js";
+export type {
+  CandidateAccepted,
+  OptimizerEvent,
+  Reporter,
+  ReportableEvent,
+  RunFinished,
+} from "../reporting.js";

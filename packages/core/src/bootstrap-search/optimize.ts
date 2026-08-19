@@ -18,6 +18,8 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate } from "../types.js";
@@ -129,7 +131,8 @@ export interface BootstrapSearchTask<
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
-  onEvent?: (event: BootstrapSearchEvent<NoInfer<K>>) => void;
+  /** Observers of the run. Every one sees every event; none can fail it. */
+  reporters?: readonly Reporter<BootstrapSearchEvent<NoInfer<K>>>[];
   /** Called with a resumable snapshot after every candidate is scored. */
   onCheckpoint?: (snapshot: BootstrapSearchSnapshot) => void | Promise<void>;
   /** Snapshot to continue from. */
@@ -155,13 +158,13 @@ export type BootstrapSearchEvent<K extends string = string> =
       score: number;
       accepted: boolean;
     }
-  | {
-      type: "finish";
-      reason: BootstrapSearchStopReason;
-      bestScore: number;
-      metricCalls: number;
-      testScore?: number;
-    };
+  | ({
+      type: "candidateAccepted";
+      /** Which construction produced the demo block that won. */
+      source: DemoSource;
+      demos: number;
+    } & CandidateAccepted<K>)
+  | ({ type: "finish"; reason: BootstrapSearchStopReason } & RunFinished);
 
 export interface BootstrapSearchResult<
   K extends string = string,
@@ -223,7 +226,7 @@ export class BootstrapSearchOptimizer implements Optimizer<BootstrapSearchStopRe
     this.#config = config;
   }
 
-  optimize<
+  async optimize<
     Datum,
     Trajectory = unknown,
     Output = unknown,
@@ -231,7 +234,11 @@ export class BootstrapSearchOptimizer implements Optimizer<BootstrapSearchStopRe
   >(
     task: BootstrapSearchTask<Datum, Trajectory, Output, K>,
   ): Promise<BootstrapSearchResult<K, Output>> {
-    return run({ config: this.#config, task });
+    try {
+      return await run({ config: this.#config, task });
+    } finally {
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -270,11 +277,13 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
   } = task;
+
+  const emit = createEmitter<BootstrapSearchEvent<K>>(reporters);
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -332,7 +341,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
-    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -347,7 +356,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   let bootstrapMetricCalls = resumeFrom?.bootstrapMetricCalls ?? 0;
   let stopReason: BootstrapSearchStopReason = "candidatesExhausted";
 
-  onEvent?.({
+  emit({
     type: "start",
     components,
     validationSetSize: validationSet.length,
@@ -368,16 +377,36 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   // The seed is the zero-shot candidate's own score when the demo components
   // start empty, which they usually do; scoring it separately would buy the
   // same number twice.
+  const seedEvaluation =
+    resumeFrom === undefined ? await sweep(seedCandidate, "seed") : undefined;
   const seedScore =
-    resumeFrom?.seedScore ??
-    requireMeasuredMean({
-      batch: await sweep(seedCandidate, "seed"),
-      phase: "seed",
-    });
+    seedEvaluation === undefined
+      ? (resumeFrom as BootstrapSearchSnapshot).seedScore
+      : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
 
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   let bestOutputs: (Output | undefined)[] | undefined;
+  // Numbers acceptances rather than candidates: the seed is 0, and every id
+  // after it names a block a full validation sweep actually preferred.
+  let acceptedCandidates = 0;
+
+  // The seed is the baseline every later candidate is read against, and its
+  // sweep is a full measurement like any other. A report that starts at the
+  // first improvement has nothing to compare the improvement to. A resumed run
+  // does not re-emit it: the run that swept it already did.
+  if (seedEvaluation !== undefined) {
+    emit({
+      type: "candidateAccepted",
+      source: "zeroShot",
+      demos: 0,
+      candidateId: 0,
+      candidate: seedCandidate,
+      aggregateScore: seedScore,
+      instanceScores: instanceRow(seedEvaluation),
+      ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
+    });
+  }
 
   function takeSnapshot(): BootstrapSearchSnapshot {
     const cached = checkpointCache ? evaluationCache?.entries?.() : undefined;
@@ -501,7 +530,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
         demos: countDemos(entry.block),
         score,
       });
-      onEvent?.({
+      emit({
         type: "candidate",
         index: evaluated.length - 1,
         source: entry.source,
@@ -511,6 +540,18 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       });
 
       if (accepted) {
+        acceptedCandidates += 1;
+        emit({
+          type: "candidateAccepted",
+          source: entry.source,
+          demos: countDemos(entry.block),
+          candidateId: acceptedCandidates,
+          candidate: entry.candidate,
+          aggregateScore: score,
+          instanceScores: instanceRow(evaluation),
+          ...(trackBestOutputs ? { outputs: evaluation.outputs } : {}),
+        });
+
         best = entry.candidate;
         bestScore = score;
         bestOutputs = evaluation.outputs;
@@ -538,28 +579,34 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     stopReason = "aborted";
   }
 
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluator.evaluate({
-            candidate: best,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: null,
-            iteration: evaluated.length,
-            charge: false,
-          }),
-        );
+      : await evaluator.evaluate({
+          candidate: best,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: null,
+          iteration: evaluated.length,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
-  onEvent?.({
+  emit({
     type: "finish",
     reason: stopReason,
+    bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: instanceRow(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   return {

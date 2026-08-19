@@ -39,17 +39,23 @@ const result = await simba.optimize({
   // a separate rule for each rather than one note addressed to all of them.
   reflect: createAdviceModel(),
   maxMetricCalls: 400,
-  onEvent: (event) => {
-    if (event.type === "stepStart") {
-      console.log(`\nstep ${event.step} (pool of ${event.poolSize} programs)`);
-    }
-    if (event.type === "candidate") {
-      console.log(
-        `  ${event.strategy} from program #${event.sourceProgram}` +
-          ` scored ${event.minibatchScore.toFixed(3)} on the minibatch`,
-      );
-    }
-  },
+  reporters: [
+    {
+      onEvent: (event) => {
+        if (event.type === "stepStart") {
+          console.log(
+            `\nstep ${event.step} (pool of ${event.poolSize} programs)`,
+          );
+        }
+        if (event.type === "candidate") {
+          console.log(
+            `  ${event.strategy} from program #${event.sourceProgram}` +
+              ` scored ${event.minibatchScore.toFixed(3)} on the minibatch`,
+          );
+        }
+      },
+    },
+  ],
 });
 
 console.log(

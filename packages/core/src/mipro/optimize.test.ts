@@ -915,9 +915,13 @@ describe("MiproOptimizer checkpoints", () => {
       ...jointTask(),
       cache: false,
       resumeFrom: interrupted.snapshot,
-      onEvent: (event) => {
-        phases.push(event.type === "evaluation" ? event.phase : event.type);
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            phases.push(event.type === "evaluation" ? event.phase : event.type);
+          },
+        },
+      ],
     });
 
     expect(phases).not.toContain("seed");
@@ -980,5 +984,118 @@ describe("MiproOptimizer checkpoints", () => {
     }).optimize(jointTask());
 
     expect(interrupted.snapshot.cache?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("MiproOptimizer reporting", () => {
+  test("reports the seed as candidate 0, before any improvement", async () => {
+    // The seed is what every later candidate is read against. A report that
+    // starts at the first improvement has nothing to compare it to.
+    const accepted: { id: number; candidate: Record<string, string> }[] = [];
+
+    await new MiproOptimizer({ maxTrials: 6, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push({
+                id: event.candidateId,
+                candidate: { ...event.candidate },
+              });
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted[0]?.id).toBe(0);
+    expect(accepted[0]?.candidate).toEqual({ alpha: "", beta: "" });
+  });
+
+  test("reports an acceptance with the text that scored", async () => {
+    const accepted: Record<string, string>[] = [];
+
+    await new MiproOptimizer({ maxTrials: 6, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push({ ...event.candidate });
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted.length).toBeGreaterThan(0);
+  });
+
+  test("reports a per-instance row aligned with the validation set", async () => {
+    const rows: (number | undefined)[][] = [];
+
+    await new MiproOptimizer({ maxTrials: 6, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              rows.push([...event.instanceScores]);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveLength(KEYWORD_EXAMPLES.length);
+    }
+  });
+
+  test("names the winner in finish with an id an acceptance carried", async () => {
+    const acceptedIds: number[] = [];
+    let bestCandidateId: number | undefined;
+
+    await new MiproOptimizer({ maxTrials: 6, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              acceptedIds.push(event.candidateId);
+            }
+            if (event.type === "finish") {
+              bestCandidateId = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(acceptedIds).toContain(bestCandidateId);
+  });
+
+  test("flushes every reporter once the run ends", async () => {
+    const flushed: string[] = [];
+
+    await new MiproOptimizer({ maxTrials: 6, minibatchSize: 2 }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          flush: async () => {
+            flushed.push("first");
+          },
+        },
+        {
+          flush: async () => {
+            flushed.push("second");
+          },
+        },
+      ],
+    });
+
+    expect(flushed.toSorted()).toEqual(["first", "second"]);
   });
 });

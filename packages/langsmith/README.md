@@ -2,7 +2,9 @@
 
 LangSmith experiment reporting for [textopt](https://github.com/ctdio/textopt#readme).
 
-`createLangSmithReporter` writes a GEPA run to LangSmith as **one experiment per accepted candidate over one fixed dataset**. Selecting several of those experiments in LangSmith's comparison view renders the candidate x instance score matrix Pareto selection reads: which instances a candidate won, and which it paid for.
+`createLangSmithReporter` writes a run to LangSmith as **one experiment per accepted candidate over one fixed dataset**. Selecting several of those experiments in LangSmith's comparison view renders the candidate x instance score matrix selection reads: which instances a candidate won, and which it paid for.
+
+It works with any optimizer. The reporter reads the acceptance payload every search emits — the candidate text and its per-instance row over the validation set — rather than one search's event union, and folds whatever else the optimizer put on the event (GEPA's lineage, MIPRO's menu choices, SIMBA's step) into the experiment's metadata.
 
 Install `langsmith` separately. This package matches its `Client` structurally and declares no runtime dependency on it.
 

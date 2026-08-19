@@ -1,6 +1,9 @@
-import { mapWithConcurrency } from "textopt";
-import type { Candidate } from "textopt";
-import type { GepaEvent, GepaReporter } from "textopt/gepa";
+import {
+  isCandidateAccepted,
+  isRunFinished,
+  mapWithConcurrency,
+} from "textopt";
+import type { Candidate, OptimizerEvent, Reporter } from "textopt";
 
 export interface LangSmithDataset {
   id: string;
@@ -116,7 +119,7 @@ const TEXTOPT_NAMESPACE = "6f9619ff-8b86-d011-b42d-00c04fc964ff";
  */
 export function createLangSmithReporter<Datum>(
   options: LangSmithReporterOptions<Datum>,
-): GepaReporter {
+): Reporter<OptimizerEvent> {
   const {
     client,
     dataset,
@@ -233,8 +236,8 @@ export function createLangSmithReporter<Datum>(
   }
 
   return {
-    onEvent: (event: GepaEvent) => {
-      if (event.type === "candidateAccepted") {
+    onEvent: (event: OptimizerEvent) => {
+      if (isCandidateAccepted(event)) {
         enqueue(async () => {
           validationDatasetId ??= ensureDataset({
             name: dataset,
@@ -251,17 +254,15 @@ export function createLangSmithReporter<Datum>(
             metadata: experimentMetadata({
               candidate: event.candidate,
               candidateId: event.candidateId,
-              iteration: event.iteration,
-              parentIds: event.parentIds,
-              source: event.source,
               aggregateScore: event.aggregateScore,
+              search: searchSpecific({ ...event }),
             }),
           });
         });
       }
 
       if (
-        event.type === "finish" &&
+        isRunFinished(event) &&
         event.testInstanceScores !== undefined &&
         testSet !== undefined
       ) {
@@ -301,20 +302,47 @@ export function createLangSmithReporter<Datum>(
 function experimentMetadata(args: {
   candidate: Candidate;
   candidateId: number;
-  iteration: number;
-  parentIds: readonly number[];
-  source: string;
   aggregateScore: number;
+  /** Whatever the optimizer put on the event beyond the shared payload. */
+  search: Record<string, unknown>;
 }): Record<string, unknown> {
+  const search = Object.fromEntries(
+    Object.entries(args.search).map(([key, value]) => [
+      `textopt_${key}`,
+      value,
+    ]),
+  );
+
   return {
     // The text first, because it is what someone opens an experiment to read.
     ...args.candidate,
     textopt_candidate_id: args.candidateId,
-    textopt_iteration: args.iteration,
-    textopt_parent_ids: [...args.parentIds],
-    textopt_source: args.source,
     textopt_score: args.aggregateScore,
+    ...search,
   };
+}
+
+/**
+ * The fields the emitting optimizer added to the shared acceptance payload:
+ * GEPA's lineage, MIPRO's menu choices, SIMBA's step. Read structurally rather
+ * than per optimizer so a new search reports its own vocabulary without this
+ * package learning about it.
+ */
+function searchSpecific(
+  event: Record<string, unknown>,
+): Record<string, unknown> {
+  const shared = new Set([
+    "type",
+    "candidateId",
+    "candidate",
+    "aggregateScore",
+    "instanceScores",
+    "outputs",
+  ]);
+
+  return Object.fromEntries(
+    Object.entries(event).filter(([key]) => !shared.has(key)),
+  );
 }
 
 /**

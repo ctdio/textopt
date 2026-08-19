@@ -36,6 +36,14 @@ export type {
 export { buildJudgePrompt, createJudge } from "./judge.js";
 export type { Judge, JudgeCriterion, JudgePromptBuilder } from "./judge.js";
 export type { Optimizer, OptimizerResult, OptimizerTask } from "./optimizer.js";
+export { isCandidateAccepted, isRunFinished } from "./reporting.js";
+export type {
+  CandidateAccepted,
+  OptimizerEvent,
+  Reporter,
+  ReportableEvent,
+  RunFinished,
+} from "./reporting.js";
 export type { Rng } from "./rng.js";
 export type { BatchSampler } from "./sampling.js";
 export { parseProposedText } from "./text.js";

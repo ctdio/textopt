@@ -17,6 +17,8 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
@@ -160,7 +162,8 @@ export interface OproTask<
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
-  onEvent?: (event: OproEvent<NoInfer<K>>) => void;
+  /** Observers of the run. Every one sees every event; none can fail it. */
+  reporters?: readonly Reporter<OproEvent<NoInfer<K>>>[];
   /**
    * Called with a resumable snapshot after the seed is scored and after every
    * round. Persist it and a killed run costs the last round, not all of them.
@@ -191,13 +194,8 @@ export type OproEvent<K extends string = string> =
       /** True when this attempt became the new incumbent. */
       accepted: boolean;
     }
-  | {
-      type: "finish";
-      reason: OproStopReason;
-      bestScore: number;
-      metricCalls: number;
-      testScore?: number;
-    };
+  | ({ type: "candidateAccepted"; round: number } & CandidateAccepted<K>)
+  | ({ type: "finish"; reason: OproStopReason } & RunFinished);
 
 export interface OproAttempt<K extends string = string> {
   round: number;
@@ -280,7 +278,11 @@ export class OproOptimizer implements Optimizer<OproStopReason> {
   >(
     task: OproTask<Datum, Trajectory, Output, K>,
   ): Promise<OproResult<K, Output>> {
-    return runOpro({ config: this.#config, task });
+    try {
+      return await runOpro({ config: this.#config, task });
+    } finally {
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -375,11 +377,13 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
   } = task;
+
+  const emit = createEmitter<OproEvent<K>>(reporters);
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -437,7 +441,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
-    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -499,7 +503,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: OproStopReason = "maxRounds";
 
-  onEvent?.({
+  emit({
     type: "start",
     components,
     validationSetSize: validationSet.length,
@@ -557,9 +561,26 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       ? (resumeFrom as OproSnapshot).seedScore
       : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
 
+  // The seed is the baseline every later candidate is read against, and its
+  // sweep is a full measurement like any other. A report that starts at the
+  // first improvement has nothing to compare the improvement to. A resumed run
+  // does not re-emit it: the run that swept it already did.
+  if (seedEvaluation !== undefined) {
+    emit({
+      type: "candidateAccepted",
+      round: 0,
+      candidateId: 0,
+      candidate: seedCandidate,
+      aggregateScore: seedScore,
+      instanceScores: instanceRow(seedEvaluation),
+      ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
+    });
+  }
+
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
+  let acceptedCandidates = 0;
   let bestOutputs = seedEvaluation?.outputs;
   // The best candidate a full sweep has actually seen, and the incumbent most
   // recently swept. They are not the same thing: sweeping a candidate that
@@ -592,6 +613,29 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
    * what gets reported is the best candidate a full sweep has actually seen —
    * never a subset number wearing a validation set label.
    */
+  /**
+   * The incumbent moved and a full sweep measured it. Emitted from the two
+   * places that can be true — a screening run with no scoring set, where the
+   * attempt's own evaluation is the sweep, and the cadence that confirms an
+   * incumbent later — because a payload assembled twice is one that drifts.
+   */
+  function emitAccepted(args: {
+    candidate: Candidate<K>;
+    evaluation: ScoredBatch<Output>;
+    score: number;
+  }): void {
+    acceptedCandidates += 1;
+    emit({
+      type: "candidateAccepted",
+      round,
+      candidateId: acceptedCandidates,
+      candidate: args.candidate,
+      aggregateScore: args.score,
+      instanceScores: instanceRow(args.evaluation),
+      ...(trackBestOutputs ? { outputs: args.evaluation.outputs } : {}),
+    });
+  }
+
   async function refreshIncumbent(): Promise<"ok" | "stop"> {
     if (best === lastSwept || !budget.canAfford(validationSet.length)) {
       return "ok";
@@ -606,6 +650,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
         reported = best;
         bestScore = full;
         bestOutputs = evaluation.outputs;
+        emitAccepted({ candidate: best, evaluation, score: full });
       }
     } catch (err) {
       if (err instanceof BudgetExhausted || signal?.aborted) {
@@ -698,7 +743,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     const history = histories.get(component) as RecordedAttempt[];
     const context = contextOf(best, component);
     const comparable = history.filter((attempt) => attempt.context === context);
-    onEvent?.({
+    emit({
       type: "roundStart",
       round,
       component,
@@ -812,7 +857,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
 
       history.push({ text, score: scaleScore(score, scoreScale), context });
       trajectory.push({ round: round + 1, component, candidate, score });
-      onEvent?.({ type: "attempt", round, component, score, accepted });
+      emit({ type: "attempt", round, component, score, accepted });
 
       if (accepted) {
         best = candidate;
@@ -825,6 +870,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
           lastSwept = candidate;
           bestScore = score;
           bestOutputs = evaluation.outputs;
+          emitAccepted({ candidate, evaluation, score });
         }
 
         // Accepting this candidate changed the context every other component's
@@ -873,28 +919,34 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     stopReason = "aborted";
   }
 
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluator.evaluate({
-            candidate: best,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: null,
-            iteration: round,
-            charge: false,
-          }),
-        );
+      : await evaluator.evaluate({
+          candidate: best,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: null,
+          iteration: round,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
-  onEvent?.({
+  emit({
     type: "finish",
     reason: stopReason,
+    bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: instanceRow(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   return {

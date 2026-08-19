@@ -17,6 +17,8 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel } from "../types.js";
@@ -95,7 +97,8 @@ export interface RandomSearchTask<
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
-  onEvent?: (event: RandomSearchEvent<NoInfer<K>>) => void;
+  /** Observers of the run. Every one sees every event; none can fail it. */
+  reporters?: readonly Reporter<RandomSearchEvent<NoInfer<K>>>[];
   /**
    * Called with a resumable snapshot after the seed is scored and after every
    * round. Persist it and a killed run costs the last round, not all of them.
@@ -117,20 +120,8 @@ export type RandomSearchEvent<K extends string = string> =
   | { type: "start"; components: K[]; validationSetSize: number }
   | { type: "roundStart"; round: number; component: K }
   | ({ type: "evaluation" } & EvaluationEvent)
-  | {
-      type: "candidateAccepted";
-      round: number;
-      component: K;
-      score: number;
-      previousScore: number;
-    }
-  | {
-      type: "finish";
-      reason: RandomSearchStopReason;
-      bestScore: number;
-      metricCalls: number;
-      testScore?: number;
-    };
+  | ({ type: "candidateAccepted"; round: number } & CandidateAccepted<K>)
+  | ({ type: "finish"; reason: RandomSearchStopReason } & RunFinished);
 
 export interface RandomSearchResult<
   K extends string = string,
@@ -196,7 +187,11 @@ export class RandomSearchOptimizer implements Optimizer<RandomSearchStopReason> 
   >(
     task: RandomSearchTask<Datum, Trajectory, Output, K>,
   ): Promise<RandomSearchResult<K, Output>> {
-    return runRandomSearch({ config: this.#config, task });
+    try {
+      return await runRandomSearch({ config: this.#config, task });
+    } finally {
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -261,11 +256,13 @@ async function runRandomSearch<
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
   } = task;
+
+  const emit = createEmitter<RandomSearchEvent<K>>(reporters);
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -321,7 +318,7 @@ async function runRandomSearch<
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
-    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -339,7 +336,7 @@ async function runRandomSearch<
    */
   let stalledRounds = 0;
 
-  onEvent?.({
+  emit({
     type: "start",
     components,
     validationSetSize: validationSet.length,
@@ -396,10 +393,29 @@ async function runRandomSearch<
       ? (resumeFrom as RandomSearchSnapshot).seedScore
       : requireMeasuredMean({ batch: seedEvaluation, phase: "seed" });
 
+  // The seed is the baseline every later candidate is read against, and its
+  // sweep is a full measurement like any other. A report that starts at the
+  // first improvement has nothing to compare the improvement to. A resumed run
+  // does not re-emit it: the run that swept it already did.
+  if (seedEvaluation !== undefined) {
+    emit({
+      type: "candidateAccepted",
+      round: 0,
+      candidateId: 0,
+      candidate: seedCandidate,
+      aggregateScore: seedScore,
+      instanceScores: instanceRow(seedEvaluation),
+      ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
+    });
+  }
+
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   /** Absent on a resumed run until a variant wins: outputs are not checkpointed. */
   let bestOutputs = seedEvaluation?.outputs;
+  // Numbers acceptances rather than proposals: the seed is 0, and every id
+  // after it names a candidate a full validation sweep actually preferred.
+  let acceptedCandidates = 0;
 
   await checkpoint();
 
@@ -425,7 +441,7 @@ async function runRandomSearch<
     }
 
     const component = components[round % components.length] as K;
-    onEvent?.({ type: "roundStart", round, component });
+    emit({ type: "roundStart", round, component });
     const spentBefore = budget.spent();
     const scoreBefore = bestScore;
 
@@ -523,14 +539,20 @@ async function runRandomSearch<
       // The variant measured the provider rather than its own text, so there
       // is nothing here to compare the incumbent against.
       if (score !== undefined && score > bestScore) {
-        onEvent?.({
+        const candidate = scheduled[index] as Candidate<K>;
+        acceptedCandidates += 1;
+
+        emit({
           type: "candidateAccepted",
           round,
-          component,
-          score,
-          previousScore: bestScore,
+          candidateId: acceptedCandidates,
+          candidate,
+          aggregateScore: score,
+          instanceScores: instanceRow(outcome.evaluation),
+          ...(trackBestOutputs ? { outputs: outcome.evaluation.outputs } : {}),
         });
-        best = scheduled[index] as Candidate<K>;
+
+        best = candidate;
         bestScore = score;
         bestOutputs = outcome.evaluation.outputs;
       }
@@ -558,28 +580,34 @@ async function runRandomSearch<
     stopReason = "aborted";
   }
 
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluator.evaluate({
-            candidate: best,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: null,
-            iteration: round,
-            charge: false,
-          }),
-        );
+      : await evaluator.evaluate({
+          candidate: best,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: null,
+          iteration: round,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
-  onEvent?.({
+  emit({
     type: "finish",
     reason: stopReason,
+    bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: instanceRow(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   return {

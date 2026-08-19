@@ -21,6 +21,8 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { Reporter } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
@@ -55,7 +57,6 @@ import type {
   ComponentSelector,
   GepaAdapter,
   GepaEvent,
-  GepaReporter,
   GepaSnapshot,
   GepaStopReason,
   RejectedProposal,
@@ -225,7 +226,7 @@ export interface GepaTask<
    * somewhere else — and teeing one callback by hand is how one of them ends
    * up silently dropped.
    */
-  reporters?: readonly GepaReporter<NoInfer<K>>[];
+  reporters?: readonly Reporter<GepaEvent<NoInfer<K>>>[];
   /**
    * Called with a resumable snapshot after the seed is scored and after every
    * iteration. Persist it and a killed run costs the last iteration, not all
@@ -511,20 +512,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   let totalMergesTested = resumeFrom?.merge.tested ?? 0;
   let lastIterationAccepted = resumeFrom?.merge.lastIterationAccepted ?? false;
 
-  function emit(event: GepaEvent<K>): void {
-    for (const reporter of reporters) {
-      try {
-        reporter.onEvent?.(event);
-      } catch (err) {
-        // A reporter is an observer of the search, never a participant in it:
-        // a logging endpoint that is down must not decide a run's outcome.
-        console.warn("[textopt] reporter threw while handling an event", {
-          type: event.type,
-          err,
-        });
-      }
-    }
-  }
+  const emit = createEmitter<GepaEvent<K>>(reporters);
 
   /**
    * Everything an acceptance means, in one event: the text, the aggregate, and
@@ -1428,11 +1416,12 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     type: "finish",
     reason: stopReason,
     bestCandidateId,
+    bestScore: best.aggregateScore,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
     ...(heldOut === undefined
       ? {}
-      : { testInstanceScores: unmeasuredAsUnknown(heldOut) }),
+      : { testInstanceScores: instanceRow(heldOut) }),
     ...(heldOut === undefined || !trackBestOutputs
       ? {}
       : { testOutputs: heldOut.outputs }),
@@ -1463,38 +1452,6 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     stopReason,
     snapshot: takeSnapshot(),
   };
-}
-
-async function flushReporters<K extends string>(
-  reporters: readonly GepaReporter<K>[],
-): Promise<void> {
-  await Promise.all(
-    reporters.map(async (reporter) => {
-      try {
-        await reporter.flush?.();
-      } catch (err) {
-        console.warn("[textopt] reporter threw while flushing", { err });
-      }
-    }),
-  );
-}
-
-/**
- * A scored batch as the per-instance row a reporter should read: an instance
- * an infrastructure failure left unmeasured becomes `undefined` rather than
- * the zero the adapter reported for it.
- *
- * The same distinction `measuredMean` makes when it averages, and the same one
- * `CandidateRecord.instanceScores` carries — a row of zeros and a row of
- * unknowns describe very different runs.
- */
-function unmeasuredAsUnknown(batch: {
-  scores: readonly number[];
-  transient: readonly boolean[];
-}): (number | undefined)[] {
-  return batch.scores.map((score, index) =>
-    batch.transient[index] === true ? undefined : score,
-  );
 }
 
 /**

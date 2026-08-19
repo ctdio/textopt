@@ -1,3 +1,4 @@
+import { RandomSearchOptimizer } from "textopt/random-search";
 import { GepaOptimizer } from "textopt/gepa";
 import { subsampledEvaluationPolicy } from "textopt/gepa";
 import type { KeywordExample } from "textopt/testing";
@@ -5,6 +6,7 @@ import {
   KEYWORD_EXAMPLES,
   createKeywordAdapter,
   createKeywordReflector,
+  createSamplingReflector,
 } from "textopt/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
@@ -364,5 +366,90 @@ describe("createLangSmithReporter", () => {
     };
 
     expect(await runOnce()).toEqual(await runOnce());
+  });
+});
+
+describe("createLangSmithReporter across optimizers", () => {
+  function randomSearchTask() {
+    return {
+      seedCandidate: { instruction: "Answer the user question." },
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createSamplingReflector(),
+      maxMetricCalls: 400,
+    };
+  }
+
+  test("opens an experiment per accepted candidate for a non-reflective search", async () => {
+    // The reporter reads the shared acceptance payload, not GEPA's union. A
+    // search with no reflective dataset at all still reports the same way.
+    const client = createRecordingClient();
+
+    await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
+      ...randomSearchTask(),
+      reporters: [
+        createLangSmithReporter({
+          client,
+          dataset: "keyword-val",
+          experimentPrefix: "rs-1",
+          validationSet: KEYWORD_EXAMPLES,
+        }),
+      ],
+    });
+
+    expect(experimentsOf(client).length).toBeGreaterThan(0);
+    expect(client.datasets).toHaveLength(1);
+    expect(client.examples).toHaveLength(KEYWORD_EXAMPLES.length);
+  });
+
+  test("carries the emitting optimizer's own vocabulary into experiment metadata", async () => {
+    const client = createRecordingClient();
+
+    await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
+      ...randomSearchTask(),
+      reporters: [
+        createLangSmithReporter({
+          client,
+          dataset: "keyword-val",
+          experimentPrefix: "rs-1",
+          validationSet: KEYWORD_EXAMPLES,
+        }),
+      ],
+    });
+
+    const metadata = experimentsOf(client).map((project) => project.metadata);
+
+    expect(metadata.length).toBeGreaterThan(0);
+    for (const entry of metadata) {
+      expect(entry).toHaveProperty("textopt_round");
+      expect(entry).toHaveProperty("textopt_candidate_id");
+      expect(entry).toHaveProperty("textopt_score");
+      expect(entry).toHaveProperty("instruction");
+    }
+  });
+
+  test("scores every experiment over the whole validation set", async () => {
+    const client = createRecordingClient();
+
+    await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
+      ...randomSearchTask(),
+      reporters: [
+        createLangSmithReporter({
+          client,
+          dataset: "keyword-val",
+          experimentPrefix: "rs-1",
+          validationSet: KEYWORD_EXAMPLES,
+        }),
+      ],
+    });
+
+    const experiments = experimentsOf(client);
+
+    expect(experiments.length).toBeGreaterThan(0);
+    for (const experiment of experiments) {
+      expect(
+        client.runs.filter((run) => run.project_name === experiment.name),
+      ).toHaveLength(KEYWORD_EXAMPLES.length);
+    }
   });
 });

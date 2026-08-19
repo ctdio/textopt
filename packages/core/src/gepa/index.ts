@@ -40,7 +40,6 @@ export type {
   ComponentSelector,
   GepaAdapter,
   GepaEvent,
-  GepaReporter,
   GepaSnapshot,
   GepaStopReason,
   MakeReflectiveDatasetArgs,
@@ -51,3 +50,11 @@ export type {
   SelectionState,
   ValEvaluationPolicy,
 } from "./types.js";
+export { isCandidateAccepted, isRunFinished } from "../reporting.js";
+export type {
+  CandidateAccepted,
+  OptimizerEvent,
+  Reporter,
+  ReportableEvent,
+  RunFinished,
+} from "../reporting.js";

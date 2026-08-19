@@ -160,11 +160,15 @@ describe("RandomSearchOptimizer", () => {
     await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
       ...task(),
       maxMetricCalls: 400,
-      onEvent: (event) => {
-        if (event.type === "candidateAccepted") {
-          scores.push(event.score);
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              scores.push(event.aggregateScore);
+            }
+          },
+        },
+      ],
     });
 
     expect(scores.length).toBeGreaterThan(0);
@@ -236,11 +240,15 @@ describe("RandomSearchOptimizer", () => {
       ...task(),
       seedCandidate: { intro: "Answer.", outro: "Be brief." },
       maxMetricCalls: 400,
-      onEvent: (event) => {
-        if (event.type === "roundStart") {
-          components.push(event.component);
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "roundStart") {
+              components.push(event.component);
+            }
+          },
+        },
+      ],
     });
 
     expect(components).toEqual(["intro", "outro", "intro", "outro"]);
@@ -437,11 +445,15 @@ describe("RandomSearchOptimizer concurrency", () => {
       }).optimize({
         ...task(),
         adapter: withPacing(baseAdapter(), pace),
-        onEvent: (event) => {
-          if (event.type === "candidateAccepted") {
-            events.push(`${event.round}:${event.score}`);
-          }
-        },
+        reporters: [
+          {
+            onEvent: (event) => {
+              if (event.type === "candidateAccepted") {
+                events.push(`${event.round}:${event.aggregateScore}`);
+              }
+            },
+          },
+        ],
       });
 
       return events;
@@ -513,3 +525,139 @@ function withPacing<Datum, Trajectory, Output>(
     },
   };
 }
+
+describe("RandomSearchOptimizer reporting", () => {
+  test("reports the seed as candidate 0, before any improvement", async () => {
+    // The seed is what every later candidate is read against. A report that
+    // starts at the first improvement has nothing to compare it to.
+    const accepted: { id: number; candidate: Record<string, string> }[] = [];
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 2 }).optimize({
+      ...{ ...task(), maxMetricCalls: 400 },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push({
+                id: event.candidateId,
+                candidate: { ...event.candidate },
+              });
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted[0]?.id).toBe(0);
+    expect(accepted[0]?.candidate).toEqual(SEED);
+  });
+
+  test("reports an acceptance with the text that scored", async () => {
+    const accepted: string[] = [];
+
+    await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
+      ...task(),
+      maxMetricCalls: 400,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push(event.candidate.instruction);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted.length).toBeGreaterThan(0);
+    expect(accepted.every((text) => text.length > 0)).toBe(true);
+  });
+
+  test("reports a per-instance row aligned with the validation set", async () => {
+    const rows: (number | undefined)[][] = [];
+
+    await new RandomSearchOptimizer({ variants: 3, maxRounds: 6 }).optimize({
+      ...task(),
+      maxMetricCalls: 400,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              rows.push([...event.instanceScores]);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveLength(KEYWORD_EXAMPLES.length);
+    }
+  });
+
+  test("delivers every event to every reporter", async () => {
+    const first: string[] = [];
+    const second: string[] = [];
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 2 }).optimize({
+      ...task(),
+      maxMetricCalls: 400,
+      reporters: [
+        { onEvent: (event) => first.push(event.type) },
+        { onEvent: (event) => second.push(event.type) },
+      ],
+    });
+
+    expect(first).toEqual(second);
+    expect(first).toContain("finish");
+  });
+
+  test("flushes every reporter once the run ends", async () => {
+    const flushed: string[] = [];
+
+    await new RandomSearchOptimizer({ variants: 1, maxRounds: 1 }).optimize({
+      ...task(),
+      maxMetricCalls: 400,
+      reporters: [
+        {
+          flush: async () => {
+            flushed.push("first");
+          },
+        },
+        {
+          flush: async () => {
+            flushed.push("second");
+          },
+        },
+      ],
+    });
+
+    expect(flushed.toSorted()).toEqual(["first", "second"]);
+  });
+
+  test("flushes reporters when the run ends by throwing", async () => {
+    const flushed: string[] = [];
+
+    await expect(
+      new RandomSearchOptimizer({ variants: 1, maxRounds: 1 }).optimize({
+        ...task(),
+        maxMetricCalls: 400,
+        adapter: {
+          evaluate: () => {
+            throw new Error("the provider is down");
+          },
+        },
+        reporters: [
+          {
+            flush: async () => {
+              flushed.push("first");
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("the provider is down");
+
+    expect(flushed).toEqual(["first"]);
+  });
+});

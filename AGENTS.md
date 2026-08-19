@@ -13,7 +13,8 @@ a day.
 ```
 packages/core        the substrate and every optimizer
   src/                   "."         evaluation, budget, cache, demos, judge,
-                                     compare, deadline, checkpoint, rng, types
+                                     compare, deadline, checkpoint, reporting,
+                                     rng, types
   src/gepa/              "./gepa"    reflective evolution over a Pareto frontier
   src/simba/             "./simba"   mini-batch ascent on program disagreement
   src/opro/              "./opro"    score-history meta-prompting
@@ -32,6 +33,13 @@ docs/                                                       long-form guides
 Each optimizer owns its directory and exports through its own entrypoint. The
 substrate must stay free of anything shaped like a particular optimizer — if a
 type only makes sense for reflective search, it belongs in `gepa/`.
+
+`reporting.ts` is where that rule earns its keep. Every search emits its own
+event union, but `candidateAccepted` and `finish` intersect a shared payload,
+so one reporter reads a run without knowing which optimizer produced it. A new
+optimizer emits `candidateAccepted` only when the incumbent moves and a full
+validation sweep measured it: a row aligned with a minibatch is not a row a
+reporter can name instances against.
 
 ## Commands
 

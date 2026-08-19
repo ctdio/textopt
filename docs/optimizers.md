@@ -77,7 +77,7 @@ new GepaOptimizer({
 });
 ```
 
-`optimize` takes a `GepaTask`. Required fields are `seedCandidate`, `trainingSet`, `adapter`, `reflect`, and `maxMetricCalls`. `validationSet` defaults to `trainingSet`; `testSet` is optional and held out. Other options are `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `onEvent`, `onCheckpoint`, `resumeFrom`, and `signal`.
+`optimize` takes a `GepaTask`. Required fields are `seedCandidate`, `trainingSet`, `adapter`, `reflect`, and `maxMetricCalls`. `validationSet` defaults to `trainingSet`; `testSet` is optional and held out. Other options are `componentSelector`, `batchSampler`, `valEvaluationPolicy`, `instanceId`, `cache`, `reporters`, `onCheckpoint`, `resumeFrom`, and `signal`.
 
 Component names are inferred from `seedCandidate`. Other positions use `NoInfer`, so misspelled component names fail type checking.
 

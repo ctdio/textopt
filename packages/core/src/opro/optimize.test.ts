@@ -373,11 +373,15 @@ describe("OproOptimizer", () => {
     }).optimize({
       ...task(),
       seedCandidate: { intro: "Answer.", outro: "Be brief." },
-      onEvent: (event) => {
-        if (event.type === "roundStart") {
-          components.push(event.component);
-        }
-      },
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "roundStart") {
+              components.push(event.component);
+            }
+          },
+        },
+      ],
     });
 
     expect(components).toEqual(["intro", "outro", "intro", "outro"]);
@@ -839,11 +843,17 @@ describe("OproOptimizer concurrency", () => {
       }).optimize({
         ...task(),
         adapter: withPacing(baseAdapter(), pace),
-        onEvent: (event) => {
-          if (event.type === "attempt") {
-            accepted.push(`${event.round}:${event.score}:${event.accepted}`);
-          }
-        },
+        reporters: [
+          {
+            onEvent: (event) => {
+              if (event.type === "attempt") {
+                accepted.push(
+                  `${event.round}:${event.score}:${event.accepted}`,
+                );
+              }
+            },
+          },
+        ],
       });
 
       return { accepted, history: result.snapshot.histories };
@@ -910,3 +920,116 @@ function withPacing<Datum, Trajectory, Output>(
     },
   };
 }
+
+describe("OproOptimizer reporting", () => {
+  test("reports the seed as candidate 0, before any improvement", async () => {
+    // The seed is what every later candidate is read against. A report that
+    // starts at the first improvement has nothing to compare it to.
+    const accepted: { id: number; candidate: Record<string, string> }[] = [];
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push({
+                id: event.candidateId,
+                candidate: { ...event.candidate },
+              });
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted[0]?.id).toBe(0);
+    expect(accepted[0]?.candidate).toEqual(SEED);
+  });
+
+  test("reports an acceptance with the text that scored", async () => {
+    const accepted: Record<string, string>[] = [];
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              accepted.push({ ...event.candidate });
+            }
+          },
+        },
+      ],
+    });
+
+    expect(accepted.length).toBeGreaterThan(0);
+  });
+
+  test("reports a per-instance row aligned with the validation set", async () => {
+    const rows: (number | undefined)[][] = [];
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              rows.push([...event.instanceScores]);
+            }
+          },
+        },
+      ],
+    });
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveLength(KEYWORD_EXAMPLES.length);
+    }
+  });
+
+  test("names the winner in finish with an id an acceptance carried", async () => {
+    const acceptedIds: number[] = [];
+    let bestCandidateId: number | undefined;
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              acceptedIds.push(event.candidateId);
+            }
+            if (event.type === "finish") {
+              bestCandidateId = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(acceptedIds).toContain(bestCandidateId);
+  });
+
+  test("flushes every reporter once the run ends", async () => {
+    const flushed: string[] = [];
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      reporters: [
+        {
+          flush: async () => {
+            flushed.push("first");
+          },
+        },
+        {
+          flush: async () => {
+            flushed.push("second");
+          },
+        },
+      ],
+    });
+
+    expect(flushed.toSorted()).toEqual(["first", "second"]);
+  });
+});

@@ -12,12 +12,14 @@ import {
   createEvaluator,
   measuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent } from "../evaluation.js";
+import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
@@ -132,7 +134,8 @@ export interface SimbaTask<
   sampler?: BatchSampler<NoInfer<Datum>>;
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
   cache?: EvaluationCache | false;
-  onEvent?: (event: SimbaEvent<NoInfer<K>>) => void;
+  /** Observers of the run. Every one sees every event; none can fail it. */
+  reporters?: readonly Reporter<SimbaEvent<NoInfer<K>>>[];
   onCheckpoint?: (snapshot: SimbaSnapshot) => void | Promise<void>;
   resumeFrom?: SimbaSnapshot;
 }
@@ -157,14 +160,13 @@ export type SimbaEvent<K extends string = string> =
       sourceProgram: number;
       minibatchScore: number;
     }
+  | ({
+      type: "candidateAccepted";
+      /** The step whose winner this was. */
+      step: number;
+    } & CandidateAccepted<K>)
   | { type: "error"; step: number; err: unknown }
-  | {
-      type: "finish";
-      reason: SimbaStopReason;
-      bestScore: number;
-      metricCalls: number;
-      testScore?: number;
-    };
+  | ({ type: "finish"; reason: SimbaStopReason } & RunFinished);
 
 export interface SimbaResult<
   K extends string = string,
@@ -188,6 +190,15 @@ export interface SimbaResult<
 type ScoreOutcome =
   | { score: number | undefined; stop?: undefined }
   | { score?: undefined; stop: true };
+
+/** A finalist sweep keeps its batch: the per-instance row is what reporting reads. */
+type SweepOutcome<Output> =
+  | {
+      score: number | undefined;
+      evaluation: ScoredBatch<Output>;
+      stop?: undefined;
+    }
+  | { score?: undefined; evaluation?: undefined; stop: true };
 
 const DEFAULT_MINIBATCH_SIZE = 32;
 const DEFAULT_CANDIDATES = 6;
@@ -232,7 +243,7 @@ export class SimbaOptimizer implements Optimizer<SimbaStopReason> {
     this.#config = config;
   }
 
-  optimize<
+  async optimize<
     Datum,
     Trajectory = unknown,
     Output = unknown,
@@ -240,7 +251,11 @@ export class SimbaOptimizer implements Optimizer<SimbaStopReason> {
   >(
     task: SimbaTask<Datum, Trajectory, Output, K>,
   ): Promise<SimbaResult<K, Output>> {
-    return run({ config: this.#config, task });
+    try {
+      return await run({ config: this.#config, task });
+    } finally {
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -284,11 +299,13 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
   } = task;
+
+  const emit = createEmitter<SimbaEvent<K>>(reporters);
 
   const components = componentNames(seedCandidate);
   const ruleComponents =
@@ -367,7 +384,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     trackOutputs: true,
     cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
-    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -397,7 +414,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: SimbaStopReason = "maxSteps";
 
-  onEvent?.({
+  emit({
     type: "start",
     components,
     validationSetSize: validationSet.length,
@@ -437,7 +454,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       scores: programs.map((_, index) => averageScore(index)),
       k: candidateCount,
     });
-    onEvent?.({ type: "stepStart", step, poolSize: pool.length });
+    emit({ type: "stepStart", step, poolSize: pool.length });
 
     const batch = sampler({ trainingSet, iteration: step, rng }).map(
       (index) => trainingSet[index] as Datum,
@@ -519,7 +536,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
             ? appendDemo({ candidate: dropped, bucket, low })
             : await appendRule({ candidate: dropped, bucket, low, high });
       } catch (err) {
-        onEvent?.({ type: "error", step, err });
+        emit({ type: "error", step, err });
         continue;
       }
 
@@ -604,7 +621,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
       programs.push(entry.candidate);
       programScores.push([score]);
-      onEvent?.({
+      emit({
         type: "candidate",
         step,
         strategy: entry.strategy,
@@ -662,26 +679,23 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     items: contenders,
     limit: concurrency,
     key: (contender) => candidateHash(contender.candidate),
-    task: async (contender): Promise<ScoreOutcome> => {
+    task: async (contender): Promise<SweepOutcome<Output>> => {
       if (signal?.aborted) {
         return { stop: true };
       }
       try {
-        return {
-          score: measuredMean(
-            await evaluator.evaluate({
-              candidate: contender.candidate,
-              batch: validationSet,
-              ids: validationIds,
-              split: "val",
-              // The seed is always the first winner, and its sweep is the
-              // baseline the whole result is reported against.
-              phase: contender.index === 0 ? "seed" : "validation",
-              candidateId: contender.index,
-              iteration: step,
-            }),
-          ),
-        };
+        const evaluation = await evaluator.evaluate({
+          candidate: contender.candidate,
+          batch: validationSet,
+          ids: validationIds,
+          split: "val",
+          // The seed is always the first winner, and its sweep is the
+          // baseline the whole result is reported against.
+          phase: contender.index === 0 ? "seed" : "validation",
+          candidateId: contender.index,
+          iteration: step,
+        });
+        return { score: measuredMean(evaluation), evaluation };
       } catch (err) {
         if (err instanceof BudgetExhausted || signal?.aborted) {
           return { stop: true };
@@ -692,6 +706,10 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   });
 
   const finalists: SimbaFinalist<K>[] = [];
+  // The seed is the first contender, so the ratchet reports it as candidate 0
+  // and every winner that clears it takes the next id.
+  let acceptedCandidates = -1;
+  let acceptedScore = Number.NEGATIVE_INFINITY;
   // Collected in winner order, because the seed's score is read off the head
   // of this list before it is sorted.
   for (const [position, outcome] of sweeps.entries()) {
@@ -707,6 +725,24 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       score: outcome.score,
       step: contender.step,
     });
+
+    // The search accepts on a minibatch, which is too small a sample to name
+    // an instance row against. These sweeps are the first full measurement any
+    // candidate gets, so the ratchet over them — in winner order, the seed
+    // first — is where an acceptance becomes reportable.
+    if (outcome.score > acceptedScore) {
+      acceptedScore = outcome.score;
+      acceptedCandidates += 1;
+      emit({
+        type: "candidateAccepted",
+        step: contender.step,
+        candidateId: acceptedCandidates,
+        candidate: contender.candidate,
+        aggregateScore: outcome.score,
+        instanceScores: instanceRow(outcome.evaluation),
+        ...(trackBestOutputs ? { outputs: outcome.evaluation.outputs } : {}),
+      });
+    }
   }
 
   const seedScore = finalists[0]?.score ?? 0;
@@ -727,28 +763,34 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     bestOutputs = sweep?.outputs;
   }
 
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluator.evaluate({
-            candidate: best.candidate,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: null,
-            iteration: step,
-            charge: false,
-          }),
-        );
+      : await evaluator.evaluate({
+          candidate: best.candidate,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: null,
+          iteration: step,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
-  onEvent?.({
+  emit({
     type: "finish",
     reason: stopReason,
+    bestCandidateId: acceptedCandidates,
     bestScore: best.score,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: instanceRow(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   return {

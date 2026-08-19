@@ -20,6 +20,8 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
+import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
@@ -213,7 +215,8 @@ export interface MiproTask<
   instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
   /** Pass `false` to disable caching entirely. */
   cache?: EvaluationCache | false;
-  onEvent?: (event: MiproEvent<NoInfer<K>>) => void;
+  /** Observers of the run. Every one sees every event; none can fail it. */
+  reporters?: readonly Reporter<MiproEvent<NoInfer<K>>>[];
   /**
    * Called with a resumable snapshot once the menus are built and after every
    * trial. Persist it and a killed run costs the last trial, not the menus.
@@ -242,19 +245,8 @@ export type MiproEvent<K extends string = string> =
       /** True when the trial earned a full validation sweep. */
       promoted: boolean;
     }
-  | {
-      type: "incumbent";
-      trial: number;
-      choices: number[];
-      score: number;
-    }
-  | {
-      type: "finish";
-      reason: MiproStopReason;
-      bestScore: number;
-      metricCalls: number;
-      testScore?: number;
-    };
+  | ({ type: "candidateAccepted"; trial: number } & CandidateAccepted<K>)
+  | ({ type: "finish"; reason: MiproStopReason } & RunFinished);
 
 export interface MiproObservation {
   trial: number;
@@ -344,7 +336,11 @@ export class MiproOptimizer implements Optimizer<MiproStopReason> {
   >(
     task: MiproTask<Datum, Trajectory, Output, K>,
   ): Promise<MiproResult<K, Output>> {
-    return runMipro({ config: this.#config, task });
+    try {
+      return await runMipro({ config: this.#config, task });
+    } finally {
+      await flushReporters(task.reporters ?? []);
+    }
   }
 }
 
@@ -477,11 +473,13 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     maxCostUsd,
     maxWallClockMs,
     instanceId = defaultInstanceId,
-    onEvent,
+    reporters = [],
     onCheckpoint,
     resumeFrom,
     signal,
   } = task;
+
+  const emit = createEmitter<MiproEvent<K>>(reporters);
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -548,7 +546,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
     ...(signal === undefined ? {} : { signal }),
-    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -556,7 +554,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     batchSampler.restore?.(resumeFrom.sampler);
   }
 
-  onEvent?.({
+  emit({
     type: "start",
     components,
     validationSetSize: validationSet.length,
@@ -751,7 +749,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     ];
   }
 
-  onEvent?.({ type: "menu", menu, reflectionCalls });
+  emit({ type: "menu", menu, reflectionCalls });
 
   const menuSizes = components.map((name) => (menu[name] as string[]).length);
 
@@ -802,6 +800,22 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     fullEvaluations += 1;
   }
 
+  // The seed is the baseline every later candidate is read against, and its
+  // sweep is a full measurement like any other. A report that starts at the
+  // first improvement has nothing to compare the improvement to. A resumed run
+  // does not re-emit it: the run that swept it already did.
+  if (seedEvaluation !== undefined) {
+    emit({
+      type: "candidateAccepted",
+      trial: 0,
+      candidateId: 0,
+      candidate: seedCandidate,
+      aggregateScore: seedScore,
+      instanceScores: instanceRow(seedEvaluation),
+      ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
+    });
+  }
+
   // The seed is index 0 of every menu, and its sweep is the most reliable
   // measurement the run will ever make. Registering it as a trial is how the
   // surrogate starts with a reference point instead of having to buy one, and
@@ -813,6 +827,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
+  let acceptedCandidates = 0;
   let bestOutputs = seedEvaluation?.outputs;
   // Minibatch readings per configuration, not one running bar. A configuration
   // drawn more than once is measured on a different batch each time, so the
@@ -930,7 +945,16 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       best = candidate;
       bestScore = score;
       bestOutputs = evaluation.outputs;
-      onEvent?.({ type: "incumbent", trial, choices, score });
+      acceptedCandidates += 1;
+      emit({
+        type: "candidateAccepted",
+        trial,
+        candidateId: acceptedCandidates,
+        candidate,
+        aggregateScore: score,
+        instanceScores: instanceRow(evaluation),
+        ...(trackBestOutputs ? { outputs: evaluation.outputs } : {}),
+      });
     }
     return "swept";
   }
@@ -1017,7 +1041,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       promoted: false,
     };
     observations.push(observation);
-    onEvent?.({
+    emit({
       type: "trial",
       trial,
       choices,
@@ -1054,28 +1078,34 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     stopReason = "aborted";
   }
 
-  const testScore =
+  const heldOut =
     testSet === undefined
       ? undefined
-      : measuredMean(
-          await evaluator.evaluate({
-            candidate: best,
-            batch: testSet,
-            ids: testIds,
-            split: "test",
-            phase: "test",
-            candidateId: null,
-            iteration: trial,
-            charge: false,
-          }),
-        );
+      : await evaluator.evaluate({
+          candidate: best,
+          batch: testSet,
+          ids: testIds,
+          split: "test",
+          phase: "test",
+          candidateId: null,
+          iteration: trial,
+          charge: false,
+        });
+  const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
-  onEvent?.({
+  emit({
     type: "finish",
     reason: stopReason,
+    bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
     ...(testScore === undefined ? {} : { testScore }),
+    ...(heldOut === undefined
+      ? {}
+      : { testInstanceScores: instanceRow(heldOut) }),
+    ...(heldOut === undefined || !trackBestOutputs
+      ? {}
+      : { testOutputs: heldOut.outputs }),
   });
 
   return {
