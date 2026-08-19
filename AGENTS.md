@@ -25,6 +25,7 @@ packages/core        the substrate and every optimizer
 packages/ai-sdk, packages/braintrust, packages/langchain    adapters
 examples/                                                   runnable scripts
 bench/                                                      offline seed sweeps
+docs/                                                       long-form guides
 ```
 
 Each optimizer owns its directory and exports through its own entrypoint. The
@@ -86,8 +87,8 @@ you cannot articulate the cost, you do not yet understand the deviation.
 
 ## Claims in documentation are measured
 
-The READMEs quote real numbers ("0.87 mean best, 8 runs in 15"). Those came from
-sweeps, not intuition. Two rules follow:
+The READMEs and the pages under `docs/` quote real numbers ("0.87 mean best, 8
+runs in 15"). Those came from sweeps, not intuition. Two rules follow:
 
 - **Measure across seeds.** A single-seed result has twice overturned a
   conclusion that looked obvious in this repo. Sweep 10–30 seeds and compare
