@@ -1,0 +1,933 @@
+import { createBudget } from "../budget.js";
+import { createMemoryCache, stableHash } from "../cache.js";
+import type { EvaluationCache } from "../cache.js";
+import { mapWithConcurrency } from "../concurrency.js";
+import { bootstrapDemos, formatDemos } from "../demos.js";
+import type { Demo, DemoRenderer } from "../demos.js";
+import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import type { EvaluationEvent } from "../evaluation.js";
+import { mean } from "../math.js";
+import type {
+  Optimizer,
+  OptimizerResult,
+  OptimizerTask,
+} from "../optimizer.js";
+import { createSeededRng } from "../rng.js";
+import { createEpochShuffledSampler } from "../sampling.js";
+import type { BatchSampler } from "../sampling.js";
+import { parseProposedText } from "../text.js";
+import { componentNames } from "../types.js";
+import type { Adapter, Candidate, TextModel } from "../types.js";
+import { proposeConfiguration } from "./tpe.js";
+import type { Observation } from "./tpe.js";
+
+export type MiproPromptBuilder = (args: {
+  componentName: string;
+  seedText: string;
+  /** Rendered task inputs, for grounding. Empty when none were requested. */
+  exemplars: readonly string[];
+  /** A style hint, varied per draw so the menu is not four of one idea. */
+  tip: string;
+}) => string;
+
+export interface MiproConfig {
+  /**
+   * Instructions generated per component, beyond the seed. Ignored for a
+   * component the caller supplied a menu for. Default 3.
+   */
+  instructionsPerComponent?: number;
+  /** Instances a trial is scored on. Default 5. */
+  minibatchSize?: number;
+  /** Configurations evaluated. Default 30. */
+  maxTrials?: number;
+  /** Trials drawn uniformly before the surrogate takes over. Default 10. */
+  startupTrials?: number;
+  /**
+   * Fraction of observations the surrogate treats as good. Defaults to
+   * Optuna's rule — a tenth of them, capped at 25 — which narrows the good set
+   * as observations accumulate rather than holding a fixed share.
+   */
+  gamma?: number;
+  /** Configurations the surrogate draws per trial. Default 24. */
+  surrogateSamples?: number;
+  /**
+   * Whether the surrogate models components jointly. Default true, matching
+   * MIPROv2. Set false when the components do independent jobs — see
+   * `proposeConfiguration` for the tradeoff.
+   */
+  multivariate?: boolean;
+  /**
+   * Trials between full validation sweeps. Every interval, the configuration
+   * with the best *average* minibatch reading that has not been swept yet is
+   * evaluated in full. Averaging is the point: a single minibatch is a noisy
+   * reading, and promoting on one alone lets a lucky draw decide the run.
+   * Default 6. dspy spells the same cadence as `minibatch_full_eval_steps=5`
+   * and sweeps when `trial % (steps + 1) == 0`, so its 5 and this 6 describe
+   * the same schedule — do not "align" the numbers.
+   */
+  fullEvalInterval?: number;
+  /**
+   * Bootstrapped demo sets generated per demo component, beyond the seed text
+   * and the zero-shot option. Default 3.
+   */
+  demoSets?: number;
+  /** Demos in the largest generated set. Default 4. */
+  maxDemos?: number;
+  /** Score a rollout must reach to be kept as a demo. Default 1. */
+  demoMinScore?: number;
+  /** Task inputs shown when generating instructions. Default 3. */
+  exemplars?: number;
+  /**
+   * Summarize the trainset with one reflection call and show that summary to
+   * the proposer, as MIPROv2's grounded proposer does. Default true. The
+   * summary reads more data than the exemplars can fit, so it describes the
+   * task rather than a few instances of it. Costs one reflection call, and is
+   * skipped entirely when every menu was supplied and nothing is proposed.
+   */
+  datasetSummary?: boolean;
+  /** Trainset entries the summary is written from. Default 10. */
+  summaryExamples?: number;
+  /** How many instruction proposals may be in flight at once. Default 1. */
+  concurrency?: number;
+  seed?: number;
+  buildPrompt?: MiproPromptBuilder;
+  /** Replaces the built-in style hints. */
+  tips?: readonly string[];
+  trackBestOutputs?: boolean;
+}
+
+export interface MiproTask<
+  Datum,
+  Traj = unknown,
+  Out = unknown,
+  K extends string = string,
+> extends OptimizerTask<Datum, Traj, Out, K> {
+  /**
+   * The base adapter, not `GepaAdapter`: the surrogate reads scores only, so
+   * this search never asks for traces or a reflective dataset.
+   */
+  adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  /** Generates the menu for components no menu was supplied for. */
+  reflect: TextModel;
+  /**
+   * Menu entries for a component, used verbatim and never rewritten. This is
+   * where a bootstrapped demo block belongs: demos are harvested, not
+   * authored, and handing them to a rewriting model destroys them.
+   */
+  componentOptions?: Partial<Record<NoInfer<K>, readonly string[]>>;
+  /**
+   * Components holding few-shot demo blocks. Their menus are bootstrapped from
+   * the trainset rather than written by `reflect` — MIPROv2 searches
+   * instructions and demonstrations together, and a demo is evidence a rollout
+   * actually produced, which asking a model to author would destroy.
+   */
+  demoComponents?: readonly NoInfer<K>[];
+  /** Renders a harvested rollout as demo text. Defaults to JSON. */
+  renderDemo?: DemoRenderer<NoInfer<Datum>, NoInfer<Out>>;
+  /**
+   * The gold output for a training datum, where the caller has labels. Supply
+   * it and every demo component keeps a labels-only set on its menu, as
+   * MIPROv2 does — the one demo set that costs no rollouts at all, since the
+   * output is known rather than produced. Return `undefined` for an unlabelled
+   * datum. Nothing generic can infer this: only the caller knows which part of
+   * a datum is the answer.
+   */
+  goldOutput?: (datum: NoInfer<Datum>) => NoInfer<Out> | undefined;
+  /** Renders a task input for the proposal prompt. Defaults to JSON. */
+  renderDatum?: (datum: NoInfer<Datum>) => string;
+  batchSampler?: BatchSampler<NoInfer<Datum>>;
+  instanceId?: (args: { datum: NoInfer<Datum>; index: number }) => string;
+  /** Pass `false` to disable caching entirely. */
+  cache?: EvaluationCache | false;
+  onEvent?: (event: MiproEvent<NoInfer<K>>) => void;
+}
+
+export type MiproStopReason = "budgetExhausted" | "maxTrials" | "aborted";
+
+export type MiproEvent<K extends string = string> =
+  | { type: "start"; components: K[]; valsetSize: number }
+  | { type: "menu"; menu: Record<K, string[]>; reflectionCalls: number }
+  | ({ type: "evaluation" } & EvaluationEvent)
+  | {
+      type: "trial";
+      trial: number;
+      choices: number[];
+      minibatchScore: number;
+      /** True when the trial earned a full validation sweep. */
+      promoted: boolean;
+    }
+  | {
+      type: "incumbent";
+      trial: number;
+      choices: number[];
+      score: number;
+    }
+  | {
+      type: "finish";
+      reason: MiproStopReason;
+      bestScore: number;
+      metricCalls: number;
+      testScore?: number;
+    };
+
+export interface MiproObservation {
+  trial: number;
+  choices: number[];
+  minibatchScore: number;
+  promoted: boolean;
+  /** The full validation score, present only on promoted trials. */
+  score?: number;
+}
+
+export interface MiproResult<
+  K extends string = string,
+  Out = unknown,
+> extends OptimizerResult<K, MiproStopReason, Out> {
+  /** The seed's full validation score, so the lift is readable directly. */
+  seedScore: number;
+  trials: number;
+  /** The search space that was actually explored, per component. */
+  menu: Record<K, string[]>;
+  observations: MiproObservation[];
+  /** Trials that earned a full sweep. The rest were minibatch readings only. */
+  fullEvaluations: number;
+  /** Rollouts spent harvesting demos, included in `metricCalls`. */
+  bootstrapMetricCalls: number;
+  reflectionCalls: number;
+  cacheHits: number;
+}
+
+const DEFAULT_INSTRUCTIONS = 3;
+const DEFAULT_MINIBATCH_SIZE = 5;
+const DEFAULT_MAX_TRIALS = 30;
+const DEFAULT_FULL_EVAL_INTERVAL = 6;
+const DEFAULT_DEMO_SETS = 3;
+const DEFAULT_MAX_DEMOS = 4;
+const DEFAULT_DEMO_MIN_SCORE = 1;
+const DEFAULT_EXEMPLARS = 3;
+const DEFAULT_SUMMARY_EXAMPLES = 10;
+
+/**
+ * Style hints, one per generated instruction. Drawing four instructions from
+ * one prompt yields four rewordings of one idea; varying the hint is what
+ * makes the menu a spread of approaches instead.
+ */
+const DEFAULT_TIPS = [
+  "Be concise. Say only what changes the output.",
+  "Be specific and detailed. Spell out the edge cases and the output format.",
+  "Describe the reasoning the component should do before it answers.",
+  "State the constraints as hard rules the component must never break.",
+  "Write it as a role description: who the component is and what it cares about.",
+];
+
+/**
+ * Joint search over a fixed menu, guided by a surrogate.
+ *
+ * The gap this fills is interaction between components. Reflective search
+ * updates one component per iteration and screens it in isolation, so a pair
+ * of components that only pay off together is invisible to it — a routing rule
+ * and the prompt it routes to, an output format and the instruction that
+ * assumes it. Merge recombines lineages after the fact but never proposes a
+ * joint move.
+ *
+ * This search proposes a menu of options per component up front, then treats
+ * the choice of one option per component as a single categorical
+ * configuration and lets a TPE decide which to spend a trial on. Trials run on
+ * minibatches; a configuration that beats the best minibatch reading earns a
+ * full sweep before it can become the incumbent, so the number reported is
+ * never a lucky minibatch.
+ *
+ * What it gives up is the ability to write text it did not think of at the
+ * start. The menu is fixed at trial one — reflective search keeps writing new
+ * text for the whole run. Neither dominates; they fail differently.
+ */
+export class MiproOptimizer implements Optimizer<MiproStopReason> {
+  readonly #config: MiproConfig;
+
+  constructor(config: MiproConfig = {}) {
+    assertConfig(config);
+    this.#config = config;
+  }
+
+  async optimize<
+    Datum,
+    Traj = unknown,
+    Out = unknown,
+    const K extends string = string,
+  >(task: MiproTask<Datum, Traj, Out, K>): Promise<MiproResult<K, Out>> {
+    return runMipro({ config: this.#config, task });
+  }
+}
+
+export function buildMiproPrompt(args: {
+  componentName: string;
+  seedText: string;
+  exemplars: readonly string[];
+  tip: string;
+  /** The other components' current text, so the proposal fits the system. */
+  siblings?: Readonly<Record<string, string>>;
+  /** What the trainset looks like as a whole, beyond the exemplars. */
+  datasetSummary?: string;
+}): string {
+  const {
+    componentName,
+    seedText,
+    exemplars,
+    tip,
+    siblings = {},
+    datasetSummary,
+  } = args;
+  const others = Object.entries(siblings).filter(([, text]) => text.length > 0);
+
+  return [
+    `I am writing the "${componentName}" component of a larger system. Here is the instruction it currently uses:`,
+    "",
+    "<current_instruction>",
+    seedText,
+    "</current_instruction>",
+    ...(others.length === 0
+      ? []
+      : [
+          "",
+          "The rest of the system reads as follows. Write something that fits alongside it rather than repeating or contradicting it:",
+          "",
+          "<system>",
+          others
+            .map(([name, text]) => `<${name}>\n${text}\n</${name}>`)
+            .join("\n"),
+          "</system>",
+        ]),
+    ...(datasetSummary === undefined
+      ? []
+      : [
+          "",
+          "Here is what the data it runs on looks like:",
+          "",
+          "<dataset_summary>",
+          datasetSummary,
+          "</dataset_summary>",
+        ]),
+    ...(exemplars.length === 0
+      ? []
+      : [
+          "",
+          "Here are examples of the inputs this component receives:",
+          "",
+          "<inputs>",
+          exemplars.join("\n\n"),
+          "</inputs>",
+        ]),
+    "",
+    "Write an alternative instruction for this component — a different approach to the same job, not an edit of the one above.",
+    `Follow this style: ${tip}`,
+    "",
+    "Return only the new instruction, inside a ``` block.",
+  ].join("\n");
+}
+
+function buildDatasetSummaryPrompt(examples: readonly string[]): string {
+  return [
+    "Below are entries from a dataset a system is being tuned against.",
+    "",
+    "<examples>",
+    examples.join("\n\n"),
+    "</examples>",
+    "",
+    "Describe what this dataset is: what the inputs are, what varies between them, and what answering one well requires. Two or three sentences, concrete rather than generic.",
+    "",
+    "Return only the description, inside a ``` block.",
+  ].join("\n");
+}
+
+async function runMipro<Datum, Traj, Out, K extends string>(args: {
+  config: MiproConfig;
+  task: MiproTask<Datum, Traj, Out, K>;
+}): Promise<MiproResult<K, Out>> {
+  const { config, task } = args;
+
+  const {
+    instructionsPerComponent = DEFAULT_INSTRUCTIONS,
+    minibatchSize = DEFAULT_MINIBATCH_SIZE,
+    maxTrials = DEFAULT_MAX_TRIALS,
+    startupTrials,
+    gamma,
+    surrogateSamples,
+    multivariate,
+    fullEvalInterval = DEFAULT_FULL_EVAL_INTERVAL,
+    demoSets = DEFAULT_DEMO_SETS,
+    maxDemos = DEFAULT_MAX_DEMOS,
+    demoMinScore = DEFAULT_DEMO_MIN_SCORE,
+    exemplars = DEFAULT_EXEMPLARS,
+    datasetSummary = true,
+    summaryExamples = DEFAULT_SUMMARY_EXAMPLES,
+    concurrency = 1,
+    seed = 0,
+    buildPrompt = buildMiproPrompt,
+    tips = DEFAULT_TIPS,
+    trackBestOutputs = false,
+  } = config;
+
+  const {
+    seedCandidate,
+    trainset,
+    valset = trainset,
+    testset,
+    adapter,
+    reflect,
+    componentOptions,
+    demoComponents,
+    renderDemo,
+    goldOutput,
+    maxMetricCalls,
+    renderDatum = renderDefault,
+    batchSampler = createEpochShuffledSampler<Datum>({ minibatchSize }),
+    cache,
+    instanceId = defaultInstanceId,
+    onEvent,
+    signal,
+  } = task;
+
+  const components = componentNames(seedCandidate);
+
+  if (trainset.length === 0) {
+    throw new Error("optimize requires a non-empty trainset");
+  }
+  if (valset.length === 0) {
+    throw new Error("optimize requires a non-empty valset");
+  }
+  if (components.length === 0) {
+    throw new Error(
+      "optimize requires a seed candidate with at least one component",
+    );
+  }
+  if (testset !== undefined && testset.length === 0) {
+    throw new Error(
+      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+    );
+  }
+
+  for (const name of demoComponents ?? []) {
+    if (componentOptions?.[name] !== undefined) {
+      throw new Error(
+        `component "${name}" is listed in both demoComponents and componentOptions; pick one source for its menu`,
+      );
+    }
+  }
+
+  const trainIds = trainset.map((datum, index) => instanceId({ datum, index }));
+  const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const testIds =
+    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
+
+  const rng = createSeededRng(seed);
+  const budget = createBudget({ maxMetricCalls });
+  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+    adapter,
+    budget,
+    ...(cache === false ? {} : { cache: cache ?? createMemoryCache() }),
+    trackOutputs: trackBestOutputs,
+    ...(signal === undefined ? {} : { signal }),
+    onEvaluation: (event) => onEvent?.({ type: "evaluation", ...event }),
+  });
+
+  onEvent?.({ type: "start", components, valsetSize: valset.length });
+
+  const shown = rng
+    .sample(trainset, Math.min(exemplars, trainset.length))
+    .map(renderDatum);
+
+  let reflectionCalls = 0;
+  const menu = {} as Record<K, string[]>;
+
+  const demoNames = new Set<K>(demoComponents ?? []);
+  // Only components whose menu has to be written cost a reflection call, and
+  // the summary only earns its call if at least one of them exists.
+  const proposing = components.some(
+    (name) => !demoNames.has(name) && componentOptions?.[name] === undefined,
+  );
+
+  let summary: string | undefined;
+  if (datasetSummary && proposing && trainset.length > 0) {
+    reflectionCalls += 1;
+    summary = parseProposedText(
+      await reflect({
+        prompt: buildDatasetSummaryPrompt(
+          rng
+            .sample(trainset, Math.min(summaryExamples, trainset.length))
+            .map(renderDatum),
+        ),
+        ...(signal === undefined ? {} : { signal }),
+      }),
+    );
+  }
+
+  let bootstrapMetricCalls = 0;
+
+  /**
+   * Builds a demo component's menu from rollouts the metric rewarded.
+   *
+   * Each set gets its own harvesting pass over a freshly shuffled trainset, as
+   * MIPROv2 does. Drawing every set from a single pool would be cheaper and
+   * identical under deterministic scoring, but a system that answers at
+   * temperature does not give the same verdict twice: a second pass can turn a
+   * previously failing example into a demo, and one pass can never show it.
+   * Sizes vary across the sets because more demos is not monotonically better
+   * — a long block crowds out the instruction, and which length wins is
+   * exactly what the search settles.
+   *
+   * Not covered here: MIPROv2 also builds label-only sets from gold outputs,
+   * and pads bootstrapped sets with them. A gold output is something only the
+   * adapter knows, so there is nothing generic for this to read.
+   */
+  async function bootstrapMenu(name: K): Promise<string[]> {
+    const blocks: string[] = [];
+
+    // Labels first, and free: a gold output is already the answer, so this set
+    // needs no rollout and survives a system too weak to bootstrap from.
+    if (goldOutput !== undefined) {
+      const labelled = rng
+        .shuffle(trainset)
+        .map((datum) => ({ input: datum, output: goldOutput(datum) }))
+        .filter((demo) => demo.output !== undefined)
+        .slice(0, maxDemos) as Demo<Datum, Out>[];
+
+      if (labelled.length > 0) {
+        blocks.push(
+          formatDemos(
+            labelled,
+            renderDemo === undefined ? {} : { render: renderDemo },
+          ),
+        );
+      }
+    }
+
+    for (let index = 0; index < demoSets; index += 1) {
+      // Demos are optional; scoring the seed is not. Harvesting is capped so it
+      // can never eat the sweep that establishes the baseline every trial is
+      // measured against — a run that bootstraps its way out of a starting
+      // score has nothing to report. Re-checked per pass, so a run that can
+      // afford two sets builds two rather than failing on the third.
+      const affordable = Math.min(
+        trainset.length,
+        budget.remaining() - valset.length,
+      );
+      if (affordable < 1) {
+        break;
+      }
+
+      // Sizes span 1..maxDemos so the largest set is always the full one, the
+      // way MIPROv2 always keeps an unshuffled max-size set in the running.
+      const requested =
+        demoSets === 1
+          ? maxDemos
+          : Math.round(1 + (index * (maxDemos - 1)) / (demoSets - 1));
+
+      const harvest = await bootstrapDemos<Datum, Traj, Out, K>({
+        adapter,
+        candidate: seedCandidate,
+        trainset,
+        minScore: demoMinScore,
+        maxDemos: requested,
+        maxMetricCalls: affordable,
+        rng,
+        ...(renderDemo === undefined ? {} : { renderDemo }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+
+      bootstrapMetricCalls += harvest.metricCalls;
+      budget.reserve(harvest.metricCalls);
+
+      if (harvest.demos.length > 0) {
+        blocks.push(
+          formatDemos(
+            harvest.demos,
+            renderDemo === undefined ? {} : { render: renderDemo },
+          ),
+        );
+      }
+    }
+
+    // The zero-shot option is always on the menu: demos can hurt, and MIPROv2
+    // keeps "no demonstrations" in the running for that reason.
+    return [...new Set([seedCandidate[name], "", ...blocks])].filter(
+      (text, index) =>
+        index === 0 || text.length === 0 || text.includes("<demo>"),
+    );
+  }
+
+  for (const name of components) {
+    const supplied = componentOptions?.[name];
+
+    if (demoNames.has(name)) {
+      menu[name] = await bootstrapMenu(name);
+      continue;
+    }
+
+    if (supplied !== undefined) {
+      // Verbatim: a supplied option is usually a harvested demo block, and
+      // asking a model to "improve" one turns evidence back into prose.
+      menu[name] = [seedCandidate[name], ...supplied];
+      continue;
+    }
+
+    const drawn = await mapWithConcurrency({
+      items: Array.from(
+        { length: instructionsPerComponent },
+        (_, index) => index,
+      ),
+      limit: concurrency,
+      signal,
+      task: async (index) => {
+        reflectionCalls += 1;
+        return parseProposedText(
+          await reflect({
+            prompt: buildPrompt({
+              componentName: name,
+              seedText: seedCandidate[name],
+              exemplars: shown,
+              tip: tips[index % tips.length] as string,
+              ...(summary === undefined || summary.length === 0
+                ? {}
+                : { datasetSummary: summary }),
+              siblings: Object.fromEntries(
+                components
+                  .filter((other) => other !== name)
+                  .map((other) => [other, seedCandidate[other]]),
+              ),
+            }),
+            ...(signal === undefined ? {} : { signal }),
+          }),
+        );
+      },
+    });
+
+    menu[name] = [
+      seedCandidate[name],
+      ...drawn.filter((text) => text.length > 0),
+    ];
+  }
+
+  onEvent?.({ type: "menu", menu, reflectionCalls });
+
+  const menuSizes = components.map((name) => (menu[name] as string[]).length);
+
+  function candidateFor(choices: readonly number[]): Candidate<K> {
+    const candidate = {} as Candidate<K>;
+    components.forEach((name, index) => {
+      candidate[name] = (menu[name] as string[])[
+        choices[index] as number
+      ] as string;
+    });
+    return candidate;
+  }
+
+  let trial = 0;
+  let fullEvaluations = 0;
+  const observations: MiproObservation[] = [];
+  const surrogateInput: Observation[] = [];
+  let stopReason: MiproStopReason = "maxTrials";
+
+  async function fullSweep(
+    candidate: Candidate<K>,
+    phase: "seed" | "validation",
+  ) {
+    return evaluator.evaluate({
+      candidate,
+      batch: valset,
+      ids: valIds,
+      split: "val",
+      phase,
+      candidateId: null,
+      iteration: trial,
+    });
+  }
+
+  const seedEvaluation = await fullSweep(seedCandidate, "seed");
+  const seedScore = mean(seedEvaluation.scores);
+  fullEvaluations += 1;
+
+  // The seed is index 0 of every menu, and its sweep is the most reliable
+  // measurement the run will ever make. Registering it as a trial is how the
+  // surrogate starts with a reference point instead of having to buy one, and
+  // is what dspy does with `study.add_trial` before its loop begins.
+  surrogateInput.push({ choices: menuSizes.map(() => 0), score: seedScore });
+
+  let best = seedCandidate;
+  let bestScore = seedScore;
+  let bestOutputs = seedEvaluation.outputs;
+  // Minibatch readings per configuration, not one running bar. A configuration
+  // drawn more than once is measured on a different batch each time, so the
+  // mean of its readings is a steadier estimate than any single one — and it
+  // is what decides which configuration earns the expensive sweep.
+  const readings = new Map<string, number[]>();
+  const swept = new Set<string>();
+
+  /**
+   * Full-evaluates the strongest configuration by mean minibatch reading that
+   * has not been swept yet. Only a full sweep can move the incumbent, so a
+   * lucky minibatch buys a candidate a closer look and nothing more.
+   */
+  async function sweepBestUnswept(): Promise<
+    "swept" | "none" | "unaffordable" | "budgetExhausted" | "aborted"
+  > {
+    let bestKey: string | undefined;
+    let bestMean = Number.NEGATIVE_INFINITY;
+
+    for (const [key, values] of readings) {
+      if (swept.has(key)) {
+        continue;
+      }
+      const value = mean(values);
+      if (value > bestMean) {
+        bestMean = value;
+        bestKey = key;
+      }
+    }
+
+    if (bestKey === undefined) {
+      return "none";
+    }
+    if (!budget.canAfford(valset.length)) {
+      return "unaffordable";
+    }
+
+    const choices = bestKey.split(",").map(Number);
+    const candidate = candidateFor(choices);
+    swept.add(bestKey);
+
+    let evaluation: Awaited<ReturnType<typeof fullSweep>>;
+    try {
+      evaluation = await fullSweep(candidate, "validation");
+    } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        return "budgetExhausted";
+      }
+      if (signal?.aborted) {
+        return "aborted";
+      }
+      throw err;
+    }
+    fullEvaluations += 1;
+
+    const score = mean(evaluation.scores);
+    // A sweep is a far better measurement of this configuration than the
+    // minibatch readings that earned it one, so the surrogate hears it too.
+    // Without this a lucky reading keeps pulling proposals toward a
+    // configuration the full valset has already ruled out.
+    surrogateInput.push({ choices, score });
+    for (const observation of observations) {
+      if (observation.choices.join(",") === bestKey) {
+        observation.promoted = true;
+        observation.score = score;
+      }
+    }
+
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+      bestOutputs = evaluation.outputs;
+      onEvent?.({ type: "incumbent", trial, choices, score });
+    }
+    return "swept";
+  }
+
+  while (trial < maxTrials) {
+    if (signal?.aborted) {
+      stopReason = "aborted";
+      break;
+    }
+    if (!budget.canAfford(minibatchSize)) {
+      stopReason = "budgetExhausted";
+      break;
+    }
+    // A reading is only worth buying if it could still be acted on. Once the
+    // allowance cannot cover a sweep, no configuration can be promoted and the
+    // incumbent is settled, so further trials would spend the rest of the
+    // budget on measurements that can change nothing.
+    if (!budget.canAfford(valset.length)) {
+      stopReason = "budgetExhausted";
+      break;
+    }
+
+    const choices = proposeConfiguration({
+      observations: surrogateInput,
+      menuSizes,
+      ...(gamma === undefined ? {} : { gamma }),
+      ...(surrogateSamples === undefined ? {} : { samples: surrogateSamples }),
+      ...(startupTrials === undefined ? {} : { startupTrials }),
+      ...(multivariate === undefined ? {} : { multivariate }),
+      rng,
+    });
+    const candidate = candidateFor(choices);
+    const batchIndices = batchSampler({ trainset, iteration: trial, rng });
+
+    let minibatchScore: number;
+    try {
+      const evaluation = await evaluator.evaluate({
+        candidate,
+        batch: batchIndices.map((index) => trainset[index] as Datum),
+        ids: batchIndices.map((index) => trainIds[index] as string),
+        split: "train",
+        phase: "minibatch",
+        candidateId: null,
+        iteration: trial,
+      });
+      minibatchScore = mean(evaluation.scores);
+    } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        stopReason = "budgetExhausted";
+        break;
+      }
+      if (signal?.aborted) {
+        stopReason = "aborted";
+        break;
+      }
+      throw err;
+    }
+
+    surrogateInput.push({ choices, score: minibatchScore });
+
+    const key = choices.join(",");
+    readings.set(key, [...(readings.get(key) ?? []), minibatchScore]);
+
+    const observation: MiproObservation = {
+      trial,
+      choices,
+      minibatchScore,
+      promoted: false,
+    };
+    observations.push(observation);
+    onEvent?.({
+      type: "trial",
+      trial,
+      choices,
+      minibatchScore,
+      promoted: false,
+    });
+    trial += 1;
+
+    if (trial % fullEvalInterval === 0) {
+      const outcome = await sweepBestUnswept();
+      if (outcome === "budgetExhausted" || outcome === "aborted") {
+        stopReason = outcome;
+        break;
+      }
+      // Readings are still affordable but sweeps are not, so no configuration
+      // found from here could ever be promoted. The incumbent is settled;
+      // buying more readings would only spend the rest of the allowance.
+      if (outcome === "unaffordable") {
+        stopReason = "budgetExhausted";
+        break;
+      }
+    }
+  }
+
+  // The schedule can leave the strongest configuration unswept — the run ends
+  // mid-interval, or its best reading arrived on the last trial. Without this
+  // the winner would be whatever the cadence happened to land on.
+  if (stopReason === "maxTrials" && !signal?.aborted) {
+    await sweepBestUnswept();
+  }
+
+  if (signal?.aborted) {
+    stopReason = "aborted";
+  }
+
+  const testScore =
+    testset === undefined
+      ? undefined
+      : mean(
+          (
+            await evaluator.evaluate({
+              candidate: best,
+              batch: testset,
+              ids: testIds,
+              split: "test",
+              phase: "test",
+              candidateId: null,
+              iteration: trial,
+              charge: false,
+            })
+          ).scores,
+        );
+
+  onEvent?.({
+    type: "finish",
+    reason: stopReason,
+    bestScore,
+    metricCalls: budget.spent(),
+    ...(testScore === undefined ? {} : { testScore }),
+  });
+
+  return {
+    bestCandidate: best,
+    bestScore,
+    seedScore,
+    ...(trackBestOutputs ? { bestOutputs } : {}),
+    ...(testScore === undefined
+      ? {}
+      : { testScore, testMetricCalls: evaluator.unchargedCalls() }),
+    trials: trial,
+    menu,
+    observations,
+    fullEvaluations,
+    bootstrapMetricCalls,
+    metricCalls: budget.spent(),
+    reflectionCalls,
+    cacheHits: evaluator.cacheHits(),
+    stopReason,
+  };
+}
+
+function renderDefault(datum: unknown): string {
+  if (typeof datum === "string") {
+    return datum;
+  }
+  try {
+    return JSON.stringify(datum, null, 2) ?? String(datum);
+  } catch {
+    return String(datum);
+  }
+}
+
+function assertConfig(config: MiproConfig): void {
+  const positive: [string, number | undefined][] = [
+    ["minibatchSize", config.minibatchSize],
+    ["maxTrials", config.maxTrials],
+    ["surrogateSamples", config.surrogateSamples],
+    ["concurrency", config.concurrency],
+  ];
+  for (const [name, value] of positive) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+      throw new Error(`${name} must be a positive integer, received ${value}`);
+    }
+  }
+
+  const nonNegative: [string, number | undefined][] = [
+    ["instructionsPerComponent", config.instructionsPerComponent],
+    ["startupTrials", config.startupTrials],
+    ["exemplars", config.exemplars],
+  ];
+  for (const [name, value] of nonNegative) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+      throw new Error(
+        `${name} must be a non-negative integer, received ${value}`,
+      );
+    }
+  }
+
+  if (
+    config.gamma !== undefined &&
+    (!Number.isFinite(config.gamma) || config.gamma <= 0 || config.gamma > 1)
+  ) {
+    throw new Error(`gamma must be within (0, 1], received ${config.gamma}`);
+  }
+  if (config.tips !== undefined && config.tips.length === 0) {
+    throw new Error("tips must not be empty");
+  }
+}
+
+function defaultInstanceId(args: { datum: unknown; index: number }): string {
+  const hash = stableHash(args.datum);
+  return hash === "" ? String(args.index) : hash;
+}

@@ -20,6 +20,13 @@ export interface OptimizerTask<
    * `string` widens `K` back to `string` everywhere.
    */
   adapter: Adapter<Datum, Traj, Out, NoInfer<K>>;
+  /**
+   * Instances held back from the search entirely, used once at the end to
+   * score the winner. Selection pressure is applied to the valset for the
+   * whole run, so `bestScore` is partly fitted to it; `testScore` is the only
+   * number in a result that no candidate was ever selected against.
+   */
+  testset?: readonly Datum[];
   maxMetricCalls: number;
   signal?: AbortSignal;
 }
@@ -38,6 +45,17 @@ export interface OptimizerResult<
   bestScore: number;
   bestOutputs?: (Out | undefined)[];
   metricCalls: number;
+  /**
+   * `bestCandidate`'s mean score over the held-out testset. Absent when no
+   * testset was given. A large gap below `bestScore` is the search having
+   * fitted the validation instances rather than the task.
+   */
+  testScore?: number;
+  /**
+   * Rollouts the held-out sweep cost. Reported separately because it is
+   * measurement rather than search, and so is not charged to `maxMetricCalls`.
+   */
+  testMetricCalls?: number;
   stopReason: Stop;
 }
 

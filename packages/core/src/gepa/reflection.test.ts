@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildGeneralizePrompt,
   buildReflectionPrompt,
+  buildRewritePrompt,
+  buildSimplifyPrompt,
   createDefaultProposer,
+  diverseReflectionStrategies,
   limitReflectiveRecords,
-  parseProposedText,
 } from "./reflection.js";
 import type { ReflectiveRecord } from "./types.js";
 
@@ -58,55 +61,6 @@ describe("buildReflectionPrompt", () => {
     });
 
     expect(prompt).not.toContain("<rejected_instructions>");
-  });
-});
-
-describe("parseProposedText", () => {
-  test("extracts text from a fenced block", () => {
-    expect(parseProposedText("Here you go:\n```\nNew instruction\n```")).toBe(
-      "New instruction",
-    );
-  });
-
-  test("ignores a language tag on the fence", () => {
-    expect(parseProposedText("```text\nNew instruction\n```")).toBe(
-      "New instruction",
-    );
-  });
-
-  test("keeps nested fences intact instead of truncating to the last block", () => {
-    const response =
-      "```\nRun this:\n```python\nprint(1)\n```\nThen explain it.\n```";
-
-    expect(parseProposedText(response)).toBe(
-      "Run this:\n```python\nprint(1)\n```\nThen explain it.",
-    );
-  });
-
-  test("strips a dangling opening fence from a truncated response", () => {
-    expect(parseProposedText("```\nNew instruction, cut off mid")).toBe(
-      "New instruction, cut off mid",
-    );
-  });
-
-  test("strips a dangling opening fence carrying a language tag", () => {
-    expect(parseProposedText("```markdown\nNew instruction, cut off mid")).toBe(
-      "New instruction, cut off mid",
-    );
-  });
-
-  test("strips a stray closing fence when the opening one is missing", () => {
-    expect(parseProposedText("New instruction\n```")).toBe("New instruction");
-  });
-
-  test("falls back to the trimmed response when unfenced", () => {
-    expect(parseProposedText("  New instruction  ")).toBe("New instruction");
-  });
-
-  test("preserves internal newlines", () => {
-    expect(parseProposedText("```\nline one\nline two\n```")).toBe(
-      "line one\nline two",
-    );
   });
 });
 
@@ -328,5 +282,137 @@ describe("limitReflectiveRecords", () => {
     });
 
     expect(limited).toHaveLength(1);
+  });
+});
+
+describe("reflection strategies", () => {
+  const RECORDS = [
+    {
+      inputs: { ticket: "printer on fire" },
+      generatedOutputs: "billing",
+      feedback: "Should have been hardware.",
+      score: 0,
+    },
+  ];
+
+  test("the simplify strategy asks for text to be cut, not added", () => {
+    const prompt = buildSimplifyPrompt({
+      componentName: "classifier",
+      currentText: "Rule one. Rule two. Rule three.",
+      records: RECORDS,
+    });
+
+    expect(prompt).toContain("Rule one. Rule two. Rule three.");
+    expect(prompt).toMatch(/remove|delete|shorter/i);
+  });
+
+  test("the simplify strategy holds behaviour on the shown examples fixed", () => {
+    const prompt = buildSimplifyPrompt({
+      componentName: "classifier",
+      currentText: "Rule one.",
+      records: RECORDS,
+    });
+
+    expect(prompt).toContain("printer on fire");
+    expect(prompt).toMatch(/same|unchanged|still/i);
+  });
+
+  test("the generalize strategy names the overfitting it is looking for", () => {
+    const prompt = buildGeneralizePrompt({
+      componentName: "classifier",
+      currentText: "If the ticket says printer, answer hardware.",
+      records: RECORDS,
+    });
+
+    expect(prompt).toContain("If the ticket says printer, answer hardware.");
+    expect(prompt).toMatch(/general|underlying|principle/i);
+  });
+
+  test("the rewrite strategy withholds the current text", () => {
+    const prompt = buildRewritePrompt({
+      componentName: "classifier",
+      currentText: "Some accreted instruction nobody can read.",
+      records: RECORDS,
+    });
+
+    expect(prompt).not.toContain("Some accreted instruction nobody can read.");
+    expect(prompt).toContain("printer on fire");
+  });
+
+  test("diverseReflectionStrategies leads with the published prompt", () => {
+    const strategies = diverseReflectionStrategies();
+
+    expect(strategies[0]).toBe(buildReflectionPrompt);
+    expect(strategies).toHaveLength(4);
+  });
+});
+
+describe("createDefaultProposer strategy rotation", () => {
+  const args = {
+    candidate: { instruction: "Current text." },
+    reflectiveDataset: {
+      instruction: [
+        { inputs: {}, generatedOutputs: "", feedback: "bad", score: 0 },
+      ],
+    },
+    componentsToUpdate: ["instruction"] as const,
+  };
+
+  test("rotates strategies by attempt", async () => {
+    const seen: string[] = [];
+    const label = (name: string) => () => {
+      seen.push(name);
+      return "prompt";
+    };
+    const propose = createDefaultProposer({
+      strategies: [label("a"), label("b"), label("c")],
+    });
+
+    for (const attempt of [0, 1, 2, 3]) {
+      await propose({
+        ...args,
+        componentsToUpdate: ["instruction"],
+        attempt,
+        reflect: async () => "```\nnew text\n```",
+      });
+    }
+
+    expect(seen).toEqual(["a", "b", "c", "a"]);
+  });
+
+  test("uses the single builder for every attempt when given one", async () => {
+    let calls = 0;
+    const propose = createDefaultProposer({
+      buildPrompt: () => {
+        calls += 1;
+        return "prompt";
+      },
+    });
+
+    for (const attempt of [0, 1, 2]) {
+      await propose({
+        ...args,
+        componentsToUpdate: ["instruction"],
+        attempt,
+        reflect: async () => "```\nnew text\n```",
+      });
+    }
+
+    expect(calls).toBe(3);
+  });
+
+  test("refuses a single builder and a strategy list together", () => {
+    expect(() =>
+      createDefaultProposer({
+        buildPrompt: () => "prompt",
+        strategies: [() => "prompt"],
+      }),
+    ).toThrow(/buildPrompt|strategies/);
+  });
+
+  test("refuses an empty strategy list", () => {
+    expect(() => createDefaultProposer({ strategies: [] })).toThrow(
+      /strategies/,
+    );
   });
 });

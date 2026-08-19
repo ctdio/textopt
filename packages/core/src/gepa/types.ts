@@ -5,6 +5,7 @@ import type {
   Candidate,
   EvaluationBatch,
   EvaluationPhase,
+  EvaluationSplit,
   TextModel,
 } from "../types.js";
 
@@ -66,6 +67,13 @@ export interface ProposeArgs<K extends string = string> {
   componentsToUpdate: readonly K[];
   /** Component name -> texts already tried and rejected for it. */
   rejectedProposals?: Partial<Record<K, RejectedProposal[]>>;
+  /**
+   * Which proposal this is in the run, counting from 0. Assigned when the
+   * iteration is planned rather than when it executes, so concurrent
+   * proposals get stable, distinct values instead of racing for a counter.
+   * The default proposer rotates its strategies on it.
+   */
+  attempt?: number;
   reflect: TextModel;
   signal?: AbortSignal;
 }
@@ -180,6 +188,7 @@ export type GepaEvent<K extends string = string> =
       type: "evaluation";
       iteration: number;
       phase: EvaluationPhase;
+      split: EvaluationSplit;
       candidateId: number | null;
       metricCalls: number;
       cacheHits: number;
@@ -220,6 +229,8 @@ export type GepaEvent<K extends string = string> =
       reason: GepaStopReason;
       bestCandidateId: number;
       metricCalls: number;
+      /** The winner's held-out score, when a testset was given. */
+      testScore?: number;
     };
 
 /**

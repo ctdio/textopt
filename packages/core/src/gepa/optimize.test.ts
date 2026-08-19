@@ -437,7 +437,10 @@ describe("optimize", () => {
       seed: 1,
       candidateSelector: ({ state }) =>
         state.aggregateScores.length < 3 ? 0 : state.aggregateScores.length - 1,
-      merge: { enabled: true },
+      // Four validation instances cannot clear the default overlap floor of
+      // five, and this fixture is about what merge does with two complementary
+      // lineages rather than about how much evidence it demands first.
+      merge: { enabled: true, valOverlapFloor: 3 },
     }).optimize({
       seedCandidate: { retriever: "Find documents.", writer: "Answer." },
       trainset: KEYWORD_EXAMPLES,
@@ -2181,6 +2184,122 @@ describe("optimize outputs", () => {
   });
 });
 
+/**
+ * Selection pressure is applied to the valset for the whole run, so the
+ * winner's score on it is partly fitted to those instances. The held-out sweep
+ * is the only number in a result that no candidate was ever selected against.
+ */
+describe("optimize held-out evaluation", () => {
+  const config = { maxIterations: 4, minibatchSize: 2, seed: 1 };
+  const task = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 400,
+  };
+  // The keyword reflector only ever appends, so a term present in the seed is
+  // present in every descendant: one instance always scores 1, one always 0.
+  const TESTSET = [
+    { question: "held out, satisfied", required: ["answer"] },
+    { question: "held out, unsatisfiable", required: ["zzz-never-proposed"] },
+  ];
+
+  test("omits the held-out score when no testset is given", async () => {
+    const result = await new GepaOptimizer(config).optimize(task);
+
+    expect(result.testScore).toBeUndefined();
+    expect(result.testMetricCalls).toBeUndefined();
+  });
+
+  test("scores the best candidate on instances the search never saw", async () => {
+    const result = await new GepaOptimizer(config).optimize({
+      ...task,
+      testset: TESTSET,
+    });
+
+    expect(result.testScore).toBe(0.5);
+  });
+
+  test("keeps the held-out sweep out of the search budget", async () => {
+    const searchOnly = await new GepaOptimizer(config).optimize(task);
+    const withHoldout = await new GepaOptimizer(config).optimize({
+      ...task,
+      testset: TESTSET,
+    });
+
+    expect(withHoldout.metricCalls).toBe(searchOnly.metricCalls);
+    expect(withHoldout.testMetricCalls).toBe(TESTSET.length);
+  });
+
+  test("never draws a held-out instance into training or validation", async () => {
+    const seen: string[] = [];
+    const adapter = createKeywordAdapter();
+
+    await new GepaOptimizer(config).optimize({
+      ...task,
+      adapter: {
+        ...adapter,
+        evaluate: (args) => {
+          if (args.run.split !== "test") {
+            seen.push(...args.batch.map((datum) => datum.question));
+          }
+          return adapter.evaluate(args);
+        },
+      },
+      testset: TESTSET,
+    });
+
+    for (const question of TESTSET.map((datum) => datum.question)) {
+      expect(seen).not.toContain(question);
+    }
+  });
+
+  test("reports the held-out sweep as its own evaluation phase", async () => {
+    const phases: EvaluationContext[] = [];
+
+    await new GepaOptimizer(config).optimize({
+      ...task,
+      testset: TESTSET,
+      onEvent: (event) => {
+        if (event.type === "evaluation" && event.phase === "test") {
+          phases.push({
+            iteration: event.iteration,
+            phase: event.phase,
+            split: "test",
+            candidateId: event.candidateId,
+          });
+        }
+      },
+    });
+
+    expect(phases).toHaveLength(1);
+    expect(phases[0]?.candidateId).not.toBeNull();
+  });
+
+  test("reports the held-out score on the finish event", async () => {
+    let finished: { testScore?: number } | undefined;
+
+    const result = await new GepaOptimizer(config).optimize({
+      ...task,
+      testset: TESTSET,
+      onEvent: (event) => {
+        if (event.type === "finish") {
+          finished = event;
+        }
+      },
+    });
+
+    expect(finished?.testScore).toBe(result.testScore);
+  });
+
+  test("refuses an empty testset rather than reporting a meaningless zero", async () => {
+    await expect(
+      new GepaOptimizer(config).optimize({ ...task, testset: [] }),
+    ).rejects.toThrow(/testset/);
+  });
+});
+
 describe("optimize checkpoint fidelity", () => {
   const config = {
     minibatchSize: 2,
@@ -2538,3 +2657,69 @@ function createObjectiveAdapter(): GepaAdapter<
     },
   };
 }
+
+describe("optimize proposal strategies", () => {
+  const task = {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: createKeywordAdapter(),
+    reflect: createKeywordReflector(),
+    maxMetricCalls: 400,
+  };
+
+  test("numbers every proposal in the run distinctly", async () => {
+    const attempts: number[] = [];
+    const adapter = createKeywordAdapter();
+
+    await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+      maxIterations: 3,
+      proposals: { perIteration: 2 },
+    }).optimize({
+      ...task,
+      adapter: {
+        ...adapter,
+        proposeNewTexts: ({ attempt, candidate, componentsToUpdate }) => {
+          attempts.push(attempt as number);
+          return {
+            [componentsToUpdate[0] as "instruction"]: `${candidate.instruction} hold`,
+          };
+        },
+      },
+    });
+
+    expect(attempts).toEqual([...new Set(attempts)]);
+    expect(attempts).toHaveLength(6);
+  });
+
+  test("rotates the configured strategies across proposals", async () => {
+    const used: string[] = [];
+    const label = (name: string) => () => {
+      used.push(name);
+      return "```\nrewritten\n```";
+    };
+
+    await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+      maxIterations: 2,
+      proposals: { perIteration: 2 },
+      reflection: { strategies: [label("a"), label("b"), label("c")] },
+    }).optimize(task);
+
+    expect(used).toEqual(["a", "b", "c", "a"]);
+  });
+
+  test("refuses a single prompt builder alongside a strategy list", () => {
+    expect(
+      () =>
+        new GepaOptimizer({
+          reflection: {
+            buildPrompt: () => "prompt",
+            strategies: [() => "prompt"],
+          },
+        }),
+    ).toThrow(/buildPrompt|strategies/);
+  });
+});

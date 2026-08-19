@@ -14,6 +14,18 @@ export default defineConfig({
         replacement: sourceOf("./packages/core/src/testing.ts"),
       },
       {
+        find: "textopt/mipro",
+        replacement: sourceOf("./packages/core/src/mipro/index.ts"),
+      },
+      {
+        find: "textopt/opro",
+        replacement: sourceOf("./packages/core/src/opro/index.ts"),
+      },
+      {
+        find: "textopt/random-search",
+        replacement: sourceOf("./packages/core/src/random-search/index.ts"),
+      },
+      {
         find: "textopt/gepa",
         replacement: sourceOf("./packages/core/src/gepa/index.ts"),
       },

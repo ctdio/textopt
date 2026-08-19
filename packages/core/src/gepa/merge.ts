@@ -26,9 +26,15 @@ export interface ProposeMergeArgs<K extends string = string> {
   /** Description keys already proposed this run, accepted or not. */
   attemptedDescriptions: ReadonlySet<string>;
   maxAttempts?: number;
+  /**
+   * Validation instances both parents must have been scored on before the pair
+   * is eligible. Default 5, as GEPA's `val_overlap_floor`.
+   */
+  valOverlapFloor?: number;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 10;
+const DEFAULT_VAL_OVERLAP_FLOOR = 5;
 
 /**
  * System-aware merge (GEPA's crossover). Two dominator lineages that descend
@@ -51,6 +57,7 @@ export function proposeMerge<K extends string>(
     attempted,
     attemptedDescriptions,
     maxAttempts = DEFAULT_MAX_ATTEMPTS,
+    valOverlapFloor = DEFAULT_VAL_OVERLAP_FLOOR,
   } = args;
 
   if (pool.length < 2 || records.length < 3) {
@@ -70,6 +77,7 @@ export function proposeMerge<K extends string>(
       attempted,
       ancestries,
       maxAttempts,
+      valOverlapFloor,
     });
     if (triplet === null) {
       continue;
@@ -169,8 +177,17 @@ function sampleTriplet<K extends string>(args: {
   attempted: ReadonlySet<string>;
   ancestries: readonly ReadonlySet<number>[];
   maxAttempts: number;
+  valOverlapFloor: number;
 }): { parentIds: [number, number]; ancestorId: number } | null {
-  const { records, pool, rng, attempted, ancestries, maxAttempts } = args;
+  const {
+    records,
+    pool,
+    rng,
+    attempted,
+    ancestries,
+    maxAttempts,
+    valOverlapFloor,
+  } = args;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const [first, second] = rng.sample(pool, 2) as [number, number];
@@ -185,6 +202,13 @@ function sampleTriplet<K extends string>(args: {
 
     // One descending from the other means there is nothing to recombine.
     if (leftAncestry.has(right) || rightAncestry.has(left)) {
+      continue;
+    }
+
+    // A merge is only ever judged on instances both parents were scored on. Too
+    // few of those and the comparison deciding whether to keep the child is
+    // noise, so the pair does not get to spend rollouts on it.
+    if (overlap({ records, left, right }) < valOverlapFloor) {
       continue;
     }
 
@@ -208,6 +232,25 @@ function sampleTriplet<K extends string>(args: {
   }
 
   return null;
+}
+
+function overlap<K extends string>(args: {
+  records: readonly CandidateRecord<K>[];
+  left: number;
+  right: number;
+}): number {
+  const leftScores = (args.records[args.left] as CandidateRecord<K>)
+    .instanceScores;
+  const rightScores = (args.records[args.right] as CandidateRecord<K>)
+    .instanceScores;
+
+  let shared = 0;
+  for (let index = 0; index < leftScores.length; index += 1) {
+    if (leftScores[index] !== undefined && rightScores[index] !== undefined) {
+      shared += 1;
+    }
+  }
+  return shared;
 }
 
 function isEligibleAncestor<K extends string>(args: {

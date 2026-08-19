@@ -17,7 +17,7 @@ function record(args: {
     id: args.id,
     candidate: args.candidate,
     parentIds: args.parentIds ?? [],
-    instanceScores: args.instanceScores ?? [aggregateScore],
+    instanceScores: args.instanceScores ?? new Array(5).fill(aggregateScore),
     aggregateScore,
     source: args.parentIds === undefined ? "seed" : "mutation",
     updatedComponents: [],
@@ -73,6 +73,27 @@ describe("proposeMerge", () => {
     });
     expect(merged?.parentIds).toEqual([1, 2]);
     expect(merged?.ancestorId).toBe(0);
+  });
+
+  test("refuses a pair the validation set has barely compared", () => {
+    // Both lineages were scored on three shared instances. Merging on that is
+    // a coin flip dressed as a measurement, so the pair is not eligible at all.
+    const left = record({
+      id: 1,
+      candidate: { retriever: "better retriever", writer: "base writer" },
+      parentIds: [0],
+      aggregateScore: 0.6,
+      instanceScores: [0.6, 0.6, 0.6, undefined, undefined] as number[],
+    });
+    const right = record({
+      id: 2,
+      candidate: { retriever: "base retriever", writer: "better writer" },
+      parentIds: [0],
+      aggregateScore: 0.7,
+      instanceScores: [0.7, 0.7, 0.7, undefined, undefined] as number[],
+    });
+
+    expect(merge({ records: [SEED, left, right], pool: [1, 2] })).toBeNull();
   });
 
   test("returns null when both lineages changed the same component", () => {

@@ -1,12 +1,9 @@
 import { createBudget } from "../budget.js";
-import {
-  candidateHash,
-  createMemoryCache,
-  evaluationCacheKey,
-  stableHash,
-} from "../cache.js";
+import { createMemoryCache, stableHash } from "../cache.js";
 import type { EvaluationCache } from "../cache.js";
 import { mapWithConcurrency } from "../concurrency.js";
+import { BudgetExhausted, createEvaluator } from "../evaluation.js";
+import type { ScoredBatch } from "../evaluation.js";
 import { mean, sum } from "../math.js";
 import type {
   Optimizer,
@@ -19,7 +16,6 @@ import type { BatchSampler } from "../sampling.js";
 import { componentNames } from "../types.js";
 import type {
   Candidate,
-  EvaluationBatch,
   EvaluationPhase,
   EvaluationSplit,
   TextModel,
@@ -74,7 +70,18 @@ export interface GepaConfig {
    * System-aware merge. Enabled by default for multi-component candidates,
    * where two lineages can improve different components independently.
    */
-  merge?: { enabled?: boolean; maxInvocations?: number };
+  merge?: {
+    enabled?: boolean;
+    maxInvocations?: number;
+    /**
+     * Validation instances two lineages must share before they may be merged.
+     * Default 5, GEPA's `val_overlap_floor`. A merge is judged only on
+     * instances both parents were scored on, so below this the gate deciding
+     * whether to keep the child is reading noise. A valset smaller than the
+     * floor can never merge.
+     */
+    valOverlapFloor?: number;
+  };
   /**
    * Skip reflection when the parent already scores `perfectScore` on every
    * minibatch instance. There is no failure to diagnose, so the rollouts a
@@ -86,6 +93,10 @@ export interface GepaConfig {
   /**
    * How many rejected proposals per component are shown back to the reflection
    * model, most recent first. 0 disables the feedback. Default 3.
+   *
+   * Not in the paper or the reference implementation, and the only extension
+   * here that is on by default: whenever a proposal has been rejected, the
+   * prompt this builds is not the published one. Set 0 for GEPA as written.
    */
   rejectedProposalMemory?: number;
   /**
@@ -123,6 +134,13 @@ export interface GepaConfig {
     maxCharacters?: number;
     /** Replaces the default prompt template. Ignored by custom proposers. */
     buildPrompt?: ReflectionPromptBuilder;
+    /**
+     * Prompt templates rotated one per proposal, so raising
+     * `proposals.perIteration` samples different directions rather than the
+     * same one repeatedly. `diverseReflectionStrategies()` is a ready set.
+     * Mutually exclusive with `buildPrompt`. Ignored by custom proposers.
+     */
+    strategies?: readonly ReflectionPromptBuilder[];
   };
   /**
    * Include cached instance scores in every checkpoint. Leaving them out keeps
@@ -198,16 +216,6 @@ export interface GepaResult<
   snapshot: GepaSnapshot;
 }
 
-/** Scores plus, when the adapter reports them, their per-objective breakdown. */
-interface ScoredBatch<Out> {
-  scores: number[];
-  objectiveScores: (Record<string, number> | undefined)[];
-  /** Populated only under `trackBestOutputs`, and only for fresh rollouts. */
-  outputs: (Out | undefined)[];
-  /** Per instance: the score came from an infrastructure failure, not the candidate. */
-  transient: boolean[];
-}
-
 /** A scored batch spread over the whole valset, with gaps where it was not. */
 interface EvaluatedBatch<Out> {
   scores: (number | undefined)[];
@@ -221,6 +229,8 @@ interface ProposalPlan<Datum, K extends string> {
   batch: Datum[];
   batchIds: string[];
   componentsToUpdate: K[];
+  /** This proposal's position in the run, counted across all iterations. */
+  attempt: number;
 }
 
 interface ScreenedProposal<Datum, K extends string> {
@@ -245,14 +255,6 @@ const DEFAULT_MINIBATCH_SIZE = 3;
 const DEFAULT_REJECTED_PROPOSAL_MEMORY = 3;
 const DEFAULT_MAX_MERGES = 5;
 const MERGE_SUBSAMPLE_SIZE = 5;
-
-/**
- * Raised when a reservation cannot be met mid-flight. A concurrent proposal
- * cannot check the budget and then spend it — another proposal may take the
- * remainder in between — so running out is reported where it happens and
- * turned into a stop reason by the loop.
- */
-class BudgetExhausted extends Error {}
 
 class ReflectionBudgetExhausted extends Error {}
 
@@ -313,6 +315,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     seedCandidate,
     trainset,
     valset = trainset,
+    testset,
     adapter,
     reflect,
     maxMetricCalls,
@@ -331,6 +334,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   const mergeConfig = {
     enabled: merge?.enabled ?? seedComponents.length > 1,
     maxInvocations: merge?.maxInvocations ?? DEFAULT_MAX_MERGES,
+    ...(merge?.valOverlapFloor === undefined
+      ? {}
+      : { valOverlapFloor: merge.valOverlapFloor }),
   };
   const proposalsPerIteration = proposals?.perIteration ?? 1;
   const proposalConcurrency = proposals?.concurrency ?? 1;
@@ -349,6 +355,14 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       "optimize requires a seed candidate with at least one component",
     );
   }
+  // Omitting the testset means "do not measure"; passing an empty one means a
+  // split was computed and came out empty, which would report a mean over
+  // nothing as a held-out score of 0.
+  if (testset !== undefined && testset.length === 0) {
+    throw new Error(
+      "optimize requires a non-empty testset when one is given; omit it to skip held-out evaluation",
+    );
+  }
 
   const evaluationCache =
     cache === false ? undefined : (cache ?? createMemoryCache());
@@ -358,6 +372,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       ...(reflection?.buildPrompt === undefined
         ? {}
         : { buildPrompt: reflection.buildPrompt }),
+      ...(reflection?.strategies === undefined
+        ? {}
+        : { strategies: reflection.strategies }),
       limits: {
         ...(reflection?.maxRecords === undefined
           ? {}
@@ -370,6 +387,8 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
 
   const trainIds = trainset.map((datum, index) => instanceId({ datum, index }));
   const valIds = valset.map((datum, index) => instanceId({ datum, index }));
+  const testIds =
+    testset?.map((datum, index) => instanceId({ datum, index })) ?? [];
 
   const fingerprint = runFingerprint({
     seedCandidate,
@@ -425,7 +444,6 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     rejections: resumeFrom?.rejectedProposals ?? {},
     components: seedComponents,
   });
-  let cacheHits = resumeFrom?.cacheHits ?? 0;
   let iteration = resumeFrom?.iteration ?? 0;
 
   const mergeAttempts = new Set<string>(resumeFrom?.merge.attempts);
@@ -433,10 +451,6 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   let mergesDue = resumeFrom?.merge.due ?? 0;
   let totalMergesTested = resumeFrom?.merge.tested ?? 0;
   let lastIterationAccepted = resumeFrom?.merge.lastIterationAccepted ?? false;
-
-  for (const [key, cached] of resumeFrom?.cache ?? []) {
-    evaluationCache?.set(key, cached);
-  }
 
   function emit(event: GepaEvent<K>): void {
     onEvent?.(event);
@@ -457,7 +471,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       iteration,
       metricCalls: budget.spent(),
       reflectionCalls,
-      cacheHits,
+      cacheHits: evaluator.cacheHits(),
       ...(samplerState === undefined ? {} : { sampler: samplerState }),
       rejectedProposals: snapshotRejections({
         rejections: rejectedProposals,
@@ -482,9 +496,22 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     await onCheckpoint(takeSnapshot());
   }
 
+  const evaluator = createEvaluator<Datum, Traj, Out, K>({
+    adapter,
+    budget,
+    ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
+    trackOutputs: trackBestOutputs,
+    cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(signal === undefined ? {} : { signal }),
+    onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+  });
+
+  evaluator.restore(resumeFrom?.cache ?? []);
+
   /**
-   * Evaluates a candidate on a batch, serving what it can from the cache and
-   * charging the budget only for instances that actually run.
+   * Evaluates a candidate on a batch at the current iteration. The cache, the
+   * budget and the transient-failure rules live in the shared evaluator; what
+   * belongs to GEPA is only which batch, and when.
    */
   async function evaluateCached(args: {
     candidate: Candidate<K>;
@@ -493,99 +520,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     split: EvaluationSplit;
     phase: EvaluationPhase;
     candidateId: number | null;
+    charge?: boolean;
   }): Promise<ScoredBatch<Out>> {
-    const { candidate, batch, ids, split, phase, candidateId } = args;
-
-    const hash = candidateHash(candidate);
-    const scores = new Array<number>(batch.length);
-    const objectiveScores = new Array<Record<string, number> | undefined>(
-      batch.length,
-    );
-    const outputs = new Array<Out | undefined>(batch.length).fill(undefined);
-    const transient = new Array<boolean>(batch.length).fill(false);
-    const pendingIndices: number[] = [];
-
-    for (let index = 0; index < batch.length; index += 1) {
-      const cached = evaluationCache?.get(
-        evaluationCacheKey({
-          hash,
-          instanceId: ids[index] as string,
-          split,
-        }),
-      );
-      if (cached === undefined) {
-        pendingIndices.push(index);
-      } else {
-        scores[index] = cached.score;
-        objectiveScores[index] = cached.objectiveScores;
-      }
-    }
-
-    cacheHits += batch.length - pendingIndices.length;
-
-    if (pendingIndices.length > 0) {
-      if (!budget.reserve(pendingIndices.length)) {
-        throw new BudgetExhausted();
-      }
-
-      let evaluation: EvaluationBatch<Traj, Out>;
-      try {
-        evaluation = await adapter.evaluate({
-          batch: pendingIndices.map((index) => batch[index] as Datum),
-          candidate,
-          captureTraces: false,
-          run: { iteration, phase, split, candidateId },
-          signal,
-        });
-        assertEvaluation({
-          evaluation,
-          expected: pendingIndices.length,
-        });
-      } catch (err) {
-        // Nothing was measured, so nothing is owed.
-        budget.refund(pendingIndices.length);
-        throw err;
-      }
-
-      pendingIndices.forEach((batchIndex, resultIndex) => {
-        const score = evaluation.scores[resultIndex] as number;
-        const objectives = evaluation.objectiveScores?.[resultIndex];
-        scores[batchIndex] = score;
-        objectiveScores[batchIndex] = objectives;
-        if (trackBestOutputs) {
-          outputs[batchIndex] = evaluation.outputs[resultIndex];
-        }
-
-        // A transient score says nothing about the candidate, so caching it
-        // would pin this instance to an infrastructure failure forever.
-        if (evaluation.transient?.[resultIndex] === true) {
-          transient[batchIndex] = true;
-          return;
-        }
-        evaluationCache?.set(
-          evaluationCacheKey({
-            hash,
-            instanceId: ids[batchIndex] as string,
-            split,
-          }),
-          objectives === undefined
-            ? { score }
-            : { score, objectiveScores: objectives },
-        );
-      });
-    }
-
-    emit({
-      type: "evaluation",
-      iteration,
-      phase,
-      candidateId,
-      metricCalls: pendingIndices.length,
-      cacheHits: batch.length - pendingIndices.length,
-      meanScore: mean(scores),
-    });
-
-    return { scores, objectiveScores, outputs, transient };
+    return evaluator.evaluate({ ...args, iteration });
   }
 
   /**
@@ -649,25 +586,6 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       );
     }
     return selected;
-  }
-
-  function countUncached(args: {
-    candidate: Candidate<K>;
-    ids: readonly string[];
-    split: EvaluationSplit;
-  }): number {
-    const { candidate, ids, split } = args;
-
-    if (evaluationCache === undefined) {
-      return ids.length;
-    }
-    const hash = candidateHash(candidate);
-    return ids.filter(
-      (id) =>
-        evaluationCache.get(
-          evaluationCacheKey({ hash, instanceId: id, split }),
-        ) === undefined,
-    ).length;
   }
 
   function addCandidate(args: {
@@ -792,6 +710,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
       rng,
       attempted: mergeAttempts,
       attemptedDescriptions: mergeDescriptions,
+      ...(mergeConfig.valOverlapFloor === undefined
+        ? {}
+        : { valOverlapFloor: mergeConfig.valOverlapFloor }),
     });
     if (proposal === null) {
       return "none";
@@ -815,7 +736,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     const uniqueIds = unique.map((index) => valIds[index] as string);
     if (
       !budget.canAfford(
-        countUncached({
+        evaluator.countUncached({
           candidate: proposal.candidate,
           ids: uniqueIds,
           split: "val",
@@ -879,7 +800,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     const mergeInstances = selectValInstances(proposal.candidate);
     if (
       !budget.canAfford(
-        countUncached({
+        evaluator.countUncached({
           candidate: proposal.candidate,
           ids: mergeInstances.map((index) => valIds[index] as string),
           split: "val",
@@ -967,6 +888,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
         batch: batchIndices.map((index) => trainset[index] as Datum),
         batchIds: batchIndices.map((index) => trainIds[index] as string),
         componentsToUpdate,
+        attempt: iteration * proposalsPerIteration + slot,
       });
     }
     return plans;
@@ -980,46 +902,19 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   async function runProposal(
     plan: ProposalPlan<Datum, K>,
   ): Promise<ProposalOutcome<Datum, K>> {
-    const { parent, batch, batchIds, componentsToUpdate } = plan;
+    const { parent, batch, batchIds, componentsToUpdate, attempt } = plan;
 
-    // Traces are required for reflection, so this evaluation always runs and
-    // is never served from the cache.
-    if (!budget.reserve(batch.length)) {
-      return { status: "budgetExhausted" };
-    }
-
-    let parentEvaluation: EvaluationBatch<Traj, Out>;
-    try {
-      parentEvaluation = await adapter.evaluate({
-        batch,
-        candidate: parent.candidate,
-        captureTraces: true,
-        run: {
-          iteration,
-          phase: "minibatch",
-          split: "train",
-          candidateId: parent.id,
-        },
-        signal,
-      });
-      assertEvaluation({
-        evaluation: parentEvaluation,
-        expected: batch.length,
-      });
-    } catch (err) {
-      budget.refund(batch.length);
-      throw err;
-    }
-
-    emit({
-      type: "evaluation",
-      iteration,
+    const parentEvaluation = await evaluator.evaluateTraced({
+      batch,
+      candidate: parent.candidate,
+      split: "train",
       phase: "minibatch",
       candidateId: parent.id,
-      metricCalls: batch.length,
-      cacheHits: 0,
-      meanScore: mean(parentEvaluation.scores),
+      iteration,
     });
+    if (parentEvaluation === null) {
+      return { status: "budgetExhausted" };
+    }
 
     if (
       skipPerfectScore &&
@@ -1042,6 +937,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
         reflectiveDataset,
         componentsToUpdate,
         rejectedProposals,
+        attempt,
         reflect: countedReflect,
         signal,
       });
@@ -1197,7 +1093,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
 
     for (const outcome of survivors) {
       const instances = selectValInstances(outcome.child);
-      const uncached = countUncached({
+      const uncached = evaluator.countUncached({
         candidate: outcome.child,
         ids: instances.map((index) => valIds[index] as string),
         split: "val",
@@ -1390,11 +1286,31 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
   const bestCandidateId = valEvaluationPolicy.bestCandidate(records);
   const best = records[bestCandidateId] as CandidateRecord<K>;
 
+  // Run after the winner is chosen, never before: an evaluation the selection
+  // could read would make the held-out set another validation set.
+  const testScore =
+    testset === undefined
+      ? undefined
+      : mean(
+          (
+            await evaluateCached({
+              candidate: best.candidate,
+              batch: testset,
+              ids: testIds,
+              split: "test",
+              phase: "test",
+              candidateId: bestCandidateId,
+              charge: false,
+            })
+          ).scores,
+        );
+
   emit({
     type: "finish",
     reason: stopReason,
     bestCandidateId,
     metricCalls: budget.spent(),
+    ...(testScore === undefined ? {} : { testScore }),
   });
 
   const perObjectiveBest = collectPerObjectiveBest(records);
@@ -1404,6 +1320,9 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     bestCandidate: best.candidate,
     bestScore: best.aggregateScore,
     bestCandidateId,
+    ...(testScore === undefined
+      ? {}
+      : { testScore, testMetricCalls: evaluator.unchargedCalls() }),
     ...(bestOutputs === undefined ? {} : { bestOutputs }),
     candidates: records,
     paretoFrontier: collectDominatorIds(records).map(
@@ -1413,7 +1332,7 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
     scoreMatrix: records.map((record) => [...record.instanceScores]),
     metricCalls: budget.spent(),
     reflectionCalls,
-    cacheHits,
+    cacheHits: evaluator.cacheHits(),
     iterations: iteration,
     stopReason,
     snapshot: takeSnapshot(),
@@ -1426,6 +1345,16 @@ async function runGepa<Datum, Traj, Out, K extends string>(args: {
  * Task-shaped checks stay in `runGepa`, where the data is.
  */
 function assertGepaConfig(config: GepaConfig): void {
+  if (
+    config.reflection?.buildPrompt !== undefined &&
+    config.reflection.strategies !== undefined
+  ) {
+    throw new Error("reflection takes buildPrompt or strategies, not both");
+  }
+  if (config.reflection?.strategies?.length === 0) {
+    throw new Error("reflection.strategies must not be empty");
+  }
+
   const {
     minibatchSize = DEFAULT_MINIBATCH_SIZE,
     maxIterations = Number.POSITIVE_INFINITY,
@@ -1683,6 +1612,11 @@ function collectDominatorIds(records: readonly CandidateRecord[]): number[] {
  * different data would score old candidates on new instances and quietly
  * corrupt the frontier, so the mismatch is refused instead.
  */
+/**
+ * Identifies a run by everything the search trajectory depends on. The testset
+ * is deliberately absent: it never touches selection, so adding one to a
+ * resumed run changes nothing about what that run would have done.
+ */
 function runFingerprint(args: {
   seedCandidate: Candidate;
   trainIds: readonly string[];
@@ -1721,44 +1655,4 @@ function candidateFingerprint<K extends string>(
 function defaultInstanceId(args: { datum: unknown; index: number }): string {
   const hash = stableHash(args.datum);
   return hash === "" ? String(args.index) : hash;
-}
-
-/**
- * A NaN score never raises on its own: every comparison that decides fronts or
- * the best candidate is false for NaN, so the candidate silently becomes an
- * unselectable phantom that still consumed budget. Every other array is read
- * positionally against the batch, so a short one misattributes a diagnosis, an
- * objective or an infrastructure failure to the wrong instance. Catch both at
- * the boundary.
- */
-function assertEvaluation(args: {
-  evaluation: EvaluationBatch<unknown, unknown>;
-  expected: number;
-}): void {
-  const { evaluation, expected } = args;
-  const { scores } = evaluation;
-
-  const aligned: [string, { length: number } | undefined][] = [
-    ["scores", scores],
-    ["outputs", evaluation.outputs],
-    ["feedback", evaluation.feedback],
-    ["objectiveScores", evaluation.objectiveScores],
-    ["transient", evaluation.transient],
-  ];
-  for (const [name, values] of aligned) {
-    if (values !== undefined && values.length !== expected) {
-      throw new Error(
-        `Adapter returned ${values.length} ${name} for a batch of ${expected}; ${name} must align one-to-one with the batch`,
-      );
-    }
-  }
-
-  for (let index = 0; index < scores.length; index += 1) {
-    const score = scores[index];
-    if (typeof score !== "number" || !Number.isFinite(score)) {
-      throw new Error(
-        `Adapter returned a non-finite score at index ${index}: ${String(score)}`,
-      );
-    }
-  }
 }

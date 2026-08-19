@@ -36,6 +36,36 @@
         "types": "./dist/testing.d.cts",
         "default": "./dist/testing.cjs"
       }
+    },
+    "./random-search": {
+      "import": {
+        "types": "./dist/random-search/index.d.mts",
+        "default": "./dist/random-search/index.mjs"
+      },
+      "require": {
+        "types": "./dist/random-search/index.d.cts",
+        "default": "./dist/random-search/index.cjs"
+      }
+    },
+    "./opro": {
+      "import": {
+        "types": "./dist/opro/index.d.mts",
+        "default": "./dist/opro/index.mjs"
+      },
+      "require": {
+        "types": "./dist/opro/index.d.cts",
+        "default": "./dist/opro/index.cjs"
+      }
+    },
+    "./mipro": {
+      "import": {
+        "types": "./dist/mipro/index.d.mts",
+        "default": "./dist/mipro/index.mjs"
+      },
+      "require": {
+        "types": "./dist/mipro/index.d.cts",
+        "default": "./dist/mipro/index.cjs"
+      }
     }
   },
   "main": "./dist/index.cjs",

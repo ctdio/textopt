@@ -1,0 +1,544 @@
+import { describe, expect, test } from "vitest";
+import type { Optimizer, OptimizerResult } from "../optimizer.js";
+import {
+  KEYWORD_EXAMPLES,
+  createHillClimbingReflector,
+  createKeywordAdapter,
+} from "../testing.js";
+import type { Adapter } from "../types.js";
+import { OproOptimizer } from "./optimize.js";
+import type { OproStopReason } from "./optimize.js";
+
+const SEED = { instruction: "Answer the user question." };
+
+/** The adapter contract without any reflective surface on it at all. */
+function baseAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return { evaluate: (args) => keyword.evaluate(args) };
+}
+
+function task() {
+  return {
+    seedCandidate: SEED,
+    trainset: KEYWORD_EXAMPLES,
+    adapter: baseAdapter(),
+    reflect: createHillClimbingReflector(),
+    maxMetricCalls: 400,
+  };
+}
+
+/** The scores an OPRO prompt shows, in the order it shows them. */
+function scoresIn(prompt: string): number[] {
+  return [...prompt.matchAll(/score:\s*([\d.]+)/g)].map((match) =>
+    Number(match[1]),
+  );
+}
+
+describe("OproOptimizer", () => {
+  test("satisfies the Optimizer contract", async () => {
+    const opro = new OproOptimizer({ proposalsPerRound: 2, maxRounds: 2 });
+    const contract: Optimizer<OproStopReason> = opro;
+
+    const result = await opro.optimize(task());
+    const outcome: OptimizerResult<"instruction", OproStopReason> = result;
+
+    expect(contract).toBe(opro);
+    expect(outcome.bestScore).toBeGreaterThanOrEqual(0);
+  });
+
+  test("runs against an adapter that reports no feedback at all", async () => {
+    const keyword = createKeywordAdapter();
+
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 4,
+    }).optimize({
+      ...task(),
+      adapter: {
+        evaluate: async (args) => {
+          const evaluation = await keyword.evaluate(args);
+          return { outputs: evaluation.outputs, scores: evaluation.scores };
+        },
+      },
+    });
+
+    expect(result.bestScore).toBeGreaterThan(result.seedScore);
+  });
+
+  test("improves on the seed by reading the score history", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 8,
+    }).optimize(task());
+
+    expect(result.seedScore).toBe(0);
+    expect(result.bestScore).toBeGreaterThan(0);
+  });
+
+  test("shows the proposer where its instruction lands", async () => {
+    // OPRO's meta-prompt marks the instruction's slot inside each example so
+    // the model writes something that fits where it will actually be read,
+    // rather than prose about the task in the abstract.
+    const prompts: string[] = [];
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 1,
+      exemplars: 2,
+      seed: 1,
+    }).optimize({
+      ...task(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nnew instruction\n```";
+      },
+    });
+
+    const inputs = prompts[0]?.slice(
+      prompts[0].indexOf("<inputs>"),
+      prompts[0].indexOf("</inputs>"),
+    ) as string;
+
+    expect([...inputs.matchAll(/<INS>/g)]).toHaveLength(2);
+  });
+
+  test("shows the proposer the attempts in ascending score order", async () => {
+    const prompts: string[] = [];
+
+    await new OproOptimizer({ proposalsPerRound: 2, maxRounds: 5 }).optimize({
+      ...task(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nAnswer the user question. hold\n```";
+      },
+    });
+
+    const withHistory = prompts.filter((prompt) => scoresIn(prompt).length > 1);
+    expect(withHistory.length).toBeGreaterThan(0);
+    for (const prompt of withHistory) {
+      const scores = scoresIn(prompt);
+      expect([...scores].sort((a, b) => a - b)).toEqual(scores);
+    }
+  });
+
+  test("caps the history it shows, keeping the strongest attempts", async () => {
+    const prompts: string[] = [];
+    const reflect = createHillClimbingReflector();
+
+    await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 8,
+      historySize: 3,
+    }).optimize({
+      ...task(),
+      reflect: async (args) => {
+        prompts.push(args.prompt);
+        return reflect(args);
+      },
+    });
+
+    const last = prompts[prompts.length - 1] as string;
+    expect(scoresIn(last).length).toBeLessThanOrEqual(3);
+  });
+
+  test("grounds the prompt in example task inputs", async () => {
+    const prompts: string[] = [];
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 1,
+      exemplars: 2,
+    }).optimize({
+      ...task(),
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        return "```\nrewritten\n```";
+      },
+    });
+
+    const questions = KEYWORD_EXAMPLES.map((example) => example.question);
+    const shown = questions.filter((question) =>
+      (prompts[0] as string).includes(question),
+    );
+    expect(shown).toHaveLength(2);
+  });
+
+  test("never spends more than the metric call budget", async () => {
+    const result = await new OproOptimizer({ proposalsPerRound: 3 }).optimize({
+      ...task(),
+      maxMetricCalls: 29,
+    });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(29);
+    expect(result.stopReason).toBe("budgetExhausted");
+  });
+
+  test("stops once the round limit is reached", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 3,
+    }).optimize({ ...task(), maxMetricCalls: 10_000 });
+
+    expect(result.rounds).toBe(3);
+    expect(result.stopReason).toBe("maxRounds");
+  });
+
+  test("stops once the reflection budget is reached", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxReflectionCalls: 5,
+    }).optimize({ ...task(), maxMetricCalls: 10_000 });
+
+    expect(result.reflectionCalls).toBeLessThanOrEqual(5);
+    expect(result.stopReason).toBe("reflectionBudgetExhausted");
+  });
+
+  test("records every attempt it scored", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 3,
+    }).optimize({ ...task(), maxMetricCalls: 10_000 });
+
+    // The seed, plus whatever survived deduplication in each round.
+    expect(result.trajectory[0]?.round).toBe(0);
+    expect(result.trajectory.length).toBeGreaterThan(1);
+    for (const attempt of result.trajectory) {
+      expect(attempt.score).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test("scores the winner on a held-out testset", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      testset: [
+        { question: "held out, satisfied", required: ["answer"] },
+        { question: "held out, unsatisfiable", required: ["zzz-never"] },
+      ],
+    });
+
+    expect(result.testScore).toBe(0.5);
+    expect(result.testMetricCalls).toBe(2);
+  });
+
+  test("stops when the signal is aborted", async () => {
+    const controller = new AbortController();
+    const keyword = createKeywordAdapter();
+    let evaluations = 0;
+
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+    }).optimize({
+      ...task(),
+      maxMetricCalls: 10_000,
+      adapter: {
+        evaluate: (args) => {
+          evaluations += 1;
+          if (evaluations === 3) {
+            controller.abort();
+          }
+          return keyword.evaluate(args);
+        },
+      },
+      signal: controller.signal,
+    });
+
+    expect(result.stopReason).toBe("aborted");
+  });
+
+  test("keeps a separate history per component", async () => {
+    const components: string[] = [];
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 4,
+    }).optimize({
+      ...task(),
+      seedCandidate: { intro: "Answer.", outro: "Be brief." },
+      onEvent: (event) => {
+        if (event.type === "roundStart") {
+          components.push(event.component);
+        }
+      },
+    });
+
+    expect(components).toEqual(["intro", "outro", "intro", "outro"]);
+  });
+});
+
+describe("OproOptimizer scoring subset", () => {
+  const TRAIN = Array.from({ length: 20 }, (_, n) => ({ n }));
+  const VAL = Array.from({ length: 20 }, (_, n) => ({ n: n + 100 }));
+
+  test("refuses a scoring set that is not a positive integer", () => {
+    expect(() => new OproOptimizer({ scoringSetSize: 0 })).toThrow(
+      /scoringSetSize/,
+    );
+  });
+
+  test("scores proposals on the subset instead of the whole valset", async () => {
+    let drawn = 0;
+    // Four proposals against a 20-instance valset costs 80 rollouts to screen.
+    // OPRO screens on a small fixed slice of the trainset instead, which is
+    // what makes a large valset affordable at all.
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 2,
+      scoringSetSize: 4,
+      seed: 1,
+    }).optimize({
+      seedCandidate: { instruction: "seed" },
+      trainset: TRAIN,
+      valset: VAL,
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0.5),
+        }),
+      },
+      reflect: async () => {
+        drawn += 1;
+        return `\`\`\`\nrewrite ${drawn}\n\`\`\``;
+      },
+      maxMetricCalls: 5000,
+    });
+
+    // Screening all four on the valset would be 80 rollouts on its own.
+    expect(result.metricCalls).toBeLessThan(80);
+  });
+
+  test("keeps the scoring subset fixed for the whole run", async () => {
+    // The meta-prompt ranks attempts against each other, so a score is only
+    // meaningful if every attempt was measured on the same instances. A
+    // resampled subset would turn that ranking into noise.
+    const scored = new Set<number>();
+    let call = 0;
+
+    await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 3,
+      scoringSetSize: 4,
+      seed: 1,
+    }).optimize({
+      seedCandidate: { instruction: "seed" },
+      trainset: TRAIN,
+      valset: VAL,
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map((datum) => {
+            if (datum.n < 100) {
+              scored.add(datum.n);
+            }
+            return 0.5;
+          }),
+        }),
+      },
+      reflect: async () => {
+        call += 1;
+        return `\`\`\`\nrewrite ${call}\n\`\`\``;
+      },
+      maxMetricCalls: 5000,
+    });
+
+    expect(scored.size).toBe(4);
+  });
+
+  test("reports a winner measured on the valset, not on the subset", async () => {
+    // "over" is perfect on the trainset and worthless on the valset. The
+    // search will chase it, because the search only ever sees the subset — but
+    // what gets reported has to be a number the full valset actually produced.
+    const result = await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 3,
+      scoringSetSize: 4,
+      fullEvalInterval: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: { instruction: "seed" },
+      trainset: TRAIN,
+      valset: VAL,
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map((datum) => {
+            if (candidate.instruction !== "over") {
+              return 0.5;
+            }
+            return datum.n < 100 ? 1 : 0;
+          }),
+        }),
+      },
+      reflect: async () => "```\nover\n```",
+      maxMetricCalls: 5000,
+    });
+
+    expect(result.bestScore).toBe(0.5);
+    expect(result.bestCandidate.instruction).toBe("seed");
+  });
+});
+
+describe("OproOptimizer score history", () => {
+  test("never shows a score measured before another component moved", async () => {
+    // Round 0 scores alpha="A1" at 0.5 while beta is still the seed; round 1
+    // moves beta and re-measures the pair at 1.0. By round 2 the earlier 50 is
+    // a reading of a system that no longer exists, and listing it beside the
+    // current one invites the model to read a gradient across two
+    // incomparable measurements. A1 itself may reappear — with its new score.
+    const prompts: string[] = [];
+    const proposals = ["A1", "B1", "A2"];
+    let call = 0;
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 3,
+      seed: 3,
+    }).optimize({
+      seedCandidate: { alpha: "", beta: "" },
+      trainset: [{ id: 0 }],
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(
+            () =>
+              (candidate.alpha === "A1" ? 0.5 : 0) +
+              (candidate.beta === "B1" ? 0.5 : 0),
+          ),
+        }),
+      },
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        const text = proposals[call] as string;
+        call += 1;
+        return `\`\`\`\n${text}\n\`\`\``;
+      },
+      maxMetricCalls: 400,
+    });
+
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).not.toContain("score: 50");
+    expect(prompts[2]).toContain("score: 100");
+  });
+
+  test("retries a rejected text once another component has moved", async () => {
+    // "A1" is worthless on its own and perfect beside "B1". Round 0 measures it
+    // alone and rejects it; round 1 accepts "B1". A candidate is the whole
+    // assignment, so proposing "A1" again in round 2 is a different candidate
+    // than the one that failed — treating it as already tried puts the pair
+    // permanently out of reach.
+    const proposals = ["A1", "B1", "A1"];
+    let call = 0;
+
+    const result = await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 3,
+      seed: 3,
+    }).optimize({
+      seedCandidate: { alpha: "", beta: "" },
+      trainset: [{ id: 0 }],
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => {
+            if (candidate.alpha === "A1" && candidate.beta === "B1") {
+              return 1;
+            }
+            return candidate.beta === "B1" ? 0.5 : 0;
+          }),
+        }),
+      },
+      reflect: async () => {
+        const text = proposals[call] as string;
+        call += 1;
+        return `\`\`\`\n${text}\n\`\`\``;
+      },
+      maxMetricCalls: 400,
+    });
+
+    expect(result.bestScore).toBe(1);
+  });
+
+  test("keeps an anchor in every component's history when another one moves", async () => {
+    // Filtering stale attempts is only sound if something survives the filter.
+    // An accepted candidate is a real measurement of every component's current
+    // text in the new context, so it re-anchors the histories it invalidated.
+    const blocks: string[] = [];
+    const proposals = ["A1", "B1", "A2", "B2"];
+    let call = 0;
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 4,
+      seed: 3,
+    }).optimize({
+      seedCandidate: { alpha: "", beta: "" },
+      trainset: [{ id: 0 }],
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(
+            () =>
+              (candidate.alpha === "A1" ? 0.5 : 0) +
+              (candidate.beta === "B1" ? 0.5 : 0),
+          ),
+        }),
+      },
+      reflect: async ({ prompt }) => {
+        blocks.push(
+          prompt.slice(
+            prompt.indexOf("<attempts>"),
+            prompt.indexOf("</attempts>"),
+          ),
+        );
+        const text = proposals[call] as string;
+        call += 1;
+        return `\`\`\`\n${text}\n\`\`\``;
+      },
+      maxMetricCalls: 400,
+    });
+
+    expect(blocks).toHaveLength(4);
+    for (const block of blocks) {
+      expect(block).toContain("score:");
+    }
+  });
+
+  test("keeps the whole history when the candidate has one component", async () => {
+    const prompts: string[] = [];
+    const proposals = ["first", "second", "third"];
+    let call = 0;
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 3,
+      seed: 3,
+    }).optimize({
+      seedCandidate: { alpha: "" },
+      trainset: [{ id: 0 }],
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => (candidate.alpha === "first" ? 0.5 : 0.1)),
+        }),
+      },
+      reflect: async ({ prompt }) => {
+        prompts.push(prompt);
+        const text = proposals[call] as string;
+        call += 1;
+        return `\`\`\`\n${text}\n\`\`\``;
+      },
+      maxMetricCalls: 400,
+    });
+
+    // Nothing else can move, so every attempt stays comparable — this is the
+    // single-instruction case the paper describes.
+    expect(prompts[2]).toContain("first");
+    expect(prompts[2]).toContain("second");
+  });
+});

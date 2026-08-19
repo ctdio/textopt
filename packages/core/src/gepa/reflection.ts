@@ -1,3 +1,4 @@
+import { parseProposedText } from "../text.js";
 import type {
   ComponentPatch,
   ProposeArgs,
@@ -28,11 +29,8 @@ export interface ReflectionLimits {
   maxCharacters?: number;
 }
 
-const LANGUAGE_TAG = /^[a-zA-Z0-9_+.-]*\n/;
 const TRUNCATION_MARKER = "… [truncated]";
 const MIN_STRING_BUDGET = 40;
-const DANGLING_OPEN_FENCE = /^\s*```\S*\n?/;
-const DANGLING_CLOSE_FENCE = /\n?```\s*$/;
 
 /**
  * Adapted from the reflection prompt in the GEPA paper (Agrawal et al., 2025).
@@ -77,29 +75,106 @@ export function buildReflectionPrompt(args: ReflectionPromptArgs): string {
 }
 
 /**
- * Pull the proposed text out of the reflection model's response.
- *
- * Spans the *first* fence to the *last* one rather than matching blocks
- * individually: proposed instructions routinely contain their own fenced
- * examples, and per-block matching would silently return only the trailing
- * fragment. A response with a single fence was truncated mid-generation, so the
- * stray fence is stripped and the partial text kept.
+ * Cut rather than add. Reflective evolution only ever appends — every
+ * iteration diagnoses a failure and writes a rule preventing it — so an
+ * instruction grows monotonically until it is mostly edge cases that no longer
+ * fire. Nothing else in the loop ever removes one.
  */
-export function parseProposedText(response: string): string {
-  const start = response.indexOf("```");
-  const end = response.lastIndexOf("```");
+export function buildSimplifyPrompt(args: ReflectionPromptArgs): string {
+  const { componentName, currentText, records } = args;
 
-  if (start !== -1 && start !== end) {
-    return response
-      .slice(start + 3, end)
-      .replace(LANGUAGE_TAG, "")
-      .trim();
-  }
+  return [
+    `The instruction below drives the "${componentName}" component of a larger system. It has been edited many times and has accumulated rules.`,
+    "",
+    "<current_instruction>",
+    currentText,
+    "</current_instruction>",
+    "",
+    "Here is how it behaved on recent inputs, with feedback on each output:",
+    "",
+    "<examples>",
+    serializeRecords(records),
+    "</examples>",
+    "",
+    "Write a shorter instruction.",
+    "Remove any rule that is redundant, that restates something already said, that contradicts another rule, or that no longer earns the space it takes.",
+    "Keep every rule the examples show is load-bearing. The component must still behave the same way on the inputs above.",
+    "Do not add new rules. If nothing can be removed, say the same thing in fewer words.",
+    "",
+    "Return only the new instruction, inside a ``` block.",
+  ].join("\n");
+}
 
-  return response
-    .replace(DANGLING_OPEN_FENCE, "")
-    .replace(DANGLING_CLOSE_FENCE, "")
-    .trim();
+/**
+ * Replace a rule that fits the instances it was written from with the
+ * principle behind it. Feedback is drawn from minibatches, so a rule written
+ * to fix three examples routinely encodes those three examples.
+ */
+export function buildGeneralizePrompt(args: ReflectionPromptArgs): string {
+  const { componentName, currentText, records } = args;
+
+  return [
+    `The instruction below drives the "${componentName}" component of a larger system.`,
+    "",
+    "<current_instruction>",
+    currentText,
+    "</current_instruction>",
+    "",
+    "It was written from a small sample of inputs, so parts of it may describe those specific inputs rather than the task. Here is how it behaved on recent inputs, with feedback on each output:",
+    "",
+    "<examples>",
+    serializeRecords(records),
+    "</examples>",
+    "",
+    "Write a new instruction that states the underlying principle instead of the special cases.",
+    "Where a rule names a specific input, value or phrasing, ask what general property that case is an instance of, and write that property.",
+    "Keep concrete domain facts that are genuinely fixed — names, thresholds, formats. Those are knowledge, not overfitting.",
+    "",
+    "Return only the new instruction, inside a ``` block.",
+  ].join("\n");
+}
+
+/**
+ * Start from the evidence rather than from the incumbent. Every other strategy
+ * edits the current text, which anchors each proposal to whatever the search
+ * happened to reach first; this one is the only escape from a bad opening.
+ */
+export function buildRewritePrompt(args: ReflectionPromptArgs): string {
+  const { componentName, records } = args;
+
+  return [
+    `Write the instruction for the "${componentName}" component of a larger system, from scratch.`,
+    "",
+    "Below are task inputs the component received, the outputs it produced, and feedback on how each output could be better:",
+    "",
+    "<examples>",
+    serializeRecords(records),
+    "</examples>",
+    "",
+    "You are deliberately not being shown the instruction currently in use. Work out what the component is for from the inputs and outputs alone.",
+    "Infer the task, its input format, and what a correct output looks like.",
+    "State explicitly any domain-specific facts the task depends on — the component will not have access to these examples in future.",
+    "",
+    "Return only the new instruction, inside a ``` block.",
+  ].join("\n");
+}
+
+/**
+ * A rotation covering the four directions a proposal can move in: fix what is
+ * broken, cut what is dead, widen what is too narrow, and start over.
+ *
+ * Drawing a proposal k times from one template samples one direction k times.
+ * Rotating costs nothing extra — same call count, same rollouts — and is the
+ * cheapest diversity available. Opt in via `reflection.strategies`; the
+ * default stays the published single prompt.
+ */
+export function diverseReflectionStrategies(): ReflectionPromptBuilder[] {
+  return [
+    buildReflectionPrompt,
+    buildSimplifyPrompt,
+    buildGeneralizePrompt,
+    buildRewritePrompt,
+  ];
 }
 
 /**
@@ -161,10 +236,30 @@ export function limitReflectiveRecords(args: {
 export function createDefaultProposer<K extends string = string>(
   options: {
     buildPrompt?: ReflectionPromptBuilder;
+    /**
+     * Rotated by `attempt`, one direction per proposal. Mutually exclusive
+     * with `buildPrompt`: passing both leaves it ambiguous which one a given
+     * proposal used, which is exactly the thing a rotation has to be legible
+     * about.
+     */
+    strategies?: readonly ReflectionPromptBuilder[];
     limits?: ReflectionLimits;
   } = {},
 ): (args: ProposeArgs<K>) => Promise<ComponentPatch<K>> {
-  const { buildPrompt = buildReflectionPrompt, limits = {} } = options;
+  const { buildPrompt, strategies, limits = {} } = options;
+
+  if (buildPrompt !== undefined && strategies !== undefined) {
+    throw new Error(
+      "createDefaultProposer takes buildPrompt or strategies, not both",
+    );
+  }
+  if (strategies !== undefined && strategies.length === 0) {
+    throw new Error(
+      "createDefaultProposer requires a non-empty strategies list",
+    );
+  }
+
+  const rotation = strategies ?? [buildPrompt ?? buildReflectionPrompt];
 
   return async (args) => {
     const {
@@ -172,11 +267,15 @@ export function createDefaultProposer<K extends string = string>(
       reflectiveDataset,
       componentsToUpdate,
       rejectedProposals,
+      attempt = 0,
       reflect,
       signal,
     } = args;
 
     const proposed: ComponentPatch<K> = {};
+    const strategy = rotation[
+      attempt % rotation.length
+    ] as ReflectionPromptBuilder;
 
     for (const componentName of componentsToUpdate) {
       const records = reflectiveDataset[componentName];
@@ -186,7 +285,7 @@ export function createDefaultProposer<K extends string = string>(
 
       const currentText = candidate[componentName] ?? "";
       const response = await reflect({
-        prompt: buildPrompt({
+        prompt: strategy({
           componentName,
           currentText,
           records: limitReflectiveRecords({ records, ...limits }),

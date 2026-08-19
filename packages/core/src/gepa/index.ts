@@ -1,6 +1,13 @@
+export { createDemoProposer } from "./demos.js";
 export { GepaOptimizer } from "./optimize.js";
 export type { GepaConfig, GepaResult, GepaTask } from "./optimize.js";
-export { buildReflectionPrompt } from "./reflection.js";
+export {
+  buildGeneralizePrompt,
+  buildReflectionPrompt,
+  buildRewritePrompt,
+  buildSimplifyPrompt,
+  diverseReflectionStrategies,
+} from "./reflection.js";
 export type {
   ReflectionPromptArgs,
   ReflectionPromptBuilder,

@@ -73,14 +73,14 @@ export interface EvaluationContext {
   candidateId: number | null;
 }
 
-export type EvaluationPhase = "seed" | "minibatch" | "validation";
+export type EvaluationPhase = "seed" | "minibatch" | "validation" | "test";
 
 /**
- * Which dataset an instance id was drawn from. Train and val ids are numbered
- * independently, so the same id can name two different instances; the cache
+ * Which dataset an instance id was drawn from. Each split numbers its ids
+ * independently, so the same id can name three different instances; the cache
  * key has to keep them apart.
  */
-export type EvaluationSplit = "train" | "val";
+export type EvaluationSplit = "train" | "val" | "test";
 
 /**
  * The single integration seam between an optimizer and a system under

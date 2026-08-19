@@ -29,6 +29,24 @@ export const KEYWORD_EXAMPLES: KeywordExample[] = [
   { question: "How do I upgrade a plan?", required: ["billing", "prorated"] },
 ];
 
+/** Terms the keyword metric rewards, interleaved with terms it ignores. */
+const SAMPLING_POOL = [
+  "hold",
+  "sprocket",
+  "ten seconds",
+  "lorem",
+  "ticket",
+  "widget",
+  "portal",
+  "colour",
+  "thirty days",
+  "ipsum",
+  "billing",
+  "gizmo",
+  "prorated",
+  "flange",
+];
+
 export function createKeywordAdapter(): GepaAdapter<
   KeywordExample,
   KeywordTrajectory,
@@ -101,6 +119,48 @@ export function createKeywordReflector(): TextModel {
   };
 }
 
+/**
+ * A stand-in for a model asked to rewrite text it has been told nothing about.
+ * It appends one term per call, cycling a pool in which only every other entry
+ * is useful — which is what blind proposal actually is: a draw from a space
+ * where some samples happen to help.
+ *
+ * Feedback-driven reflectors read the prompt; this one deliberately does not,
+ * so a search using it cannot benefit from evidence even if it is offered.
+ */
+export function createSamplingReflector(
+  args: { pool?: readonly string[] } = {},
+): TextModel {
+  const { pool = SAMPLING_POOL } = args;
+  let cursor = 0;
+
+  return async ({ prompt }) => {
+    const term = pool[cursor % pool.length] as string;
+    cursor += 1;
+    return `\`\`\`\n${[extractCurrentInstruction(prompt), term].filter(Boolean).join(" ")}\n\`\`\``;
+  };
+}
+
+/**
+ * A stand-in for a model that reads a score history and climbs it: it takes
+ * the highest-scoring attempt it is shown, keeps it, and extends it by one
+ * term. Unlike `createSamplingReflector` it depends on the prompt carrying
+ * scores, so a search that shows it none makes no progress with it.
+ */
+export function createHillClimbingReflector(
+  args: { pool?: readonly string[] } = {},
+): TextModel {
+  const { pool = SAMPLING_POOL } = args;
+  let cursor = 0;
+
+  return async ({ prompt }) => {
+    const best = extractBestAttempt(prompt);
+    const term = pool[cursor % pool.length] as string;
+    cursor += 1;
+    return `\`\`\`\n${[best, term].filter(Boolean).join(" ")}\n\`\`\``;
+  };
+}
+
 /** A reflection model that always proposes something strictly worse. */
 export function createDegradingReflector(): TextModel {
   return async () => "```\nno useful information\n```";
@@ -113,6 +173,23 @@ function extractCurrentInstruction(prompt: string): string {
     /<current_instruction>\n([\s\S]*?)\n<\/current_instruction>/,
   );
   return match?.[1]?.trim() ?? "";
+}
+
+/** The instruction beside the highest score in a scored-attempt prompt. */
+function extractBestAttempt(prompt: string): string {
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let best = "";
+
+  for (const match of prompt.matchAll(
+    /score:\s*([\d.]+)[\s\S]*?<instruction>\n?([\s\S]*?)\n?<\/instruction>/g,
+  )) {
+    const score = Number(match[1]);
+    if (score > bestScore) {
+      bestScore = score;
+      best = (match[2] ?? "").trim();
+    }
+  }
+  return best;
 }
 
 function extractMissingTerms(prompt: string): string[] {
