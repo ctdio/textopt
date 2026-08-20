@@ -885,6 +885,12 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       sum(subsample.map((index) => right.instanceScores[index] as number)),
     );
 
+    // A rejected merge consumes neither `mergesDue` nor `totalMergesTested`,
+    // matching the reference — `engine.py` marks the branch "REJECTED: do NOT
+    // consume merges_due or total_merges_tested". The cap counts merges that
+    // landed, not merges that were priced, so the run keeps looking while any
+    // untried triplet remains. It is bounded regardless: `mergeAttempts` is
+    // recorded before scoring, so no triplet is tried twice.
     if (mergedSum < parentBest) {
       emit({
         type: "candidateRejected",

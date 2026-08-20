@@ -1,5 +1,5 @@
 ---
-"textopt": patch
+"textopt": minor
 ---
 
 Rollout accounting survives a resume, and the numbers a run reports name the
@@ -17,7 +17,10 @@ SIMBA keys a minibatch by dataset row instead of by position within the batch.
 Two steps drawing different rows shared the ids `0..n-1`, so a candidate that
 recurred across steps could be served a cached score another instance had
 measured. Its default `instanceId` hashes the datum, as bootstrapped few-shot
-search's now does and as the other four optimizers already did.
+search's now does and as the other four optimizers already did. This is the
+breaking half of the release: a seeded run that changed nothing now reaches
+different candidates, because a score measured on another row no longer decides
+one. `bench/results/latest.json` moves with it.
 
 OPRO sweeps the held-out set with the candidate it returns. A run that screens
 on a `scoringSetSize` subset can end on an incumbent the closing full sweep

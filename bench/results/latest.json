@@ -31,13 +31,13 @@
           {
             "entrant": "opro",
             "runs": 20,
-            "meanScore": 0.3081249999999999,
-            "sdScore": 0.03678497162465806,
-            "minScore": 0.23749999999999996,
-            "maxScore": 0.3549999999999999,
+            "meanScore": 0.29245833333333326,
+            "sdScore": 0.03213921995108666,
+            "minScore": 0.23499999999999996,
+            "maxScore": 0.3183333333333333,
             "meanMetricCalls": 198,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.000005391945113730756
+            "pValueVsWinner": 0.000004888829984839305
           },
           {
             "entrant": "mipro",
@@ -53,13 +53,13 @@
           {
             "entrant": "simba",
             "runs": 20,
-            "meanScore": 0.3805833333333333,
-            "sdScore": 0.11124268160434787,
-            "minScore": 0.125,
+            "meanScore": 0.3826666666666666,
+            "sdScore": 0.09693459542121008,
+            "minScore": 0.16666666666666666,
             "maxScore": 0.5416666666666666,
-            "meanMetricCalls": 194.4,
+            "meanMetricCalls": 193.85,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.000007941689607826596
+            "pValueVsWinner": 0.000005797357202186326
           },
           {
             "entrant": "randomSearch",
@@ -488,9 +488,9 @@
           {
             "entrant": "opro",
             "seed": 0,
-            "score": 0.35249999999999987,
+            "score": 0.31333333333333324,
             "bestScore": 0.35749999999999993,
-            "testScore": 0.35249999999999987,
+            "testScore": 0.31333333333333324,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -498,9 +498,9 @@
           {
             "entrant": "opro",
             "seed": 1,
-            "score": 0.2741666666666666,
+            "score": 0.23499999999999996,
             "bestScore": 0.3183333333333333,
-            "testScore": 0.2741666666666666,
+            "testScore": 0.23499999999999996,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -538,9 +538,9 @@
           {
             "entrant": "opro",
             "seed": 5,
-            "score": 0.35249999999999987,
+            "score": 0.31333333333333324,
             "bestScore": 0.3549999999999999,
-            "testScore": 0.35249999999999987,
+            "testScore": 0.31333333333333324,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -548,9 +548,9 @@
           {
             "entrant": "opro",
             "seed": 6,
-            "score": 0.35249999999999987,
+            "score": 0.31333333333333324,
             "bestScore": 0.35749999999999993,
-            "testScore": 0.35249999999999987,
+            "testScore": 0.31333333333333324,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -558,9 +558,9 @@
           {
             "entrant": "opro",
             "seed": 7,
-            "score": 0.3549999999999999,
+            "score": 0.31583333333333324,
             "bestScore": 0.31583333333333324,
-            "testScore": 0.3549999999999999,
+            "testScore": 0.31583333333333324,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -578,9 +578,9 @@
           {
             "entrant": "opro",
             "seed": 9,
-            "score": 0.3549999999999999,
+            "score": 0.31583333333333324,
             "bestScore": 0.39666666666666656,
-            "testScore": 0.3549999999999999,
+            "testScore": 0.31583333333333324,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -638,9 +638,9 @@
           {
             "entrant": "opro",
             "seed": 15,
-            "score": 0.3183333333333333,
+            "score": 0.2791666666666666,
             "bestScore": 0.3183333333333333,
-            "testScore": 0.3183333333333333,
+            "testScore": 0.2791666666666666,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -658,9 +658,9 @@
           {
             "entrant": "opro",
             "seed": 17,
-            "score": 0.2766666666666666,
+            "score": 0.23749999999999996,
             "bestScore": 0.31583333333333324,
-            "testScore": 0.2766666666666666,
+            "testScore": 0.23749999999999996,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -888,30 +888,30 @@
           {
             "entrant": "simba",
             "seed": 0,
-            "score": 0.5416666666666666,
-            "bestScore": 0.625,
-            "testScore": 0.5416666666666666,
-            "metricCalls": 192,
+            "score": 0.5,
+            "bestScore": 0.5833333333333334,
+            "testScore": 0.5,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 1,
-            "score": 0.125,
-            "bestScore": 0.125,
-            "testScore": 0.125,
-            "metricCalls": 196,
+            "score": 0.2916666666666667,
+            "bestScore": 0.375,
+            "testScore": 0.2916666666666667,
+            "metricCalls": 190,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 2,
-            "score": 0.5,
+            "score": 0.5416666666666666,
             "bestScore": 0.625,
-            "testScore": 0.5,
-            "metricCalls": 200,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 189,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -931,7 +931,7 @@
             "score": 0.16666666666666666,
             "bestScore": 0.25,
             "testScore": 0.16666666666666666,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -948,10 +948,10 @@
           {
             "entrant": "simba",
             "seed": 6,
-            "score": 0.4166666666666667,
-            "bestScore": 0.4166666666666667,
-            "testScore": 0.4166666666666667,
-            "metricCalls": 192,
+            "score": 0.25,
+            "bestScore": 0.2916666666666667,
+            "testScore": 0.25,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -968,10 +968,10 @@
           {
             "entrant": "simba",
             "seed": 8,
-            "score": 0.35999999999999993,
-            "bestScore": 0.4016666666666666,
-            "testScore": 0.35999999999999993,
-            "metricCalls": 192,
+            "score": 0.375,
+            "bestScore": 0.375,
+            "testScore": 0.375,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -988,10 +988,10 @@
           {
             "entrant": "simba",
             "seed": 10,
-            "score": 0.4166666666666667,
-            "bestScore": 0.4166666666666667,
-            "testScore": 0.4166666666666667,
-            "metricCalls": 200,
+            "score": 0.3183333333333333,
+            "bestScore": 0.3991666666666666,
+            "testScore": 0.3183333333333333,
+            "metricCalls": 192,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -1008,10 +1008,10 @@
           {
             "entrant": "simba",
             "seed": 12,
-            "score": 0.25,
-            "bestScore": 0.3333333333333333,
-            "testScore": 0.25,
-            "metricCalls": 196,
+            "score": 0.375,
+            "bestScore": 0.5,
+            "testScore": 0.375,
+            "metricCalls": 193,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -1041,7 +1041,7 @@
             "score": 0.3333333333333333,
             "bestScore": 0.5,
             "testScore": 0.3333333333333333,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -1051,7 +1051,7 @@
             "score": 0.375,
             "bestScore": 0.5,
             "testScore": 0.375,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -1061,7 +1061,7 @@
             "score": 0.4166666666666667,
             "bestScore": 0.5416666666666666,
             "testScore": 0.4166666666666667,
-            "metricCalls": 192,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -1502,7 +1502,7 @@
             "maxScore": 0.67015,
             "meanMetricCalls": 180.3,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.0016955328829950655
+            "pValueVsWinner": 0.0009863231328118838
           },
           {
             "entrant": "gepaVarianceAware",
@@ -1513,18 +1513,18 @@
             "maxScore": 0.6019666666666666,
             "meanMetricCalls": 184.2,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.0016693863310668355
+            "pValueVsWinner": 0.0006516750276106542
           },
           {
             "entrant": "opro",
             "runs": 20,
-            "meanScore": 0.2976641666666666,
-            "sdScore": 0.041422868953857134,
-            "minScore": 0.18899999999999997,
-            "maxScore": 0.38625,
+            "meanScore": 0.2762441666666667,
+            "sdScore": 0.03621948615913234,
+            "minScore": 0.22304999999999997,
+            "maxScore": 0.34445,
             "meanMetricCalls": 198,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.0000453252327932141
+            "pValueVsWinner": 0.000029202535804628837
           },
           {
             "entrant": "mipro",
@@ -1535,16 +1535,16 @@
             "maxScore": 0.21298333333333333,
             "meanMetricCalls": 193.75,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.000013520724875371037
+            "pValueVsWinner": 0.000012754880676091318
           },
           {
             "entrant": "simba",
             "runs": 20,
-            "meanScore": 0.510785,
-            "sdScore": 0.11238858887519106,
+            "meanScore": 0.5245875,
+            "sdScore": 0.11446867722884048,
             "minScore": 0.3118166666666667,
             "maxScore": 0.69335,
-            "meanMetricCalls": 195.2,
+            "meanMetricCalls": 194.65,
             "meanCostUsd": 0
           },
           {
@@ -1556,7 +1556,7 @@
             "maxScore": 0.3078166666666667,
             "meanMetricCalls": 156,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.000041521872662375614
+            "pValueVsWinner": 0.00003500508842713135
           },
           {
             "entrant": "bootstrapSearch",
@@ -1567,7 +1567,7 @@
             "maxScore": 0.0816,
             "meanMetricCalls": 195.1,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.00000717848578335456
+            "pValueVsWinner": 0.000006806838114936653
           }
         ],
         "runs": [
@@ -1974,9 +1974,9 @@
           {
             "entrant": "opro",
             "seed": 0,
-            "score": 0.2915833333333333,
+            "score": 0.23918333333333333,
             "bestScore": 0.24783333333333332,
-            "testScore": 0.2915833333333333,
+            "testScore": 0.23918333333333333,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -1984,9 +1984,9 @@
           {
             "entrant": "opro",
             "seed": 1,
-            "score": 0.2747833333333333,
+            "score": 0.23934999999999998,
             "bestScore": 0.3367166666666667,
-            "testScore": 0.2747833333333333,
+            "testScore": 0.23934999999999998,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2004,9 +2004,9 @@
           {
             "entrant": "opro",
             "seed": 3,
-            "score": 0.28423333333333334,
+            "score": 0.24756666666666668,
             "bestScore": 0.39005,
-            "testScore": 0.28423333333333334,
+            "testScore": 0.24756666666666668,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2014,9 +2014,9 @@
           {
             "entrant": "opro",
             "seed": 4,
-            "score": 0.29501666666666665,
+            "score": 0.2740666666666667,
             "bestScore": 0.2758833333333333,
-            "testScore": 0.29501666666666665,
+            "testScore": 0.2740666666666667,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2034,9 +2034,9 @@
           {
             "entrant": "opro",
             "seed": 6,
-            "score": 0.2701666666666666,
+            "score": 0.24756666666666668,
             "bestScore": 0.39005,
-            "testScore": 0.2701666666666666,
+            "testScore": 0.24756666666666668,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2044,9 +2044,9 @@
           {
             "entrant": "opro",
             "seed": 7,
-            "score": 0.24111666666666665,
+            "score": 0.23918333333333333,
             "bestScore": 0.24783333333333332,
-            "testScore": 0.24111666666666665,
+            "testScore": 0.23918333333333333,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2054,9 +2054,9 @@
           {
             "entrant": "opro",
             "seed": 8,
-            "score": 0.34223333333333333,
+            "score": 0.3146166666666666,
             "bestScore": 0.383,
-            "testScore": 0.34223333333333333,
+            "testScore": 0.3146166666666666,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2064,9 +2064,9 @@
           {
             "entrant": "opro",
             "seed": 9,
-            "score": 0.31673333333333337,
+            "score": 0.34445,
             "bestScore": 0.4173833333333333,
-            "testScore": 0.31673333333333337,
+            "testScore": 0.34445,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2084,9 +2084,9 @@
           {
             "entrant": "opro",
             "seed": 11,
-            "score": 0.31288333333333335,
+            "score": 0.24773333333333328,
             "bestScore": 0.37545,
-            "testScore": 0.31288333333333335,
+            "testScore": 0.24773333333333328,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2104,9 +2104,9 @@
           {
             "entrant": "opro",
             "seed": 13,
-            "score": 0.3492833333333332,
+            "score": 0.3325333333333334,
             "bestScore": 0.3220166666666667,
-            "testScore": 0.3492833333333332,
+            "testScore": 0.3325333333333334,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2124,9 +2124,9 @@
           {
             "entrant": "opro",
             "seed": 15,
-            "score": 0.38625,
+            "score": 0.24756666666666668,
             "bestScore": 0.39005,
-            "testScore": 0.38625,
+            "testScore": 0.24756666666666668,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2134,9 +2134,9 @@
           {
             "entrant": "opro",
             "seed": 16,
-            "score": 0.18899999999999997,
+            "score": 0.22304999999999997,
             "bestScore": 0.24473333333333333,
-            "testScore": 0.18899999999999997,
+            "testScore": 0.22304999999999997,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2144,9 +2144,9 @@
           {
             "entrant": "opro",
             "seed": 17,
-            "score": 0.2856,
+            "score": 0.24378333333333327,
             "bestScore": 0.2742166666666666,
-            "testScore": 0.2856,
+            "testScore": 0.24378333333333327,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2154,9 +2154,9 @@
           {
             "entrant": "opro",
             "seed": 18,
-            "score": 0.34223333333333333,
+            "score": 0.3146166666666666,
             "bestScore": 0.383,
-            "testScore": 0.34223333333333333,
+            "testScore": 0.3146166666666666,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2164,9 +2164,9 @@
           {
             "entrant": "opro",
             "seed": 19,
-            "score": 0.3056666666666667,
+            "score": 0.3031166666666667,
             "bestScore": 0.24691666666666667,
-            "testScore": 0.3056666666666667,
+            "testScore": 0.3031166666666667,
             "metricCalls": 198,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
@@ -2417,7 +2417,7 @@
             "score": 0.3118166666666667,
             "bestScore": 0.41536666666666666,
             "testScore": 0.3118166666666667,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -2464,20 +2464,20 @@
           {
             "entrant": "simba",
             "seed": 9,
-            "score": 0.4143166666666667,
-            "bestScore": 0.5275333333333333,
-            "testScore": 0.4143166666666667,
-            "metricCalls": 192,
+            "score": 0.6853833333333333,
+            "bestScore": 0.6950333333333333,
+            "testScore": 0.6853833333333333,
+            "metricCalls": 190,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 10,
-            "score": 0.4531666666666667,
-            "bestScore": 0.6304666666666666,
-            "testScore": 0.4531666666666667,
-            "metricCalls": 192,
+            "score": 0.4737666666666666,
+            "bestScore": 0.5863333333333334,
+            "testScore": 0.4737666666666666,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -2534,10 +2534,10 @@
           {
             "entrant": "simba",
             "seed": 16,
-            "score": 0.5674666666666667,
-            "bestScore": 0.5728333333333333,
-            "testScore": 0.5674666666666667,
-            "metricCalls": 200,
+            "score": 0.5339333333333333,
+            "bestScore": 0.5007,
+            "testScore": 0.5339333333333333,
+            "metricCalls": 190,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -2554,10 +2554,10 @@
           {
             "entrant": "simba",
             "seed": 18,
-            "score": 0.39644999999999997,
-            "bestScore": 0.3671,
-            "testScore": 0.39644999999999997,
-            "metricCalls": 196,
+            "score": 0.4143666666666666,
+            "bestScore": 0.4290333333333332,
+            "testScore": 0.4143666666666666,
+            "metricCalls": 192,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3025,13 +3025,13 @@
           {
             "entrant": "simba",
             "runs": 20,
-            "meanScore": 0.17500000000000002,
-            "sdScore": 0.1293822479394733,
+            "meanScore": 0.1125,
+            "sdScore": 0.11870093630928846,
             "minScore": 0,
             "maxScore": 0.4166666666666667,
-            "meanMetricCalls": 245.4,
+            "meanMetricCalls": 243.5,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.000006265378204250993
+            "pValueVsWinner": 0.00000541048283198009
           },
           {
             "entrant": "randomSearch",
@@ -3860,30 +3860,30 @@
           {
             "entrant": "simba",
             "seed": 0,
-            "score": 0.25,
-            "bestScore": 0.4166666666666667,
-            "testScore": 0.25,
-            "metricCalls": 248,
+            "score": 0.4166666666666667,
+            "bestScore": 0.3333333333333333,
+            "testScore": 0.4166666666666667,
+            "metricCalls": 242,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 1,
-            "score": 0.25,
-            "bestScore": 0.5,
-            "testScore": 0.25,
-            "metricCalls": 248,
+            "score": 0,
+            "bestScore": 0.08333333333333333,
+            "testScore": 0,
+            "metricCalls": 240,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 2,
-            "score": 0.16666666666666666,
-            "bestScore": 0.25,
-            "testScore": 0.16666666666666666,
-            "metricCalls": 244,
+            "score": 0.3333333333333333,
+            "bestScore": 0.5,
+            "testScore": 0.3333333333333333,
+            "metricCalls": 250,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3893,7 +3893,7 @@
             "score": 0.08333333333333333,
             "bestScore": 0.3333333333333333,
             "testScore": 0.08333333333333333,
-            "metricCalls": 244,
+            "metricCalls": 249,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3901,7 +3901,7 @@
             "entrant": "simba",
             "seed": 4,
             "score": 0.08333333333333333,
-            "bestScore": 0.16666666666666666,
+            "bestScore": 0.3333333333333333,
             "testScore": 0.08333333333333333,
             "metricCalls": 244,
             "costUsd": 0,
@@ -3910,10 +3910,10 @@
           {
             "entrant": "simba",
             "seed": 5,
-            "score": 0.3333333333333333,
-            "bestScore": 0.5,
-            "testScore": 0.3333333333333333,
-            "metricCalls": 248,
+            "score": 0.08333333333333333,
+            "bestScore": 0.3333333333333333,
+            "testScore": 0.08333333333333333,
+            "metricCalls": 241,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3923,7 +3923,7 @@
             "score": 0,
             "bestScore": 0.25,
             "testScore": 0,
-            "metricCalls": 248,
+            "metricCalls": 240,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3933,17 +3933,17 @@
             "score": 0.08333333333333333,
             "bestScore": 0.3333333333333333,
             "testScore": 0.08333333333333333,
-            "metricCalls": 244,
+            "metricCalls": 250,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 8,
-            "score": 0.16666666666666666,
-            "bestScore": 0.4166666666666667,
-            "testScore": 0.16666666666666666,
-            "metricCalls": 248,
+            "score": 0.08333333333333333,
+            "bestScore": 0.16666666666666666,
+            "testScore": 0.08333333333333333,
+            "metricCalls": 241,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3953,7 +3953,7 @@
             "score": 0,
             "bestScore": 0.16666666666666666,
             "testScore": 0,
-            "metricCalls": 244,
+            "metricCalls": 249,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3961,7 +3961,7 @@
             "entrant": "simba",
             "seed": 10,
             "score": 0.16666666666666666,
-            "bestScore": 0.3333333333333333,
+            "bestScore": 0.25,
             "testScore": 0.16666666666666666,
             "metricCalls": 244,
             "costUsd": 0,
@@ -3973,7 +3973,7 @@
             "score": 0,
             "bestScore": 0.3333333333333333,
             "testScore": 0,
-            "metricCalls": 240,
+            "metricCalls": 241,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -3983,17 +3983,17 @@
             "score": 0.16666666666666666,
             "bestScore": 0.25,
             "testScore": 0.16666666666666666,
-            "metricCalls": 240,
+            "metricCalls": 243,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 13,
-            "score": 0.16666666666666666,
-            "bestScore": 0.5,
-            "testScore": 0.16666666666666666,
-            "metricCalls": 248,
+            "score": 0.08333333333333333,
+            "bestScore": 0.08333333333333333,
+            "testScore": 0.08333333333333333,
+            "metricCalls": 240,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -4020,20 +4020,20 @@
           {
             "entrant": "simba",
             "seed": 16,
-            "score": 0.4166666666666667,
-            "bestScore": 0.4166666666666667,
-            "testScore": 0.4166666666666667,
-            "metricCalls": 248,
+            "score": 0,
+            "bestScore": 0.16666666666666666,
+            "testScore": 0,
+            "metricCalls": 240,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 17,
-            "score": 0.4166666666666667,
-            "bestScore": 0.6666666666666666,
-            "testScore": 0.4166666666666667,
-            "metricCalls": 248,
+            "score": 0.08333333333333333,
+            "bestScore": 0.3333333333333333,
+            "testScore": 0.08333333333333333,
+            "metricCalls": 242,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -4050,10 +4050,10 @@
           {
             "entrant": "simba",
             "seed": 19,
-            "score": 0.25,
+            "score": 0.08333333333333333,
             "bestScore": 0.4166666666666667,
-            "testScore": 0.25,
-            "metricCalls": 248,
+            "testScore": 0.08333333333333333,
+            "metricCalls": 242,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -4511,13 +4511,13 @@
           {
             "entrant": "simba",
             "runs": 20,
-            "meanScore": 0.5355833333333335,
-            "sdScore": 0.05287501814524181,
+            "meanScore": 0.5326250000000001,
+            "sdScore": 0.05581812767545132,
             "minScore": 0.4016666666666666,
             "maxScore": 0.625,
-            "meanMetricCalls": 194.6,
+            "meanMetricCalls": 195.15,
             "meanCostUsd": 0,
-            "pValueVsWinner": 0.00000582435285378935
+            "pValueVsWinner": 0.000006030601825690596
           },
           {
             "entrant": "randomSearch",
@@ -5349,7 +5349,7 @@
             "score": 0.5416666666666666,
             "bestScore": 0.7083333333333334,
             "testScore": 0.5416666666666666,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5366,10 +5366,10 @@
           {
             "entrant": "simba",
             "seed": 2,
-            "score": 0.5,
-            "bestScore": 0.7083333333333334,
-            "testScore": 0.5,
-            "metricCalls": 192,
+            "score": 0.5416666666666666,
+            "bestScore": 0.625,
+            "testScore": 0.5416666666666666,
+            "metricCalls": 189,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5377,9 +5377,9 @@
             "entrant": "simba",
             "seed": 3,
             "score": 0.5,
-            "bestScore": 0.6666666666666666,
+            "bestScore": 0.625,
             "testScore": 0.5,
-            "metricCalls": 200,
+            "metricCalls": 196,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5399,17 +5399,17 @@
             "score": 0.5416666666666666,
             "bestScore": 0.75,
             "testScore": 0.5416666666666666,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
           {
             "entrant": "simba",
             "seed": 6,
-            "score": 0.5416666666666666,
-            "bestScore": 0.6666666666666666,
-            "testScore": 0.5416666666666666,
-            "metricCalls": 192,
+            "score": 0.4583333333333333,
+            "bestScore": 0.625,
+            "testScore": 0.4583333333333333,
+            "metricCalls": 196,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5419,7 +5419,7 @@
             "score": 0.5,
             "bestScore": 0.6666666666666666,
             "testScore": 0.5,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5436,10 +5436,10 @@
           {
             "entrant": "simba",
             "seed": 9,
-            "score": 0.5,
-            "bestScore": 0.625,
-            "testScore": 0.5,
-            "metricCalls": 192,
+            "score": 0.48249999999999993,
+            "bestScore": 0.6858333333333332,
+            "testScore": 0.48249999999999993,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5499,7 +5499,7 @@
             "score": 0.4583333333333333,
             "bestScore": 0.625,
             "testScore": 0.4583333333333333,
-            "metricCalls": 192,
+            "metricCalls": 194,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },
@@ -5509,7 +5509,7 @@
             "score": 0.5191666666666666,
             "bestScore": 0.725,
             "testScore": 0.5191666666666666,
-            "metricCalls": 192,
+            "metricCalls": 195,
             "costUsd": 0,
             "stopReason": "budgetExhausted"
           },

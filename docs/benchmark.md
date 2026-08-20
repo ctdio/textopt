@@ -4,8 +4,8 @@
 
 | Task           | Winner  | Score | Runner-up         | Score | p     |
 | -------------- | ------- | ----- | ----------------- | ----- | ----- |
-| `clean`        | `gepa`  | 0.729 | `simba`           | 0.381 | 0.000 |
-| `noisy`        | `simba` | 0.511 | `gepa`            | 0.389 | 0.002 |
+| `clean`        | `gepa`  | 0.729 | `simba`           | 0.383 | 0.000 |
+| `noisy`        | `simba` | 0.525 | `gepa`            | 0.389 | 0.001 |
 | `interacting`  | `gepa`  | 0.750 | `randomSearch`    | 0.235 | 0.000 |
 | `demonstrated` | `gepa`  | 0.792 | `bootstrapSearch` | 0.598 | 0.000 |
 
