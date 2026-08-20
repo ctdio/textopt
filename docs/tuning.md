@@ -46,7 +46,7 @@ Minibatch defaults differ by an order of magnitude between optimizers — GEPA 3
 
 ### What to try first
 
-`BootstrapSearchOptimizer` answers the cheapest question worth asking first — whether the instruction is already fine and consistency is what is failing — and it calls no proposal model to do it, so a run costs rollouts and nothing else. Its two answers are both worth having: on the benchmark's `demonstrated` task it beats four of the five text-proposing entrants, and on `clean` it scores zero, which is what "your system is not inconsistent, it is mis-instructed" looks like. Reach for a reflective search once that has been ruled out, and pick between them with [`compare()`](./evaluation.md#comparing-optimizers) under one budget rather than from the [benchmark table](./benchmark.md).
+`BootstrapSearchOptimizer` answers the cheapest question worth asking first — whether the instruction is already fine and consistency is what is failing — and it calls no proposal model to do it, so a run costs rollouts and nothing else. Its two answers are both worth having: on the benchmark's `demonstrated` task it beats every entrant that searches instructions except the two GEPA rows, and on `clean` it scores zero, which is what "your system is not inconsistent, it is mis-instructed" looks like. Reach for a reflective search once that has been ruled out, and pick between them with [`compare()`](./evaluation.md#comparing-optimizers) under one budget rather than from the [benchmark table](./benchmark.md).
 
 ## Noisy metrics
 
@@ -69,7 +69,7 @@ new GepaOptimizer({
 
 `pairedPermutationAcceptance` accepts only when the paired per-instance improvement survives a sign-flip test at `alpha`. `lowerBoundEvaluationPolicy` returns the candidate with the best mean minus `z` standard errors, rather than the best mean.
 
-Both are strictly more conservative, and that costs something real. On the benchmark's noiseless tasks the pair drops GEPA from 0.729 to 0.175, because every genuine improvement now has to clear a significance bar as well; on the noisy task it neither helps nor hurts, scoring 0.389 against plain GEPA's 0.389. Turn them on when you have measured the metric's own variance and found it large, not on principle.
+Both are strictly more conservative. On the benchmark that buys a little where it should and costs nothing where it should not: on the `noisy` task the pair scores 0.931 against plain GEPA's 0.920, and on the noiseless `clean` task 0.945 against 0.947 — a difference no larger than the seed spread. Neither gap clears significance over twenty seeds (Holm-adjusted p = 0.088 and 0.334), so read this as "not expensive" rather than as a demonstration that it works. Where it does lose clearly is the pipeline task, 0.835 against 0.891 at p = 0.027: a significance bar on every acceptance is expensive when improvements to one component only pay off after another is finished. Turn them on when you have measured the metric's own variance and found it large, not on principle.
 
 A minibatch also has to be wide enough for the test to say anything: a sign-flip test over three instances cannot produce a p-value below 0.125, so at the default `minibatchSize` of 3 no proposal can ever be accepted at `alpha` below that.
 

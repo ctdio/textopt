@@ -248,7 +248,7 @@ When `proposeNewTexts` is implemented, the adapter generates proposals without c
 
 Each export is a factory. Selector and acceptance interfaces accept custom functions. A `ValEvaluationPolicy` is an object with `selectInstances` and `bestCandidate` methods.
 
-`pairedPermutationAcceptance` and `lowerBoundEvaluationPolicy` exist for metrics whose readings vary between runs of the same text. Both are strictly more conservative than the defaults, and on a metric that does not vary that is pure cost: in the twenty-seed benchmark the pair drops GEPA from 0.729 to 0.175 on the noiseless task and ties it on the noisy one. A sign-flip test also needs a wide enough minibatch to say anything — over three instances the smallest p-value it can produce is 0.125, so at the default `minibatchSize` no proposal clears an `alpha` below that.
+`pairedPermutationAcceptance` and `lowerBoundEvaluationPolicy` exist for metrics whose readings vary between runs of the same text. Both are strictly more conservative than the defaults. In the twenty-seed benchmark the pair scores 0.931 against plain GEPA's 0.920 on the noisy task and 0.945 against 0.947 on the noiseless one, neither gap significant over those seeds — conservative enough to be worth having on a metric that varies, cheap enough not to hurt on one that does not. A sign-flip test also needs a wide enough minibatch to say anything — over three instances the smallest p-value it can produce is 0.125, so at the default `minibatchSize` no proposal clears an `alpha` below that.
 
 ### Reflection prompts
 
