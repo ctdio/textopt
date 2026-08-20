@@ -54,9 +54,12 @@ jobs:
 
       - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          # --lockfile-only rewrites the lockfile for the bumped versions
-          # without linking node_modules or running anything from a dependency.
-          version-script: pnpm changeset version && pnpm install --lockfile-only
+          # One package.json script, not a chain: the action execs this without
+          # a shell, so an `&&` written here is passed to the first command as
+          # an argument rather than chaining the second. --lockfile-only
+          # rewrites the lockfile for the bumped versions without linking
+          # node_modules or running anything from a dependency.
+          version-script: pnpm version-packages
           publish-script: pnpm release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
