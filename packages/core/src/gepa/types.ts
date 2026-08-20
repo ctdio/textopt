@@ -8,6 +8,7 @@ import type {
   EvaluationPhase,
   EvaluationSplit,
   TextModel,
+  UsageTotals,
 } from "../types.js";
 
 /**
@@ -259,6 +260,8 @@ export interface GepaSnapshot {
   metricCalls: number;
   reflectionCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
   rngState: number;
   /** Whatever the batch sampler reports from `state()`, when it has one. */
   sampler?: unknown;

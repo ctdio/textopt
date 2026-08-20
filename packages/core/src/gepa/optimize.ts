@@ -552,6 +552,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       metricCalls: budget.spent(),
       reflectionCalls,
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
       ...(samplerState === undefined ? {} : { sampler: samplerState }),
       rejectedProposals: snapshotRejections({
         rejections: rejectedProposals,
@@ -584,6 +585,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });

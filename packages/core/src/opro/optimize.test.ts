@@ -7,7 +7,7 @@ import {
 } from "../testing.js";
 import type { Adapter } from "../types.js";
 import { OproOptimizer } from "./optimize.js";
-import type { OproSnapshot, OproStopReason } from "./optimize.js";
+import type { OproEvent, OproSnapshot, OproStopReason } from "./optimize.js";
 
 const SEED = { instruction: "Answer the user question." };
 
@@ -337,6 +337,54 @@ describe("OproOptimizer", () => {
 
     expect(result.testScore).toBe(0.5);
     expect(result.testMetricCalls).toBe(2);
+  });
+
+  test("scores the held-out set on the candidate it returns", async () => {
+    // A subset-scored search can end on an incumbent the closing full sweep
+    // refuses to confirm. The held-out number has to describe the candidate the
+    // caller actually receives, not the one the search was still chasing.
+    const LUCKY = "LUCKY";
+
+    // Wins everything the search screens on, loses everything that confirms it.
+    const scoreFor = (args: { instruction: string; question: string }) => {
+      const lucky = Number(args.instruction.includes(LUCKY));
+      const screening = Number(args.question.startsWith("train"));
+      return lucky === screening ? 1 : 0;
+    };
+
+    const adapter: Adapter<{ question: string }, unknown, string> = {
+      evaluate: ({ candidate, batch }) => ({
+        outputs: batch.map(() => ""),
+        scores: batch.map((datum) =>
+          scoreFor({
+            instruction: candidate.instruction,
+            question: datum.question,
+          }),
+        ),
+      }),
+    };
+
+    const result = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 3,
+      scoringSetSize: 1,
+      fullEvalInterval: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: [{ question: "train-a" }, { question: "train-b" }],
+      validationSet: [{ question: "val-a" }, { question: "val-b" }],
+      adapter,
+      reflect: async () => `${SEED.instruction} ${LUCKY}`,
+      maxMetricCalls: 400,
+      testSet: [{ question: "held-out" }],
+    });
+
+    const expected = scoreFor({
+      instruction: result.bestCandidate.instruction,
+      question: "held-out",
+    });
+
+    expect(result.testScore).toBe(expected);
   });
 
   test("stops when the signal is aborted", async () => {
@@ -722,6 +770,39 @@ describe("OproOptimizer checkpoints", () => {
     });
 
     expect(resumed.metricCalls).toBe(interrupted.metricCalls);
+  });
+
+  test("does not restart candidate ids after a resume", async () => {
+    // Reporters key rows by candidateId. Restarting the counter at zero makes a
+    // resumed run's candidates collide with the interrupted run's in whatever
+    // store the reporter is writing to.
+    const finishIn = (events: OproEvent[]) =>
+      events.filter((event) => event.type === "finish");
+
+    const first: OproEvent[] = [];
+    const interrupted = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      reporters: [{ onEvent: (event) => first.push(event) }],
+    });
+
+    const second: OproEvent[] = [];
+    await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 4,
+    }).optimize({
+      ...task(),
+      resumeFrom: interrupted.snapshot,
+      reporters: [{ onEvent: (event) => second.push(event) }],
+    });
+
+    const before = finishIn(first)[0]?.bestCandidateId ?? 0;
+    const after = finishIn(second)[0]?.bestCandidateId ?? 0;
+
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBeGreaterThanOrEqual(before);
   });
 
   test("carries the score history the meta-prompt is written from", async () => {

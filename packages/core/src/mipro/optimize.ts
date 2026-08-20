@@ -27,7 +27,7 @@ import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
-import type { Adapter, Candidate, TextModel } from "../types.js";
+import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
 import { proposeConfiguration } from "./tpe.js";
 import type { Observation } from "./tpe.js";
 
@@ -159,6 +159,13 @@ export interface MiproSnapshot {
   bootstrapMetricCalls: number;
   metricCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
+  /**
+   * Candidates accepted so far. Reporters key rows by this id, so restarting it
+   * at zero makes a resumed run collide with the run it continues.
+   */
+  acceptedCandidates?: number;
   rngState: number;
   observations: MiproObservation[];
   /** What the surrogate was fitted on: one entry per measured trial. */
@@ -545,6 +552,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
@@ -674,6 +682,9 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
 
       bootstrapMetricCalls += harvest.metricCalls;
       budget.reserve(harvest.metricCalls);
+      // Harvesting runs on its own evaluator: without this its tokens are
+      // absent from `result.usage` and invisible to `maxCostUsd`.
+      evaluator.absorbUsage(harvest.usage);
 
       if (harvest.demos.length > 0) {
         blocks.push(
@@ -832,7 +843,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
-  let acceptedCandidates = 0;
+  let acceptedCandidates = resumeFrom?.acceptedCandidates ?? 0;
   let bestOutputs = seedEvaluation?.outputs;
   // Minibatch readings per configuration, not one running bar. A configuration
   // drawn more than once is measured on a different batch each time, so the
@@ -858,6 +869,8 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       bootstrapMetricCalls,
       metricCalls: budget.spent(),
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
+      acceptedCandidates,
       rngState: rng.state(),
       observations: [...observations],
       surrogateInput: surrogateInput.map((entry) => ({

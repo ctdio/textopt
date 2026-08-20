@@ -22,7 +22,7 @@ import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
-import type { Adapter, Candidate, TextModel } from "../types.js";
+import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
 
 /** One instruction that was tried, and what it scored. */
 /** A history entry plus the system state its score was measured in. */
@@ -137,6 +137,13 @@ export interface OproSnapshot {
   reflectionCalls: number;
   metricCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
+  /**
+   * Candidates accepted so far. Reporters key rows by this id, so restarting it
+   * at zero makes a resumed run collide with the run it continues.
+   */
+  acceptedCandidates?: number;
   rngState: number;
   /** Component name -> every text tried for it, with what it scored. */
   histories: Record<string, RecordedAttempt[]>;
@@ -440,6 +447,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
@@ -580,7 +588,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   let best = (resumeFrom?.best as Candidate<K> | undefined) ?? seedCandidate;
   let bestScore = resumeFrom?.bestScore ?? seedScore;
   /** Absent on a resumed run until a sweep wins: outputs are not checkpointed. */
-  let acceptedCandidates = 0;
+  let acceptedCandidates = resumeFrom?.acceptedCandidates ?? 0;
   let bestOutputs = seedEvaluation?.outputs;
   // The best candidate a full sweep has actually seen, and the incumbent most
   // recently swept. They are not the same thing: sweeping a candidate that
@@ -693,6 +701,8 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       reflectionCalls,
       metricCalls: budget.spent(),
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
+      acceptedCandidates,
       rngState: rng.state(),
       histories: Object.fromEntries(
         [...histories].map(([name, attempts]) => [name, [...attempts]]),
@@ -923,7 +933,11 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     testSet === undefined
       ? undefined
       : await evaluator.evaluate({
-          candidate: best,
+          // The returned candidate, not the search incumbent: a subset-scored
+          // run can end on a `best` the closing sweep never confirmed, and a
+          // held-out number naming a candidate the caller never sees is worse
+          // than no number at all.
+          candidate: reported,
           batch: testSet,
           ids: testIds,
           split: "test",

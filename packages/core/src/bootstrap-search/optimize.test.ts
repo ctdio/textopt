@@ -30,6 +30,32 @@ function task() {
 }
 
 describe("BootstrapSearchOptimizer", () => {
+  test("counts the tokens harvesting spent in the run's usage", async () => {
+    // Harvesting runs the candidate over the training set, which is most of
+    // what a demo-heavy run spends. Usage that omits it makes `maxCostUsd` a
+    // ceiling on part of the run.
+    const keyword = createKeywordAdapter();
+    const adapter: Adapter<(typeof KEYWORD_EXAMPLES)[number], unknown, string> =
+      {
+        evaluate: async (args) => {
+          const evaluation = await keyword.evaluate(args);
+          return {
+            ...evaluation,
+            usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+          };
+        },
+      };
+
+    const result = await new BootstrapSearchOptimizer({
+      candidates: 2,
+      seed: 1,
+    }).optimize({ ...task(), adapter });
+
+    // One rollout is 10 input tokens, so usage must cover every rollout the
+    // run paid for, harvesting included.
+    expect(result.usage.inputTokens).toBe(result.metricCalls * 10);
+  });
+
   test("needs no reflection model at all", async () => {
     // The whole point of this search: demos are harvested from rollouts the
     // metric already rewarded, so nothing here writes text.

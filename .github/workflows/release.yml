@@ -46,6 +46,11 @@ jobs:
       # and the version pull request gets no ci run of its own: GitHub does not
       # trigger workflows for events raised by the default token.
       - run: pnpm test
+      # The published surface is subpath exports, which no test can see: they
+      # import through source. Publishing without this check can ship a package
+      # that resolves for nobody.
+      - run: pnpm build
+      - run: pnpm lint:packages
 
       - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:

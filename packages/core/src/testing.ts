@@ -30,7 +30,7 @@ export const KEYWORD_EXAMPLES: KeywordExample[] = [
 ];
 
 /** Terms the keyword metric rewards, interleaved with terms it ignores. */
-const SAMPLING_POOL = [
+export const SAMPLING_POOL = [
   "hold",
   "sprocket",
   "ten seconds",

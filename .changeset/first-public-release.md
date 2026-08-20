@@ -1,6 +1,6 @@
 ---
-"textopt": patch
-"@textopt/langchain": patch
+"textopt": minor
+"@textopt/langchain": minor
 ---
 
 First public release: GEPA, SIMBA, OPRO, MIPRO, bootstrapped few-shot search,

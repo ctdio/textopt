@@ -1,7 +1,7 @@
 import { createBudget } from "./budget.js";
 import { createEvaluator } from "./evaluation.js";
 import type { Rng } from "./rng.js";
-import type { Adapter, Candidate } from "./types.js";
+import type { Adapter, Candidate, UsageTotals } from "./types.js";
 
 /**
  * One rollout worth keeping: what went in, what the system produced, and how
@@ -18,6 +18,11 @@ export interface HarvestResult<Datum, Output> {
   rollouts: Rollout<Datum, Output>[];
   /** Rollouts this cost. Harvesting is cheap, not free. */
   metricCalls: number;
+  /**
+   * Tokens and dollars this cost. Harvesting runs on its own evaluator, so a
+   * caller that bounds spend has to fold these into its own totals.
+   */
+  usage: UsageTotals;
   /** Instances run, including the ones the metric did not reward. */
   attempted: number;
 }
@@ -139,5 +144,10 @@ export async function harvestRollouts<
     }
   }
 
-  return { rollouts, metricCalls: budget.spent(), attempted };
+  return {
+    rollouts,
+    metricCalls: budget.spent(),
+    usage: evaluator.usage(),
+    attempted,
+  };
 }

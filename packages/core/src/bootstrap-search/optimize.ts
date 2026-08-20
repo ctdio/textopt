@@ -1,5 +1,5 @@
 import { createBudget } from "../budget.js";
-import { candidateHash, createMemoryCache } from "../cache.js";
+import { candidateHash, createMemoryCache, stableHash } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { createDeadline } from "../deadline.js";
@@ -22,7 +22,7 @@ import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
 import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { componentNames } from "../types.js";
-import type { Adapter, Candidate } from "../types.js";
+import type { Adapter, Candidate, UsageTotals } from "../types.js";
 
 /**
  * Where a candidate's demo block came from. `zeroShot` holds no demos at all,
@@ -97,6 +97,13 @@ export interface BootstrapSearchSnapshot {
   metricCalls: number;
   bootstrapMetricCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
+  /**
+   * Candidates accepted so far. Reporters key rows by this id, so restarting it
+   * at zero makes a resumed run collide with the run it continues.
+   */
+  acceptedCandidates?: number;
   rngState: number;
   cache?: [string, CachedScore][];
 }
@@ -340,6 +347,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
@@ -389,7 +397,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   let bestOutputs: (Output | undefined)[] | undefined;
   // Numbers acceptances rather than candidates: the seed is 0, and every id
   // after it names a block a full validation sweep actually preferred.
-  let acceptedCandidates = 0;
+  let acceptedCandidates = resumeFrom?.acceptedCandidates ?? 0;
 
   // The seed is the baseline every later candidate is read against, and its
   // sweep is a full measurement like any other. A report that starts at the
@@ -422,6 +430,8 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       metricCalls: budget.spent(),
       bootstrapMetricCalls,
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
+      acceptedCandidates,
       rngState: rng.state(),
       ...(cached === undefined ? {} : { cache: cached }),
     };
@@ -671,6 +681,9 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
     bootstrapMetricCalls += harvest.metricCalls;
     budget.reserve(harvest.metricCalls);
+    // Harvesting runs on its own evaluator: without this its tokens are
+    // absent from `result.usage` and invisible to `maxCostUsd`.
+    evaluator.absorbUsage(harvest.usage);
 
     return harvest.block;
   }
@@ -737,5 +750,6 @@ function countDemos(block: string): number {
 }
 
 function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  return String(args.index);
+  const hash = stableHash(args.datum);
+  return hash === "" ? String(args.index) : hash;
 }

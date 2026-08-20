@@ -98,6 +98,11 @@ export interface Evaluator<Datum, Trajectory, Output, K extends string> {
   unchargedCalls(): number;
   /** Tokens and money the run has spent, as far as adapters have reported it. */
   usage(): UsageTotals;
+  /**
+   * Folds in usage spent outside this evaluator — harvesting runs its own, and
+   * a cost ceiling that cannot see it bounds only part of the run.
+   */
+  absorbUsage(spent: UsageTotals): void;
   /** Cache contents for checkpointing, when the cache can enumerate them. */
   entries(): [string, CachedScore][] | undefined;
   restore(entries: Iterable<readonly [string, CachedScore]>): void;
@@ -141,6 +146,12 @@ export function createEvaluator<
   /** Resumed counters, so a continued run reports totals rather than deltas. */
   cacheHits?: number;
   /**
+   * Usage the interrupted run had already spent. Without it `maxCostUsd` is a
+   * ceiling on the segment rather than on the run, and resuming repeatedly
+   * spends it again each time.
+   */
+  usage?: UsageTotals;
+  /**
    * Rate limits and 5xx responses are the common case in a long run, and a
    * transient row costs the instance whichever optimizer is driving: it is
    * either an unexplained zero or a hole in the candidate's coverage. Retrying
@@ -158,6 +169,7 @@ export function createEvaluator<
     onEvaluation,
     signal,
     cacheHits: initialCacheHits = 0,
+    usage: initialUsage,
     retry,
     cacheNamespace,
   } = args;
@@ -175,6 +187,7 @@ export function createEvaluator<
     totalTokens: 0,
     costUsd: 0,
     rollouts: 0,
+    ...initialUsage,
   };
 
   /** Folds one adapter call's reported usage into the run's totals. */
@@ -460,6 +473,13 @@ export function createEvaluator<
     cacheHits: () => cacheHits,
     unchargedCalls: () => unchargedCalls,
     usage: () => ({ ...usage }),
+    absorbUsage: (spent) => {
+      usage.inputTokens += spent.inputTokens;
+      usage.outputTokens += spent.outputTokens;
+      usage.totalTokens += spent.totalTokens;
+      usage.costUsd += spent.costUsd;
+      usage.rollouts += spent.rollouts;
+    },
     entries: () => cache?.entries?.(),
     restore: (entries) => {
       for (const [key, cached] of entries) {

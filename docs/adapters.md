@@ -29,6 +29,8 @@ Methods may be synchronous or asynchronous; the example shows the asynchronous f
 
 ### Vercel AI SDK
 
+Beta, and not published to npm: use it from a checkout of this repository until its interface settles.
+
 ```ts
 import { createAiSdkAdapter } from "@textopt/ai-sdk";
 import { generateText } from "ai";
@@ -71,6 +73,8 @@ const adapter = createLangChainAdapter<Ticket, string>({
 The adapter rebuilds the runnable for each candidate. Traces include LLM, tool, and retriever spans; set `includeChainSteps` to include chain spans. Each rollout also includes `textopt_iteration`, `textopt_phase`, `textopt_split`, and `textopt_candidate_id` metadata for filtering in LangSmith.
 
 ### Braintrust
+
+Beta, and not published to npm: use it from a checkout of this repository until its interface settles.
 
 ```ts
 import {

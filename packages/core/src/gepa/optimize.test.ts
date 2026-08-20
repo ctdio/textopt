@@ -1889,6 +1889,48 @@ describe("optimize", () => {
     expect(resumed.stopReason).toBe("budgetExhausted");
   });
 
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its dollar accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const keyword = createKeywordAdapter();
+    const adapter = {
+      ...keyword,
+      evaluate: async (args: Parameters<typeof keyword.evaluate>[0]) => {
+        const evaluation = await keyword.evaluate(args);
+        return {
+          ...evaluation,
+          usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+        };
+      },
+    };
+    const task = {
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter,
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 30,
+      cache: false as const,
+    };
+
+    const interrupted = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize(task);
+
+    const resumed = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 2,
+      seed: 1,
+    }).optimize({ ...task, resumeFrom: interrupted.snapshot });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    expect(resumed.usage.inputTokens).toBeGreaterThanOrEqual(
+      interrupted.usage.inputTokens,
+    );
+  });
+
   test("carries the evaluation cache in the checkpoint", async () => {
     const gepa = new GepaOptimizer({
       maxIterations: 3,

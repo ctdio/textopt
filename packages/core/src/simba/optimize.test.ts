@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { createMemoryCache } from "../cache.js";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
 import type { Adapter, TextModel } from "../types.js";
 import { SimbaOptimizer } from "./optimize.js";
@@ -594,5 +595,44 @@ describe("SimbaOptimizer reporting", () => {
     });
 
     expect(flushed.toSorted()).toEqual(["first", "second"]);
+  });
+
+  test("reaches the same result with a cache as without one", async () => {
+    const uncached = await optimizer({
+      minibatchSize: 2,
+      maxSteps: 3,
+      seed: 7,
+    }).optimize({ ...ruleTask(), cache: false });
+    const cached = await optimizer({
+      minibatchSize: 2,
+      maxSteps: 3,
+      seed: 7,
+    }).optimize(ruleTask());
+
+    expect(cached.bestCandidate).toEqual(uncached.bestCandidate);
+    expect(cached.bestScore).toBe(uncached.bestScore);
+  });
+
+  test("keys the training cache by dataset row, not minibatch position", async () => {
+    const seen: string[] = [];
+    const cache = createMemoryCache();
+
+    await optimizer({ minibatchSize: 2, maxSteps: 3, seed: 7 }).optimize({
+      ...ruleTask(),
+      cache: {
+        get: (key) => {
+          seen.push(key);
+          return cache.get(key);
+        },
+        set: (key, value) => cache.set(key, value),
+      },
+    });
+
+    const trainKeys = seen.filter((key) => key.startsWith("train:"));
+    const instanceIds = new Set(
+      trainKeys.map((key) => key.slice(key.lastIndexOf(":") + 1)),
+    );
+
+    expect(instanceIds.size).toBeGreaterThan(2);
   });
 });

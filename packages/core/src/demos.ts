@@ -1,6 +1,6 @@
 import { harvestRollouts } from "./harvest.js";
 import type { Rng } from "./rng.js";
-import type { Adapter, Candidate } from "./types.js";
+import type { Adapter, Candidate, UsageTotals } from "./types.js";
 
 /**
  * One worked example: what went in, what a run of the system produced, and
@@ -26,6 +26,8 @@ export interface BootstrapResult<Datum, Output> {
   block: string;
   /** Rollouts this cost. Bootstrapping is cheap, not free. */
   metricCalls: number;
+  /** Tokens and dollars this cost, for a caller that bounds spend. */
+  usage: UsageTotals;
   attempted: number;
 }
 
@@ -118,6 +120,7 @@ export async function harvestFewShotExamples<
       renderDemo === undefined ? {} : { render: renderDemo },
     ),
     metricCalls: harvest.metricCalls,
+    usage: harvest.usage,
     attempted: harvest.attempted,
   };
 }

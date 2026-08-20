@@ -21,7 +21,7 @@ import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
 import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
-import type { Adapter, Candidate, TextModel } from "../types.js";
+import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
 
 /** Builds the prompt one variant is drawn from. */
 export type ParaphrasePromptBuilder = (args: {
@@ -77,6 +77,13 @@ export interface RandomSearchSnapshot {
   reflectionCalls: number;
   metricCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
+  /**
+   * Candidates accepted so far. Reporters key rows by this id, so restarting it
+   * at zero makes a resumed run collide with the run it continues.
+   */
+  acceptedCandidates?: number;
   /** Cached instance scores, when the cache can enumerate them. */
   cache?: [string, CachedScore][];
 }
@@ -317,6 +324,7 @@ async function runRandomSearch<
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: trackBestOutputs,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
@@ -371,6 +379,8 @@ async function runRandomSearch<
       reflectionCalls,
       metricCalls: budget.spent(),
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
+      acceptedCandidates,
       ...(cached === undefined ? {} : { cache: cached }),
     };
   }
@@ -415,7 +425,7 @@ async function runRandomSearch<
   let bestOutputs = seedEvaluation?.outputs;
   // Numbers acceptances rather than proposals: the seed is 0, and every id
   // after it names a candidate a full validation sweep actually preferred.
-  let acceptedCandidates = 0;
+  let acceptedCandidates = resumeFrom?.acceptedCandidates ?? 0;
 
   await checkpoint();
 

@@ -1,5 +1,5 @@
 import { createBudget } from "../budget.js";
-import { candidateHash, createMemoryCache } from "../cache.js";
+import { candidateHash, createMemoryCache, stableHash } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
@@ -24,7 +24,7 @@ import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
 import { componentNames } from "../types.js";
-import type { Adapter, Candidate, TextModel } from "../types.js";
+import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
 import { buildAdvicePrompt, parseAdvice } from "./advice.js";
 import type { AdvicePromptBuilder } from "./advice.js";
 import {
@@ -107,6 +107,8 @@ export interface SimbaSnapshot {
   metricCalls: number;
   reflectionCalls: number;
   cacheHits: number;
+  /** Usage already spent, so a resumed run reports totals and honours ceilings. */
+  usage?: UsageTotals;
   rngState: number;
   sampler?: unknown;
   cache?: [string, CachedScore][];
@@ -347,6 +349,9 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     );
   }
 
+  const trainingIds = trainingSet.map((datum, index) =>
+    instanceId({ datum, index }),
+  );
   const validationIds = validationSet.map((datum, index) =>
     instanceId({ datum, index }),
   );
@@ -355,9 +360,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
   const fingerprint = runFingerprint({
     seedCandidate,
-    trainingIds: trainingSet.map((datum, index) =>
-      instanceId({ datum, index }),
-    ),
+    trainingIds,
     validationIds,
     seed,
     ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
@@ -383,6 +386,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     ...(evaluationCache === undefined ? {} : { cache: evaluationCache }),
     trackOutputs: true,
     cacheHits: resumeFrom?.cacheHits ?? 0,
+    ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
   });
@@ -456,9 +460,8 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     });
     emit({ type: "stepStart", step, poolSize: pool.length });
 
-    const batch = sampler({ trainingSet, iteration: step, rng }).map(
-      (index) => trainingSet[index] as Datum,
-    );
+    const batchIndices = sampler({ trainingSet, iteration: step, rng });
+    const batch = batchIndices.map((index) => trainingSet[index] as Datum);
 
     const samples = [];
     for (let slot = 0; slot < candidateCount; slot += 1) {
@@ -553,7 +556,10 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
     let stepBest: { candidate: Candidate<K>; score: number } | undefined;
 
-    const batchIds = batch.map((datum, index) => instanceId({ datum, index }));
+    // Ids name the dataset row, not the position within this minibatch: two
+    // steps whose batches differ would otherwise share ids "0..n-1" and serve
+    // each other's cached scores for the same candidate.
+    const batchIds = batchIndices.map((index) => trainingIds[index] as string);
 
     // Every candidate the step built is priced against the allowance before
     // any of them runs. Reserving mid-fan-out instead would decide which of
@@ -1025,6 +1031,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       metricCalls: budget.spent(),
       reflectionCalls,
       cacheHits: evaluator.cacheHits(),
+      usage: evaluator.usage(),
       rngState: rng.state(),
       ...(sampler.state === undefined ? {} : { sampler: sampler.state() }),
       ...(cached === undefined ? {} : { cache: cached }),
@@ -1094,5 +1101,6 @@ function assertSimbaConfig(config: SimbaConfig): void {
 }
 
 function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  return String(args.index);
+  const hash = stableHash(args.datum);
+  return hash === "" ? String(args.index) : hash;
 }
