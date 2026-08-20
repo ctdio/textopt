@@ -36,6 +36,8 @@ const DEMO_CLOSE = "</demo>";
 const DEMO_BLOCK = /<demo>\s*([\s\S]*?)\s*<\/demo>/g;
 const DEMO_PARTS =
   /<input>\s*([\s\S]*?)\s*<\/input>\s*<output>\s*([\s\S]*?)\s*<\/output>/;
+const DELIMITER_TAG = /<(\/?)(demo|input|output)>/g;
+const ESCAPED_DELIMITER_TAG = /&lt;(\/?)(demo|input|output)>/g;
 const DEFAULT_MAX_DEMOS = 4;
 
 /**
@@ -159,6 +161,32 @@ export function formatDemos<Datum, Output>(
 }
 
 /**
+ * Rewrite the demos a component holds, leaving everything else it says intact.
+ *
+ * A component is not always only examples. SIMBA appends advice to the same
+ * text it appends demonstrations to, so replacing the component wholesale with
+ * a fresh block would delete the instructions the other mutation wrote. The
+ * replacement lands where the first demo was, so a block a caller placed after
+ * its preamble stays after it.
+ */
+export function replaceDemos<Datum, Output>(args: {
+  text: string;
+  demos: readonly Demo<Datum, Output>[];
+  render?: DemoRenderer<Datum, Output>;
+}): string {
+  const { text, demos, render } = args;
+
+  const block = formatDemos(demos, render === undefined ? {} : { render });
+  const surrounding = text.replace(DEMO_BLOCK, "\u0000");
+  const [before, ...rest] = surrounding.split("\u0000");
+
+  if (rest.length === 0) {
+    return join([text, block]);
+  }
+  return join([before ?? "", block, rest.join("")]);
+}
+
+/**
  * Recover the demos from a formatted block, ignoring anything written around
  * them. Text a model rewrote and mangled yields the demos it left intact
  * rather than throwing: a malformed example is worth less than the rest of the
@@ -177,6 +205,14 @@ export function parseDemos(text: string): Demo[] {
     demos.push({ input, output });
   }
   return demos;
+}
+
+/** Joins what survived a replacement, without leaving blank runs behind. */
+function join(parts: readonly string[]): string {
+  return parts
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("\n\n");
 }
 
 function renderDefault<Datum, Output>(args: {
@@ -198,19 +234,45 @@ function renderDefault<Datum, Output>(args: {
 /** Strings stay as they are; anything else is shown as JSON. */
 function serialize(value: unknown): string {
   if (typeof value === "string") {
-    return value;
+    return escapeDelimiters(value);
   }
   try {
-    return JSON.stringify(value, null, 2) ?? String(value);
+    return escapeDelimiters(JSON.stringify(value, null, 2) ?? String(value));
   } catch {
-    return String(value);
+    return escapeDelimiters(String(value));
   }
 }
 
 function parseValue(text: string): unknown {
+  const unescaped = unescapeDelimiters(text);
   try {
-    return JSON.parse(text);
+    return JSON.parse(unescaped);
   } catch {
-    return text;
+    return unescaped;
   }
+}
+
+/**
+ * Neutralize the tags a demo block is delimited by, so a value carrying one
+ * cannot end the block it sits in.
+ *
+ * A system that quotes its own prompt back produces exactly that: the output
+ * worth keeping is a demonstration containing `</demo>`, and appending it raw
+ * closes the outer block early. What comes back is not the demo that went in,
+ * and SIMBA reparses and rewrites the block at every step, so the damage
+ * compounds over a run rather than showing up once.
+ *
+ * The escape is escaped first, so a value that already reads `&lt;demo>`
+ * survives the round trip as itself.
+ */
+function escapeDelimiters(text: string): string {
+  return text
+    .replaceAll("&lt;", "&amp;lt;")
+    .replace(DELIMITER_TAG, "&lt;$1$2>");
+}
+
+function unescapeDelimiters(text: string): string {
+  return text
+    .replace(ESCAPED_DELIMITER_TAG, "<$1$2>")
+    .replaceAll("&amp;lt;", "&lt;");
 }

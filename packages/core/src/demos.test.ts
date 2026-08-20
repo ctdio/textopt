@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { formatDemos, harvestFewShotExamples, parseDemos } from "./demos.js";
+import {
+  formatDemos,
+  harvestFewShotExamples,
+  parseDemos,
+  replaceDemos,
+} from "./demos.js";
+import type { Demo } from "./demos.js";
 import { createSeededRng } from "./rng.js";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "./testing.js";
 import type { Adapter } from "./types.js";
@@ -40,6 +46,20 @@ describe("parseDemos", () => {
     expect(parseDemos(formatDemos(DEMOS))).toEqual(DEMOS);
   });
 
+  test("round trips an output that itself contains a demo block", () => {
+    const echoed = formatDemos([{ input: { q: "inner" }, output: "answer" }]);
+    const demos = [{ input: { q: "outer" }, output: echoed }];
+
+    expect(parseDemos(formatDemos(demos))).toEqual(demos);
+  });
+
+  test("reads exactly one demo from a block whose output echoes one", () => {
+    const echoed = formatDemos([{ input: { q: "inner" }, output: "answer" }]);
+    const block = formatDemos([{ input: { q: "outer" }, output: echoed }]);
+
+    expect(parseDemos(block)).toHaveLength(1);
+  });
+
   test("returns nothing for text that holds no demos", () => {
     expect(parseDemos("Just an ordinary instruction.")).toEqual([]);
   });
@@ -48,6 +68,57 @@ describe("parseDemos", () => {
     const text = `Follow these examples.\n\n${formatDemos(DEMOS)}\n\nBe brief.`;
 
     expect(parseDemos(text)).toHaveLength(2);
+  });
+});
+
+describe("replaceDemos", () => {
+  test("keeps the text written around the block it replaces", () => {
+    const text = `Follow these examples.\n\n${formatDemos([DEMOS[0] as Demo])}\n\nBe brief.`;
+
+    const next = replaceDemos({ text, demos: DEMOS });
+
+    expect(next).toContain("Follow these examples.");
+    expect(next).toContain("Be brief.");
+    expect(parseDemos(next)).toEqual(DEMOS);
+  });
+
+  test("appends to text that holds no demos yet", () => {
+    const next = replaceDemos({ text: "Be brief.", demos: DEMOS });
+
+    expect(next).toContain("Be brief.");
+    expect(parseDemos(next)).toEqual(DEMOS);
+  });
+
+  test("leaves only the surrounding text when given no demos", () => {
+    const text = `Be brief.\n\n${formatDemos(DEMOS)}`;
+
+    const next = replaceDemos({ text, demos: [] });
+
+    expect(next).toBe("Be brief.");
+    expect(parseDemos(next)).toEqual([]);
+  });
+
+  test("collapses demos scattered through the text into one block", () => {
+    const text = [
+      formatDemos([DEMOS[0] as Demo]),
+      "Be brief.",
+      formatDemos([DEMOS[1] as Demo]),
+    ].join("\n\n");
+
+    const next = replaceDemos({ text, demos: DEMOS });
+
+    expect(next.match(/<demo>/g)).toHaveLength(2);
+    expect(next).toContain("Be brief.");
+  });
+
+  test("renders replacements with a custom renderer", () => {
+    const next = replaceDemos({
+      text: "",
+      demos: DEMOS,
+      render: ({ index }) => `demo ${index}`,
+    });
+
+    expect(next).toContain("demo 0");
   });
 });
 
