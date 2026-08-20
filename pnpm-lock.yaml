@@ -123,7 +123,7 @@ importers:
   packages/langchain:
     dependencies:
       textopt:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@langchain/core':

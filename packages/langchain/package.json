@@ -50,7 +50,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "textopt": "workspace:*"
+    "textopt": "workspace:^"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.3.0 <2"
