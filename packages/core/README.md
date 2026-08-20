@@ -95,9 +95,9 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 
 **`transient`** marks scores caused by infrastructure failures such as rate limits, 5xx responses, or network errors. Transient scores are not cached.
 
-**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, `maxCostUsd`, `maxWallClockMs`, `cacheNamespace`, `retry`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `usage`, `testScore`, `testMetricCalls`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
+**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, `maxCostUsd`, `maxWallClockMs`, `cacheNamespace`, `retry`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `usage`, `testScore`, `testMetricCalls`, `testUsage`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
 
-**`maxCostUsd`** and **`maxWallClockMs`** are checked between evaluations, so a run overruns by at most one of them. Neither follows from `maxMetricCalls`: reflective search grows the text it optimizes, so late rollouts cost more than early ones, and a run behind a rate limit spends almost nothing while taking as long as the provider makes it take.
+**`maxCostUsd`** and **`maxWallClockMs`** are checked between evaluations, so a run overruns by whatever it had in flight when the ceiling was reached — one evaluation at the default concurrency, and up to `concurrency` of them above it. Neither bounds the held-out sweep, which runs once the search has already stopped: it is reported apart from the search as `testMetricCalls` and `testUsage`, and has to be budgeted for separately. Neither follows from `maxMetricCalls`: reflective search grows the text it optimizes, so late rollouts cost more than early ones, and a run behind a rate limit spends almost nothing while taking as long as the provider makes it take.
 
 **`cacheNamespace`** scopes every cache key to the system the rollouts were measured under — model id, decoding settings, scorer version. Change it whenever anything outside the candidate text changes.
 
@@ -105,7 +105,7 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 
 **`UsageTotals`** (`inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `rollouts`) is summed from the `RolloutUsage` entries an adapter reports. Zero throughout when the adapter reports none.
 
-**`testSet`** is excluded from search and evaluated once against the winner. Because candidates are selected on `validationSet`, `bestScore` may be fitted to it. `testScore` measures held-out performance. Test rollouts are reported as `testMetricCalls` and do not count against `maxMetricCalls`.
+**`testSet`** is excluded from search and evaluated once against the winner. Because candidates are selected on `validationSet`, `bestScore` may be fitted to it. `testScore` measures held-out performance. Test rollouts are reported as `testMetricCalls` costing `testUsage`, outside `maxMetricCalls` and `maxCostUsd` both.
 
 **`TextModel`** is the provider-independent interface `({ prompt, signal }) => Promise<string>`.
 
@@ -119,7 +119,7 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`componentNames(candidate)`** returns `Object.keys(candidate)` while preserving the component-name union.
 
-**`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
+**`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits, usage })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `cacheHits` and `usage` seed the counters from a checkpoint, so a resumed run reports totals rather than deltas. `usage()` covers the charged rollouts a ceiling is checked against; `unchargedUsage()` covers what `charge: false` bought. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
 **`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, maxCostUsd, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. `maxCostUsd` bounds its dollars, checked between batches — a caller bounding spend cannot bound this pass from outside, since it runs on its own evaluator. Sweeping a validation set is the mistake to avoid — see [Distilling a run](../../docs/distillation.md).
 
@@ -203,15 +203,15 @@ These options control search behavior and can be reused across runs.
 
 Required: `seedCandidate`, `trainingSet`, `adapter` (a `GepaAdapter`), `reflect` (a `TextModel`), and `maxMetricCalls`.
 
-| Option                | Default                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| `validationSet`       | the trainingSet                                                                        |
-| `testSet`             | none. Held out of the search and scored once, on the winner                            |
-| `componentSelector`   | `roundRobinComponentSelector()`                                                        |
-| `batchSampler`        | an epoch-shuffled sampler over `minibatchSize`                                         |
-| `valEvaluationPolicy` | `fullEvaluationPolicy()`                                                               |
-| `instanceId`          | a content hash of the datum, falling back to its position when the hash cannot read it |
-| `cache`               | a per-run memory cache. Pass `false` to disable                                        |
+| Option                | Default                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `validationSet`       | the trainingSet                                                                    |
+| `testSet`             | none. Held out of the search and scored once, on the winner                        |
+| `componentSelector`   | `roundRobinComponentSelector()`                                                    |
+| `batchSampler`        | an epoch-shuffled sampler over `minibatchSize`                                     |
+| `valEvaluationPolicy` | `fullEvaluationPolicy()`                                                           |
+| `instanceId`          | a content hash of the datum, falling back to its position when JSON cannot read it |
+| `cache`               | a per-run memory cache. Pass `false` to disable                                    |
 
 `reporters`, `onCheckpoint`, `resumeFrom`, and `signal` have no defaults.
 

@@ -629,7 +629,11 @@ async function runRandomSearch<
     ...(trackBestOutputs ? { bestOutputs } : {}),
     ...(testScore === undefined
       ? {}
-      : { testScore, testMetricCalls: evaluator.unchargedCalls() }),
+      : {
+          testScore,
+          testMetricCalls: evaluator.unchargedCalls(),
+          testUsage: evaluator.unchargedUsage(),
+        }),
     rounds: round,
     variantsEvaluated,
     metricCalls: budget.spent(),

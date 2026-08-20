@@ -466,8 +466,8 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
    * LangChain reports tokens in two shapes depending on the integration: the
    * legacy `llmOutput.tokenUsage` and the message-level `usage_metadata` newer
    * chat models attach. Reading both is what makes this work across providers;
-   * an integration that fills both describes one call twice, so the
-   * message-level shape wins and the legacy total is only a fallback.
+   * an integration that fills both describes one call twice, so a message-level
+   * shape that carries a count wins and the legacy total is only a fallback.
    */
   function countTokens(output: LlmResultLike): void {
     let fromMetadata = false;
@@ -476,13 +476,21 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
       if (metadata === undefined) {
         continue;
       }
+      const inputTokens = metadata.input_tokens ?? 0;
+      const outputTokens = metadata.output_tokens ?? 0;
+      const totalTokens = metadata.total_tokens ?? inputTokens + outputTokens;
+      // Present but counting nothing: some integrations attach a zeroed
+      // `usage_metadata` to a generation whose real total only ever reaches
+      // `llmOutput`. Taking its presence for a count reports zero for a call
+      // that spent, so the legacy shape has to stay reachable.
+      if (inputTokens === 0 && outputTokens === 0 && totalTokens === 0) {
+        continue;
+      }
       fromMetadata = true;
       counted = true;
-      tokens.inputTokens += metadata.input_tokens ?? 0;
-      tokens.outputTokens += metadata.output_tokens ?? 0;
-      tokens.totalTokens +=
-        metadata.total_tokens ??
-        (metadata.input_tokens ?? 0) + (metadata.output_tokens ?? 0);
+      tokens.inputTokens += inputTokens;
+      tokens.outputTokens += outputTokens;
+      tokens.totalTokens += totalTokens;
     }
     if (fromMetadata) {
       return;

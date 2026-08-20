@@ -96,8 +96,19 @@ export interface Evaluator<Datum, Trajectory, Output, K extends string> {
   cacheHits(): number;
   /** Rollouts made with `charge: false`, tracked apart from the budget. */
   unchargedCalls(): number;
-  /** Tokens and money the run has spent, as far as adapters have reported it. */
+  /**
+   * Tokens and money the search has spent, as far as adapters have reported
+   * it. `maxCostUsd` is checked against this, so what the ceiling does not
+   * bound is not counted in it: rollouts made with `charge: false` are in
+   * `unchargedUsage` instead.
+   */
   usage(): UsageTotals;
+  /**
+   * What the rollouts made with `charge: false` cost. Held-out measurement is
+   * taken after the search has stopped, so no ceiling bounds it and reporting
+   * it inside `usage` would describe a run as having overrun one.
+   */
+  unchargedUsage(): UsageTotals;
   /**
    * Folds in usage spent outside this evaluator — harvesting runs its own, and
    * a cost ceiling that cannot see it bounds only part of the run.
@@ -179,6 +190,10 @@ export function createEvaluator<
     ...retry,
   };
 
+  if (initialUsage !== undefined) {
+    assertUsage({ reading: initialUsage, source: "Checkpoint carries" });
+  }
+
   let cacheHits = initialCacheHits;
   let unchargedCalls = 0;
   const usage: UsageTotals = {
@@ -189,15 +204,26 @@ export function createEvaluator<
     rollouts: 0,
     ...initialUsage,
   };
+  /** What `charge: false` bought, kept out of the totals a ceiling reads. */
+  const unchargedUsage: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    rollouts: 0,
+  };
 
-  /** Folds one adapter call's reported usage into the run's totals. */
+  /** Folds one adapter call's reported usage into the totals that bought it. */
   function recordUsage(args: {
     evaluation: EvaluationBatch<Trajectory, Output>;
     rollouts: number;
+    charge: boolean;
   }): void {
-    usage.rollouts += args.rollouts;
+    const totals = args.charge ? usage : unchargedUsage;
+
+    totals.rollouts += args.rollouts;
     for (const rollout of args.evaluation.usage ?? []) {
-      addUsage({ totals: usage, rollout });
+      addUsage({ totals, rollout });
     }
   }
 
@@ -270,7 +296,7 @@ export function createEvaluator<
         signal,
       });
       assertEvaluation({ evaluation, expected: rows.length });
-      recordUsage({ evaluation, rollouts: rows.length });
+      recordUsage({ evaluation, rollouts: rows.length, charge });
       return evaluation;
     } catch (err) {
       release({ calls: rows.length, charge });
@@ -473,7 +499,9 @@ export function createEvaluator<
     cacheHits: () => cacheHits,
     unchargedCalls: () => unchargedCalls,
     usage: () => ({ ...usage }),
+    unchargedUsage: () => ({ ...unchargedUsage }),
     absorbUsage: (spent) => {
+      assertUsage({ reading: spent, source: "Absorbed usage carries" });
       usage.inputTokens += spent.inputTokens;
       usage.outputTokens += spent.outputTokens;
       usage.totalTokens += spent.totalTokens;
@@ -595,21 +623,34 @@ function addUsage(args: { totals: UsageTotals; rollout: RolloutUsage }): void {
   const { totals, rollout } = args;
   const { inputTokens = 0, outputTokens = 0, costUsd = 0 } = rollout;
 
-  // A NaN or negative reading poisons the totals a ceiling is checked against,
-  // and every later comparison silently passes. Reported where it enters
-  // rather than absorbed, for the same reason a bad refund is.
-  for (const [field, value] of Object.entries(rollout)) {
-    if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) {
-      throw new Error(
-        `Adapter reported ${field} as ${value}; usage must be a non-negative finite number`,
-      );
-    }
-  }
+  assertUsage({ reading: rollout, source: "Adapter reported" });
 
   totals.inputTokens += inputTokens;
   totals.outputTokens += outputTokens;
   totals.totalTokens += rollout.totalTokens ?? inputTokens + outputTokens;
   totals.costUsd += costUsd;
+}
+
+/**
+ * Refuses a reading the totals cannot hold, where it enters rather than once it
+ * has been absorbed. A NaN folded in makes every later `maxCostUsd` comparison
+ * false, so the ceiling stops holding without saying so, and a value that is
+ * not a number at all concatenates onto the totals instead of adding to them.
+ * `RolloutUsage` binds TypeScript callers and nothing else.
+ */
+function assertUsage(args: { reading: object; source: string }): void {
+  const { reading, source } = args;
+
+  for (const [field, value] of Object.entries(reading)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new Error(
+        `${source} ${field} as ${value}; usage must be a non-negative finite number`,
+      );
+    }
+  }
 }
 
 function transientIndices(

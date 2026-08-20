@@ -77,6 +77,31 @@ describe("BootstrapSearchOptimizer", () => {
     expect(result.usage.inputTokens).toBe(result.metricCalls * 10);
   });
 
+  test("keeps the held-out sweep out of the run's usage", async () => {
+    // No ceiling bounds the held-out sweep: it runs once the search has already
+    // stopped. Counting it in `usage` would describe a run that honoured
+    // `maxCostUsd` as having overrun it.
+    const result = await new BootstrapSearchOptimizer({
+      candidates: 2,
+      seed: 1,
+    }).optimize({
+      ...task(),
+      adapter: pricedAdapter(),
+      testSet: [
+        { question: "held out, satisfied", required: ["answer"] },
+        { question: "held out, unsatisfiable", required: ["zzz-never"] },
+      ],
+    });
+
+    expect(result.usage.rollouts).toBe(result.metricCalls);
+    expect(result.testUsage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+      costUsd: 0,
+      rollouts: 2,
+    });
+  });
   test("needs no reflection model at all", async () => {
     // The whole point of this search: demos are harvested from rollouts the
     // metric already rewarded, so nothing here writes text.

@@ -1445,7 +1445,11 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     bestCandidateId,
     ...(testScore === undefined
       ? {}
-      : { testScore, testMetricCalls: evaluator.unchargedCalls() }),
+      : {
+          testScore,
+          testMetricCalls: evaluator.unchargedCalls(),
+          testUsage: evaluator.unchargedUsage(),
+        }),
     ...(bestOutputs === undefined ? {} : { bestOutputs }),
     candidates: records,
     paretoFrontier: collectDominatorIds(records).map(
@@ -1729,14 +1733,6 @@ function collectDominatorIds(records: readonly CandidateRecord[]): number[] {
   }
   return [...ids].sort((a, b) => a - b);
 }
-
-/**
- * Names an instance by a hash of its content rather than by the content
- * itself: the id ends up inside every cache key and inside the checkpoint
- * fingerprint, and embedding whole examples there costs memory proportional to
- * the dataset for no benefit. Data that will not serialize falls back to its
- * position, which is stable for as long as the dataset order is.
- */
 
 /**
  * The two rollout sets restricted to the instances both of them measured.

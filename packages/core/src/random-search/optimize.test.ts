@@ -223,6 +223,31 @@ describe("RandomSearchOptimizer", () => {
     expect(result.testMetricCalls).toBe(2);
   });
 
+  test("keeps the held-out sweep out of the run's usage", async () => {
+    // No ceiling bounds the held-out sweep: it runs once the search has already
+    // stopped. Counting it in `usage` would describe a run that honoured
+    // `maxCostUsd` as having overrun it.
+    const result = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      adapter: pricedAdapter(),
+      testSet: [
+        { question: "held out, satisfied", required: ["answer"] },
+        { question: "held out, unsatisfiable", required: ["zzz-never"] },
+      ],
+    });
+
+    expect(result.usage.rollouts).toBe(result.metricCalls);
+    expect(result.testUsage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+      costUsd: 0,
+      rollouts: 2,
+    });
+  });
   test("stops when the signal is aborted", async () => {
     const controller = new AbortController();
     let evaluations = 0;

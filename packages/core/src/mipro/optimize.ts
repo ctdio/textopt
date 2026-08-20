@@ -1149,7 +1149,11 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     ...(trackBestOutputs ? { bestOutputs } : {}),
     ...(testScore === undefined
       ? {}
-      : { testScore, testMetricCalls: evaluator.unchargedCalls() }),
+      : {
+          testScore,
+          testMetricCalls: evaluator.unchargedCalls(),
+          testUsage: evaluator.unchargedUsage(),
+        }),
     trials: trial,
     menu,
     observations,

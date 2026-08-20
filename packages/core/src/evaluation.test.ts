@@ -60,6 +60,44 @@ function evaluate(args: {
   });
 }
 
+/** An evaluator whose adapter prices every rollout it runs. */
+function pricedEvaluator() {
+  return createEvaluator<string, unknown, string, "instruction">({
+    adapter: {
+      evaluate: ({ batch }) => ({
+        outputs: [...batch],
+        scores: batch.map(() => 1),
+        usage: batch.map(() => ({
+          inputTokens: 10,
+          outputTokens: 4,
+          costUsd: 0.002,
+        })),
+      }),
+    },
+    budget: createBudget({ maxMetricCalls: 100 }),
+  });
+}
+
+function sweep(args: {
+  evaluator: ReturnType<typeof pricedEvaluator>;
+  split: "val" | "test";
+  phase: "validation" | "test";
+  charge?: boolean;
+}) {
+  const { evaluator, split, phase, charge } = args;
+
+  return evaluator.evaluate({
+    candidate: { instruction: "text" },
+    batch: BATCH,
+    ids: IDS,
+    split,
+    phase,
+    candidateId: null,
+    iteration: 0,
+    ...(charge === undefined ? {} : { charge }),
+  });
+}
+
 describe("createEvaluator", () => {
   test("adds up the usage its adapter reports", async () => {
     const evaluator = createEvaluator<string, unknown, string, "instruction">({
@@ -127,6 +165,110 @@ describe("createEvaluator", () => {
         iteration: 0,
       }),
     ).rejects.toThrow(/costUsd/);
+  });
+
+  test("refuses a usage reading that is not a number at all", async () => {
+    // `RolloutUsage` binds TypeScript callers and nothing else. A string cost
+    // concatenates onto the totals instead of adding to them, and the ceiling
+    // is then checked against text.
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: [...batch],
+          scores: batch.map(() => 1),
+          usage: batch.map(() => ({ costUsd: "0.002" as unknown as number })),
+        }),
+      },
+      budget: createBudget({ maxMetricCalls: 100 }),
+      cache: createMemoryCache(),
+    });
+
+    await expect(
+      evaluator.evaluate({
+        candidate: { instruction: "text" },
+        batch: BATCH,
+        ids: IDS,
+        split: "val",
+        phase: "validation",
+        candidateId: 1,
+        iteration: 0,
+      }),
+    ).rejects.toThrow(/costUsd/);
+  });
+
+  test("refuses resumed usage no ceiling could be checked against", () => {
+    expect(() =>
+      createEvaluator<string, unknown, string, "instruction">({
+        adapter: flakyAdapter(0),
+        budget: createBudget({ maxMetricCalls: 100 }),
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          costUsd: Number.NaN,
+          rollouts: 0,
+        },
+      }),
+    ).toThrow(/costUsd/);
+  });
+
+  test("refuses absorbed usage no ceiling could be checked against", () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: flakyAdapter(0),
+      budget: createBudget({ maxMetricCalls: 100 }),
+    });
+
+    expect(() =>
+      evaluator.absorbUsage({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: Number.NaN,
+        rollouts: 0,
+      }),
+    ).toThrow(/costUsd/);
+  });
+
+  test("keeps an uncharged sweep's usage out of the run's totals", async () => {
+    const evaluator = pricedEvaluator();
+
+    await sweep({ evaluator, split: "val", phase: "validation" });
+    await sweep({
+      evaluator,
+      split: "test",
+      phase: "test",
+      charge: false,
+    });
+
+    // Only the charged sweep. `maxCostUsd` is checked against this, and a
+    // held-out measurement the ceiling never bounded cannot be inside it.
+    expect(evaluator.usage()).toEqual({
+      inputTokens: 30,
+      outputTokens: 12,
+      totalTokens: 42,
+      costUsd: 0.006,
+      rollouts: 3,
+    });
+  });
+
+  test("reports what an uncharged sweep spent on its own", async () => {
+    const evaluator = pricedEvaluator();
+
+    await sweep({ evaluator, split: "val", phase: "validation" });
+    await sweep({
+      evaluator,
+      split: "test",
+      phase: "test",
+      charge: false,
+    });
+
+    expect(evaluator.unchargedUsage()).toEqual({
+      inputTokens: 30,
+      outputTokens: 12,
+      totalTokens: 42,
+      costUsd: 0.006,
+      rollouts: 3,
+    });
   });
 
   test("re-runs a transiently failed instance and keeps the score it earns", async () => {

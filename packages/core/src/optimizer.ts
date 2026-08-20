@@ -78,8 +78,10 @@ export interface OptimizerResult<
   bestOutputs?: (Output | undefined)[];
   metricCalls: number;
   /**
-   * Tokens and dollars the run spent, summed from what the adapter reported.
-   * Zero throughout when the adapter reports no usage.
+   * Tokens and dollars the search spent, summed from what the adapter reported.
+   * Zero throughout when the adapter reports no usage. `maxCostUsd` is checked
+   * against this, so the held-out sweep — which runs after the search has
+   * stopped, under no ceiling — is reported apart from it, in `testUsage`.
    */
   usage: UsageTotals;
   /**
@@ -93,6 +95,13 @@ export interface OptimizerResult<
    * measurement rather than search, and so is not charged to `maxMetricCalls`.
    */
   testMetricCalls?: number;
+  /**
+   * Tokens and dollars the held-out sweep cost, for the same reason: no ceiling
+   * bounds it, so a caller adding up what a run spent has to see it as its own
+   * number rather than find it folded into one `maxCostUsd` was supposed to
+   * hold. Absent when no testSet was given.
+   */
+  testUsage?: UsageTotals;
   stopReason: Stop;
 }
 

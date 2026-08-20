@@ -2662,6 +2662,32 @@ describe("optimize held-out evaluation", () => {
     expect(withHoldout.testMetricCalls).toBe(TESTSET.length);
   });
 
+  test("keeps the held-out sweep out of the run's usage", async () => {
+    // No ceiling bounds the held-out sweep: it runs once the search has already
+    // stopped. Counting it in `usage` would describe a run that honoured
+    // `maxCostUsd` as having overrun it.
+    const keyword = createKeywordAdapter();
+    const result = await new GepaOptimizer(config).optimize({
+      ...task,
+      adapter: {
+        ...keyword,
+        evaluate: async (args: Parameters<typeof keyword.evaluate>[0]) => ({
+          ...(await keyword.evaluate(args)),
+          usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+        }),
+      },
+      testSet: TESTSET,
+    });
+
+    expect(result.usage.rollouts).toBe(result.metricCalls);
+    expect(result.testUsage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+      costUsd: 0,
+      rollouts: 2,
+    });
+  });
   test("never draws a held-out instance into training or validation", async () => {
     const seen: string[] = [];
     const adapter = createKeywordAdapter();

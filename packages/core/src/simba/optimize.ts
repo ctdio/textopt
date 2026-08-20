@@ -817,7 +817,11 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     ...(bestOutputs === undefined ? {} : { bestOutputs }),
     ...(testScore === undefined
       ? {}
-      : { testScore, testMetricCalls: testSet?.length ?? 0 }),
+      : {
+          testScore,
+          testMetricCalls: evaluator.unchargedCalls(),
+          testUsage: evaluator.unchargedUsage(),
+        }),
     stopReason,
   };
 

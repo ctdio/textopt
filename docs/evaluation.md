@@ -24,9 +24,10 @@ const result = await optimizer.optimize({
 result.bestScore; // on the validation set — the search selected for this
 result.testScore; // on instances no candidate was ever selected against
 result.testMetricCalls; // charged separately, not against maxMetricCalls
+result.testUsage; // and costed separately, outside maxCostUsd
 ```
 
-The gap between `bestScore` and `testScore` estimates validation overfitting. Test rollouts are reported separately and do not count against `maxMetricCalls`. The resume fingerprint ignores `testSet`, so it can be added when resuming a run.
+The gap between `bestScore` and `testScore` estimates validation overfitting. Test rollouts are reported separately and are outside every ceiling: they do not count against `maxMetricCalls`, and their tokens are in `testUsage` rather than `usage`, because the sweep runs after the search has already stopped. Budget for it the way you would budget for one full validation sweep. The resume fingerprint ignores `testSet`, so it can be added when resuming a run.
 
 All optimizers expose these fields through `OptimizerTask` and `OptimizerResult`.
 

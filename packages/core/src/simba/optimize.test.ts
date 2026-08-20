@@ -259,6 +259,26 @@ describe("SimbaOptimizer", () => {
     expect(result.testMetricCalls).toBe(2);
   });
 
+  test("keeps the held-out sweep out of the run's usage", async () => {
+    // No ceiling bounds the held-out sweep: it runs once the search has already
+    // stopped. Counting it in `usage` would describe a run that honoured
+    // `maxCostUsd` as having overrun it.
+    const result = await optimizer().optimize({
+      ...ruleTask(),
+      adapter: pricedAdapter(),
+      validationSet: KEYWORD_EXAMPLES.slice(0, 2),
+      testSet: KEYWORD_EXAMPLES.slice(2),
+    });
+
+    expect(result.usage.rollouts).toBe(result.metricCalls);
+    expect(result.testUsage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+      costUsd: 0,
+      rollouts: 2,
+    });
+  });
   test("produces the same winner from the same seed", async () => {
     const first = await optimizer({ seed: 7 }).optimize(ruleTask());
     const second = await optimizer({ seed: 7 }).optimize(ruleTask());

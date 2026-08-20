@@ -121,6 +121,59 @@ describe("createLangChainAdapter", () => {
     ]);
   });
 
+  test("falls back to the legacy total when the message-level shape counts nothing", async () => {
+    // Some integrations attach a zeroed `usage_metadata` to a generation whose
+    // real total only ever reaches `llmOutput`. Reading its presence as a count
+    // reports zero for a call that spent.
+    const generation: ChatGeneration = {
+      text: "hardware",
+      message: new AIMessage({
+        content: "hardware",
+        usage_metadata: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+        },
+      }),
+    };
+    const runnable = RunnableLambda.from(
+      async (input: { text: string }, config?: { callbacks?: unknown }) => {
+        const manager = config?.callbacks as CallbackManager;
+        const run = await manager.handleLLMStart(
+          { lc: 1, type: "not_implemented", id: ["counter"] },
+          [input.text],
+        );
+        await run[0]?.handleLLMEnd({
+          generations: [[generation]],
+          llmOutput: {
+            tokenUsage: {
+              promptTokens: 10,
+              completionTokens: 4,
+              totalTokens: 14,
+            },
+          },
+        });
+        return "hardware";
+      },
+    );
+
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => runnable,
+      score: () => ({ score: 1 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { system: "classify" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(evaluation.usage).toEqual([
+      { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
+    ]);
+  });
+
   test("counts a provider reporting both token shapes only once", async () => {
     // Newer chat models populate `usage_metadata` while the integration still
     // fills the legacy `llmOutput.tokenUsage` for the same call. Reading both
