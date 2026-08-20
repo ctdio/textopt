@@ -67,19 +67,69 @@ It needs a build, so it runs after `pnpm build`.
 ## Releasing
 
 Changesets owns versions. Add a changeset with the change that needs one; never
-edit a `version` field or write a release commit by hand. On `main`, the release
-workflow opens a `chore: version packages` pull request, and merging that pull
-request publishes to npm.
+edit a `version` field or write a release commit by hand.
 
-`@textopt/ai-sdk` and `@textopt/braintrust` are `private` and listed in
-`.changeset/config.json` under `ignore`, so they neither version nor publish.
-Removing both markers is what promotes one out of beta.
+A release is two merges. Pushing to `main` runs the release workflow, which
+opens a `chore: version packages` pull request applying every pending changeset.
+Merging that pull request runs the workflow again, and the second run publishes.
+Both runs stop at the `npm` environment for a human approval, including the one
+that only refreshes the version pull request and publishes nothing.
 
 Both published packages are on 0.x, where `^0.1.0` does not cross a minor. So
 `minor` is the breaking lever and `patch` covers additions and fixes. A changed
 default that makes an unmodified call search differently is breaking. The
 `/textopt-changeset` skill in `.claude/skills/textopt-changeset` applies these
 rules against the branch diff.
+
+### The registry trusts the workflow, not a secret
+
+There is no npm token in this repository. The publish authenticates over OIDC
+against a trusted publisher configured on each package, which names four things:
+the user `ctdio`, the repository `textopt`, the workflow file `release.yml`, and
+the environment `npm`. Rename the workflow file or the environment and
+publishing stops — the registry checks both, so a rename is a break rather than
+a degradation.
+
+Two consequences worth holding onto:
+
+`setup-node` must not set `registry-url`. It writes an `.npmrc` containing
+`${NODE_AUTH_TOKEN}`, and with no such token set pnpm sends that unresolved
+placeholder as the credential and takes a 404 before OIDC is tried. Fixed in
+pnpm 11.1.3, but the registry it configures is already the default, so the
+setting only buys back the failure mode.
+
+Provenance needs no flag. npm attests every trusted publish by default, and a
+trusted publish is the only kind it will attest — so anything published by hand
+is permanently unattested.
+
+### Promoting a package out of beta
+
+`@textopt/ai-sdk`, `@textopt/braintrust` and `@textopt/langsmith` are `private`
+and listed in `.changeset/config.json` under `ignore`, so they neither version
+nor publish. Removing both markers is most of what promotes one, but not all of
+it.
+
+The registry will not accept the first version from CI. A trusted publisher can
+only be configured on a package that already exists, and this workflow holds no
+token to bootstrap one with, so the first publish is done by hand and every
+release after it runs through CI:
+
+1. Drop `private`, and add `publishConfig: { "access": "public" }` — a scoped
+   package defaults to restricted, which a free account cannot publish.
+2. `pnpm build`. `files` is `["dist"]`, so publishing without a build ships an
+   empty tarball and says nothing about it.
+3. `pnpm publish --filter @textopt/<name>`, at version `0.0.0`. Use pnpm and not
+   npm: every adapter depends on `textopt` through `workspace:*`, which npm
+   publishes verbatim as an uninstallable range. Publish `0.0.0` and not the
+   real version, because this one is unattested and every version anyone
+   installs should have come from CI.
+4. Configure the trusted publisher on npmjs.com with the four fields above.
+5. Remove the package from `ignore`, and write a changeset for it.
+
+Leave a new adapter out of the `fixed` group in `.changeset/config.json` unless
+it genuinely tracks the core release for release. `fixed` holds `textopt` and
+`@textopt/langchain` at one version, so anything added to it ships a new version
+every time the core does, whether or not it changed.
 
 ## Fidelity to the papers
 
