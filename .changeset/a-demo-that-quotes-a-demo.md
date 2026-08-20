@@ -1,5 +1,5 @@
 ---
-"textopt": patch
+"textopt": minor
 ---
 
 A harvested rollout cannot end the demo block it is stored in.

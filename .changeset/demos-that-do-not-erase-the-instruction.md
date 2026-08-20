@@ -1,5 +1,5 @@
 ---
-"textopt": patch
+"textopt": minor
 ---
 
 A demonstration lands in a component without erasing what else it says.

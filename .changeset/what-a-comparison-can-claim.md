@@ -1,5 +1,5 @@
 ---
-"textopt": patch
+"textopt": minor
 ---
 
 A comparison reports what each entrant was given, and claims only what its

@@ -1,5 +1,5 @@
 ---
-"textopt": patch
+"textopt": minor
 ---
 
 Rollout accounting survives a resume, and the numbers a run reports name the
