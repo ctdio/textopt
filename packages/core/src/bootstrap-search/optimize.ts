@@ -1,5 +1,9 @@
 import { createBudget } from "../budget.js";
-import { candidateHash, createMemoryCache, stableHash } from "../cache.js";
+import {
+  candidateHash,
+  createMemoryCache,
+  defaultInstanceId,
+} from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { createDeadline } from "../deadline.js";
@@ -509,20 +513,31 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       wave.push({ source, candidate, block, sweep: sweeping });
     }
 
+    let waveError: unknown;
+    let draining = false;
+
     for (const entry of wave) {
       const outcome = await entry.sweep;
+      // Every dispatched sweep is read to the end, even once the wave has
+      // stopped scoring them: one left behind goes on calling the adapter, and
+      // spending, after the run has returned or thrown.
+      if (draining) {
+        continue;
+      }
       drawn += 1;
 
       if (outcome.failed === true) {
+        draining = true;
         if (outcome.err instanceof BudgetExhausted) {
           waveStop = "budgetExhausted";
-          break;
+          continue;
         }
         if (signal?.aborted) {
           waveStop = "aborted";
-          break;
+          continue;
         }
-        throw outcome.err;
+        waveError = outcome.err;
+        continue;
       }
 
       const evaluation = outcome.evaluation;
@@ -569,8 +584,12 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
       if (stopAtScore !== undefined && score >= stopAtScore) {
         waveStop = "scoreReached";
-        break;
+        draining = true;
       }
+    }
+
+    if (waveError !== undefined) {
+      throw waveError;
     }
 
     // Taken once the wave has drained, never inside it: the harvests of a wave
@@ -674,6 +693,9 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       ...(demoMinScore === undefined ? {} : { minScore: demoMinScore }),
       maxDemos: requested,
       maxMetricCalls: affordable,
+      ...(maxCostUsd === undefined
+        ? {}
+        : { maxCostUsd: maxCostUsd - evaluator.usage().costUsd }),
       ...(source === "unshuffled" ? {} : { rng }),
       ...(renderDemo === undefined ? {} : { renderDemo }),
       ...(signal === undefined ? {} : { signal }),
@@ -747,9 +769,4 @@ function assertBootstrapSearchConfig(config: BootstrapSearchConfig): void {
 
 function countDemos(block: string): number {
   return block.split("<demo>").length - 1;
-}
-
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
 }

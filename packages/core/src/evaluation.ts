@@ -595,6 +595,17 @@ function addUsage(args: { totals: UsageTotals; rollout: RolloutUsage }): void {
   const { totals, rollout } = args;
   const { inputTokens = 0, outputTokens = 0, costUsd = 0 } = rollout;
 
+  // A NaN or negative reading poisons the totals a ceiling is checked against,
+  // and every later comparison silently passes. Reported where it enters
+  // rather than absorbed, for the same reason a bad refund is.
+  for (const [field, value] of Object.entries(rollout)) {
+    if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) {
+      throw new Error(
+        `Adapter reported ${field} as ${value}; usage must be a non-negative finite number`,
+      );
+    }
+  }
+
   totals.inputTokens += inputTokens;
   totals.outputTokens += outputTokens;
   totals.totalTokens += rollout.totalTokens ?? inputTokens + outputTokens;

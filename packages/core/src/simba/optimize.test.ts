@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createMemoryCache } from "../cache.js";
+import { createMemoryCache, stableHash } from "../cache.js";
 import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
 import type { Adapter, TextModel } from "../types.js";
 import { SimbaOptimizer } from "./optimize.js";
@@ -15,6 +15,21 @@ function baseAdapter(): Adapter<
 > {
   const keyword = createKeywordAdapter();
   return { evaluate: (args) => keyword.evaluate(args) };
+}
+
+/** The base adapter, reporting ten input tokens for every rollout it runs. */
+function pricedAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+    }),
+  };
 }
 
 /**
@@ -295,6 +310,37 @@ describe("SimbaOptimizer", () => {
     expect(resumed.snapshot.programs.length).toBeGreaterThan(
       checkpoint.programs.length,
     );
+  });
+
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its token accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const priced = {
+      ...ruleTask(),
+      cache: false as const,
+      adapter: pricedAdapter(),
+    };
+    const snapshots: SimbaSnapshot[] = [];
+
+    const interrupted = await optimizer({ maxSteps: 1 }).optimize({
+      ...priced,
+      onCheckpoint: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+    const checkpoint = JSON.parse(
+      JSON.stringify(snapshots[snapshots.length - 1]),
+    ) as SimbaSnapshot;
+
+    const resumed = await optimizer({ maxSteps: 2 }).optimize({
+      ...priced,
+      resumeFrom: checkpoint,
+    });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    // Ten input tokens a rollout, uncached, over both segments.
+    expect(resumed.usage.inputTokens).toBe(resumed.metricCalls * 10);
   });
 
   test("re-scores nothing the checkpointed run already paid for", async () => {
@@ -611,6 +657,41 @@ describe("SimbaOptimizer reporting", () => {
 
     expect(cached.bestCandidate).toEqual(uncached.bestCandidate);
     expect(cached.bestScore).toBe(uncached.bestScore);
+  });
+
+  test("caches a training score against the row that produced it", async () => {
+    // Scores here depend on the row and nothing else, so a score filed under
+    // another row's id is one the search will later read for an instance that
+    // never earned it.
+    const weights = new Map(
+      KEYWORD_EXAMPLES.map((datum, index) => [datum, (index + 1) / 10]),
+    );
+    const keyword = createKeywordAdapter();
+    const cache = createMemoryCache();
+
+    await optimizer({ minibatchSize: 2, maxSteps: 3, seed: 7 }).optimize({
+      ...ruleTask(),
+      adapter: {
+        evaluate: (args) => ({
+          ...keyword.evaluate(args),
+          scores: args.batch.map((datum) => weights.get(datum) ?? 0),
+        }),
+      },
+      cache,
+    });
+
+    const trainEntries = (cache.entries?.() ?? []).filter(([key]) =>
+      key.startsWith("train:"),
+    );
+
+    expect(trainEntries.length).toBeGreaterThan(0);
+    for (const [key, cached] of trainEntries) {
+      const id = key.slice(key.lastIndexOf(":") + 1);
+      const row = KEYWORD_EXAMPLES.find((datum) => stableHash(datum) === id);
+      expect(cached.score).toBe(
+        weights.get(row as (typeof KEYWORD_EXAMPLES)[number]),
+      );
+    }
   });
 
   test("keys the training cache by dataset row, not minibatch position", async () => {

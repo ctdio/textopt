@@ -5,6 +5,12 @@ import type { Adapter, TextModel } from "../types.js";
 import { MiproOptimizer } from "./optimize.js";
 import type { MiproSnapshot, MiproStopReason } from "./optimize.js";
 
+/** An instance that names the split it belongs to, so an adapter can tell them apart. */
+interface Split {
+  id: number;
+  kind: "train" | "validate";
+}
+
 /** The terms each instance needs, split across two components. */
 const JOINT_OPTIONS = {
   alpha: ["hold ten seconds", "sprocket", "widget"],
@@ -18,6 +24,21 @@ function baseAdapter(): Adapter<
 > {
   const keyword = createKeywordAdapter();
   return { evaluate: (args) => keyword.evaluate(args) };
+}
+
+/** The base adapter, reporting ten input tokens for every rollout it runs. */
+function pricedAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+    }),
+  };
 }
 
 /**
@@ -290,6 +311,138 @@ describe("MiproOptimizer", () => {
     // Harvested, never authored: the reflection model writes the instruction
     // and the dataset summary, and never a demo.
     expect(result.reflectionCalls).toBe(2);
+  });
+
+  test("checkpoints a trial whose rollouts all failed transiently", async () => {
+    // The trial is spent either way: the rollouts were bought and the counter
+    // moved. A snapshot skipped because the provider was down leaves a resumed
+    // run repeating trials it already paid for.
+    const TRAIN: Split[] = Array.from({ length: 8 }, (_, id) => ({
+      id,
+      kind: "train",
+    }));
+    const VALIDATE: Split[] = Array.from({ length: 4 }, (_, id) => ({
+      id,
+      kind: "validate",
+    }));
+    const trials: number[] = [];
+
+    await new MiproOptimizer({
+      maxTrials: 3,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: { alpha: "", beta: "" },
+      trainingSet: TRAIN,
+      validationSet: VALIDATE,
+      componentOptions: JOINT_OPTIONS,
+      reflect: UNUSED_REFLECT,
+      maxMetricCalls: 2000,
+      retry: { attempts: 0 },
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0.5),
+          transient: batch.map((datum) => datum.kind === "train"),
+        }),
+      },
+      onCheckpoint: (snapshot) => {
+        trials.push(snapshot.trial);
+      },
+    });
+
+    expect(trials).toEqual([0, 1, 2, 3]);
+  });
+
+  test("checkpoints a trial only once its cadence sweep has run", async () => {
+    // A snapshot names a trial, and a resumed run schedules the next sweep an
+    // interval past the trial the snapshot names. Taking it before that trial's
+    // sweep describes half a trial, and the resume skips the sweep entirely.
+    const swept: number[] = [];
+
+    await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+      fullEvalInterval: 1,
+      seed: 1,
+    }).optimize({
+      ...jointTask(),
+      onCheckpoint: (snapshot) => {
+        swept.push(snapshot.fullEvaluations);
+      },
+    });
+
+    // The seed sweep, then one per trial, each already recorded by the
+    // snapshot that names its trial.
+    expect(swept).toEqual([1, 2, 3]);
+  });
+
+  test("counts the tokens harvesting spent in the run's usage", async () => {
+    // Harvesting runs the seed over the training set on its own evaluator,
+    // which for a demo-heavy run is most of what the run spends. Usage that
+    // omits it makes `maxCostUsd` a ceiling on part of the run.
+    const result = await new MiproOptimizer({
+      maxTrials: 4,
+      minibatchSize: 2,
+      instructionsPerComponent: 1,
+      demoSets: 2,
+      seed: 5,
+    }).optimize({
+      seedCandidate: { instruction: "Answer.", demos: "" },
+      trainingSet: DEMO_TRAINSET,
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map((datum) => `answer ${datum.id}`),
+          scores: batch.map((datum) =>
+            datum.good && candidate.instruction !== "" ? 1 : 0,
+          ),
+          usage: batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+        }),
+      },
+      reflect: async () => "```\nproposal\n```",
+      demoComponents: ["demos"],
+      maxMetricCalls: 400,
+    });
+
+    // One rollout is ten input tokens, so usage must cover every rollout the
+    // run paid for, harvesting included.
+    expect(result.usage.inputTokens).toBe(result.metricCalls * 10);
+  });
+
+  test("stops bootstrapping demo sets once the cost ceiling is reached", async () => {
+    // Menu construction is many evaluations on its own evaluator. A ceiling it
+    // never consults bounds only the trial loop that follows, and a run that
+    // spends its whole allowance choosing demos never scores a candidate.
+    const result = await new MiproOptimizer({
+      maxTrials: 4,
+      minibatchSize: 2,
+      instructionsPerComponent: 1,
+      demoSets: 3,
+      seed: 5,
+    }).optimize({
+      seedCandidate: { instruction: "Answer.", demos: "" },
+      trainingSet: DEMO_TRAINSET,
+      validationSet: [DEMO_TRAINSET[0] as (typeof DEMO_TRAINSET)[number]],
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map((datum) => `answer ${datum.id}`),
+          scores: batch.map((datum) =>
+            datum.good && candidate.instruction !== "" ? 1 : 0,
+          ),
+          usage: batch.map(() => ({ costUsd: 1 })),
+        }),
+      },
+      reflect: async () => "```\nproposal\n```",
+      demoComponents: ["demos"],
+      maxMetricCalls: 400,
+      maxCostUsd: 2,
+    });
+
+    expect(result.stopReason).toBe("costExhausted");
+    // A dollar on the first demo set, three on the batch of the second that
+    // crossed the ceiling, one on the seed sweep. The third set is never
+    // built; unbounded, the three sets alone sweep the trainingSet three times.
+    expect(result.usage.costUsd).toBe(5);
   });
 
   test("re-runs the trainingSet for each demo set", async () => {
@@ -925,6 +1078,77 @@ describe("MiproOptimizer checkpoints", () => {
     });
 
     expect(phases).not.toContain("seed");
+  });
+
+  test("does not restart candidate ids after a resume", async () => {
+    // Reporters key rows by candidateId. Restarting the counter at zero makes a
+    // resumed run's candidates collide with the interrupted run's in whatever
+    // store the reporter is writing to.
+    let before = 0;
+    let after = 0;
+
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 4,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      ...jointTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              before = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    await new MiproOptimizer({
+      maxTrials: 8,
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      ...jointTask(),
+      resumeFrom: interrupted.snapshot,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              after = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBeGreaterThanOrEqual(before);
+  });
+
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its token accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const priced = {
+      ...jointTask(),
+      cache: false as const,
+      adapter: pricedAdapter(),
+    };
+
+    const interrupted = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+    }).optimize(priced);
+
+    const resumed = await new MiproOptimizer({
+      maxTrials: 4,
+      minibatchSize: 2,
+    }).optimize({ ...priced, resumeFrom: interrupted.snapshot });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    // Ten input tokens a rollout, uncached, over both segments.
+    expect(resumed.usage.inputTokens).toBe(resumed.metricCalls * 10);
   });
 
   test("reuses the menus the first run paid for", async () => {

@@ -31,6 +31,21 @@ function task() {
   };
 }
 
+/** The base adapter, reporting ten input tokens for every rollout it runs. */
+function pricedAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+    }),
+  };
+}
+
 /** The scores an OPRO prompt shows, in the order it shows them. */
 function scoresIn(prompt: string): number[] {
   return [...prompt.matchAll(/score:\s*([\d.]+)/g)].map((match) =>
@@ -514,6 +529,39 @@ describe("OproOptimizer scoring subset", () => {
     expect(scored.size).toBe(4);
   });
 
+  test("checkpoints a round only once its confirming sweep has run", async () => {
+    // A snapshot names a round, and a resumed run continues from the round the
+    // snapshot names. Taking it before that round's cadence sweep describes
+    // half a round: the resumed run skips the sweep, because the next one is
+    // scheduled a full interval after the round it thinks already had one.
+    const taken: boolean[] = [];
+
+    await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 3,
+      scoringSetSize: 4,
+      fullEvalInterval: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: { instruction: "seed" },
+      trainingSet: TRAIN,
+      validationSet: VAL,
+      adapter: {
+        evaluate: ({ batch, candidate }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => (candidate.instruction === "seed" ? 0.5 : 1)),
+        }),
+      },
+      reflect: async () => "```\nbetter\n```",
+      maxMetricCalls: 5000,
+      onCheckpoint: (snapshot) => {
+        taken.push(snapshot.incumbentSwept);
+      },
+    });
+
+    expect(taken).toEqual([true, true, true, true]);
+  });
+
   test("reports a winner measured on the validationSet, not on the subset", async () => {
     // "over" is perfect on the training set and worthless on the validation set. The
     // search will chase it, because the search only ever sees the subset — but
@@ -770,6 +818,31 @@ describe("OproOptimizer checkpoints", () => {
     });
 
     expect(resumed.metricCalls).toBe(interrupted.metricCalls);
+  });
+
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its token accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const priced = {
+      ...task(),
+      cache: false as const,
+      adapter: pricedAdapter(),
+    };
+
+    const interrupted = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 1,
+    }).optimize(priced);
+
+    const resumed = await new OproOptimizer({
+      proposalsPerRound: 2,
+      maxRounds: 3,
+    }).optimize({ ...priced, resumeFrom: interrupted.snapshot });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    // Ten input tokens a rollout, uncached, over both segments.
+    expect(resumed.usage.inputTokens).toBe(resumed.metricCalls * 10);
   });
 
   test("does not restart candidate ids after a resume", async () => {

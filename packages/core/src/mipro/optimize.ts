@@ -1,6 +1,6 @@
 import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
-import { createMemoryCache, stableHash } from "../cache.js";
+import { createMemoryCache, defaultInstanceId } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
@@ -655,6 +655,9 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       if (affordable < 1) {
         break;
       }
+      if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
+        break;
+      }
 
       // Sizes span 1..maxDemos so the largest set is always the full one, the
       // way MIPROv2 always keeps an unshuffled max-size set in the running.
@@ -675,6 +678,9 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
         ...(demoMinScore === undefined ? {} : { minScore: demoMinScore }),
         maxDemos: requested,
         maxMetricCalls: affordable,
+        ...(maxCostUsd === undefined
+          ? {}
+          : { maxCostUsd: maxCostUsd - evaluator.usage().costUsd }),
         rng,
         ...(renderDemo === undefined ? {} : { renderDemo }),
         ...(signal === undefined ? {} : { signal }),
@@ -1041,47 +1047,55 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
 
     // Nothing was measured, so the trial is spent but says nothing. Recording
     // it would fit the surrogate to an outage and, worse, average an
-    // infrastructure zero into this configuration's readings.
-    if (minibatchScore === undefined) {
-      trial += 1;
-      continue;
+    // infrastructure zero into this configuration's readings. The trial still
+    // counts: its rollouts were bought and the cadence runs off the counter.
+    if (minibatchScore !== undefined) {
+      surrogateInput.push({ choices, score: minibatchScore });
+
+      const key = choices.join(",");
+      readings.set(key, [...(readings.get(key) ?? []), minibatchScore]);
+
+      const observation: MiproObservation = {
+        trial,
+        choices,
+        minibatchScore,
+        promoted: false,
+      };
+      observations.push(observation);
+      emit({
+        type: "trial",
+        trial,
+        choices,
+        minibatchScore,
+        promoted: false,
+      });
     }
 
-    surrogateInput.push({ choices, score: minibatchScore });
-
-    const key = choices.join(",");
-    readings.set(key, [...(readings.get(key) ?? []), minibatchScore]);
-
-    const observation: MiproObservation = {
-      trial,
-      choices,
-      minibatchScore,
-      promoted: false,
-    };
-    observations.push(observation);
-    emit({
-      type: "trial",
-      trial,
-      choices,
-      minibatchScore,
-      promoted: false,
-    });
     trial += 1;
-    await checkpoint();
 
+    // Before the checkpoint, not after: a snapshot names the trial it was taken
+    // at, and a resumed run schedules the next sweep an interval past that
+    // trial. Checkpointing first would describe half a trial, and the resumed
+    // run would skip this sweep.
+    let cadenceStop: MiproStopReason | undefined;
     if (trial % fullEvalInterval === 0) {
       const outcome = await sweepBestUnswept();
       if (outcome === "budgetExhausted" || outcome === "aborted") {
-        stopReason = outcome;
-        break;
+        cadenceStop = outcome;
       }
       // Readings are still affordable but sweeps are not, so no configuration
       // found from here could ever be promoted. The incumbent is settled;
       // buying more readings would only spend the rest of the allowance.
       if (outcome === "unaffordable") {
-        stopReason = "budgetExhausted";
-        break;
+        cadenceStop = "budgetExhausted";
       }
+    }
+
+    await checkpoint();
+
+    if (cadenceStop !== undefined) {
+      stopReason = cadenceStop;
+      break;
     }
   }
 
@@ -1194,9 +1208,4 @@ function assertConfig(config: MiproConfig): void {
   if (config.tips !== undefined && config.tips.length === 0) {
     throw new Error("tips must not be empty");
   }
-}
-
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
 }

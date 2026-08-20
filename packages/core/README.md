@@ -121,11 +121,11 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
-**`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. Sweeping a validation set is the mistake to avoid — see [Distilling a run](../../docs/distillation.md).
+**`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, maxCostUsd, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. `maxCostUsd` bounds its dollars, checked between batches — a caller bounding spend cannot bound this pass from outside, since it runs on its own evaluator. Sweeping a validation set is the mistake to avoid — see [Distilling a run](../../docs/distillation.md).
 
 **`toTrainingJsonl({ rollouts, render })`** serializes harvested rollouts as one chat-messages example per line. `render` turns a rollout into `{ messages }` or returns `null` to skip it, and decides how much of the optimized candidate stays in the training input. Returns the text; writing it is the caller's job.
 
-**`harvestFewShotExamples({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps the rollouts the metric rewarded. Omit `minScore` to keep any rollout scoring above zero, as MIPROv2 does without a `metric_threshold`; pass a number to require at least that score. It returns the selected `demos`, a formatted `block`, and the metric calls used. It does not use the score cache because it needs rollout outputs.
+**`harvestFewShotExamples({ adapter, candidate, trainingSet, minScore, maxDemos, batchSize, maxMetricCalls, maxCostUsd, rng, renderDemo, signal })`** evaluates a candidate on `trainingSet` and keeps the rollouts the metric rewarded. Omit `minScore` to keep any rollout scoring above zero, as MIPROv2 does without a `metric_threshold`; pass a number to require at least that score. It returns the selected `demos`, a formatted `block`, and the metric calls and usage it spent. It does not use the score cache because it needs rollout outputs.
 
 **`formatDemos(demos, { render })`** and **`parseDemos(text)`** write and read the `<demo>`, `<input>`, and `<output>` block format.
 
@@ -203,15 +203,15 @@ These options control search behavior and can be reused across runs.
 
 Required: `seedCandidate`, `trainingSet`, `adapter` (a `GepaAdapter`), `reflect` (a `TextModel`), and `maxMetricCalls`.
 
-| Option                | Default                                                                              |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `validationSet`       | the trainingSet                                                                      |
-| `testSet`             | none. Held out of the search and scored once, on the winner                          |
-| `componentSelector`   | `roundRobinComponentSelector()`                                                      |
-| `batchSampler`        | an epoch-shuffled sampler over `minibatchSize`                                       |
-| `valEvaluationPolicy` | `fullEvaluationPolicy()`                                                             |
-| `instanceId`          | a content hash of the datum, falling back to its position when it will not serialize |
-| `cache`               | a per-run memory cache. Pass `false` to disable                                      |
+| Option                | Default                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| `validationSet`       | the trainingSet                                                                        |
+| `testSet`             | none. Held out of the search and scored once, on the winner                            |
+| `componentSelector`   | `roundRobinComponentSelector()`                                                        |
+| `batchSampler`        | an epoch-shuffled sampler over `minibatchSize`                                         |
+| `valEvaluationPolicy` | `fullEvaluationPolicy()`                                                               |
+| `instanceId`          | a content hash of the datum, falling back to its position when the hash cannot read it |
+| `cache`               | a per-run memory cache. Pass `false` to disable                                        |
 
 `reporters`, `onCheckpoint`, `resumeFrom`, and `signal` have no defaults.
 

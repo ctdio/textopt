@@ -1,5 +1,9 @@
 import { createBudget } from "../budget.js";
-import { candidateHash, createMemoryCache, stableHash } from "../cache.js";
+import {
+  candidateHash,
+  createMemoryCache,
+  defaultInstanceId,
+} from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
@@ -1098,9 +1102,4 @@ function assertSimbaConfig(config: SimbaConfig): void {
       `concurrency must be a positive integer, received ${concurrency}`,
     );
   }
-}
-
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
 }

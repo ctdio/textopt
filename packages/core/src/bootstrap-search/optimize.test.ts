@@ -3,6 +3,12 @@ import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
 import type { Adapter } from "../types.js";
 import { BootstrapSearchOptimizer } from "./optimize.js";
 
+/** An instance that names the split it belongs to, so an adapter can tell them apart. */
+interface Split {
+  id: number;
+  kind: "train" | "validate";
+}
+
 // The instruction covers some required terms, so rollouts score above zero
 // and there is something for the bootstrapper to harvest.
 const SEED = {
@@ -17,6 +23,21 @@ function baseAdapter(): Adapter<
 > {
   const keyword = createKeywordAdapter();
   return { evaluate: (args) => keyword.evaluate(args) };
+}
+
+/** The base adapter, reporting ten input tokens for every rollout it runs. */
+function pricedAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+    }),
+  };
 }
 
 function task() {
@@ -188,6 +209,73 @@ describe("BootstrapSearchOptimizer", () => {
     );
   });
 
+  test("does not restart candidate ids after a resume", async () => {
+    // Reporters key rows by candidateId. Restarting the counter at zero makes a
+    // resumed run's candidates collide with the interrupted run's in whatever
+    // store the reporter is writing to.
+    let before = 0;
+    let after = 0;
+
+    const interrupted = await new BootstrapSearchOptimizer({
+      candidates: 4,
+      seed: 1,
+    }).optimize({
+      ...harvestTask(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              before = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    await new BootstrapSearchOptimizer({ candidates: 8, seed: 1 }).optimize({
+      ...harvestTask(),
+      resumeFrom: interrupted.snapshot,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              after = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBeGreaterThanOrEqual(before);
+  });
+
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its token accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const priced = {
+      ...task(),
+      cache: false as const,
+      adapter: pricedAdapter(),
+    };
+
+    const interrupted = await new BootstrapSearchOptimizer({
+      candidates: 1,
+      seed: 1,
+    }).optimize(priced);
+
+    const resumed = await new BootstrapSearchOptimizer({
+      candidates: 3,
+      seed: 1,
+    }).optimize({ ...priced, resumeFrom: interrupted.snapshot });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    // Ten input tokens a rollout, uncached, harvesting included, over both
+    // segments.
+    expect(resumed.usage.inputTokens).toBe(resumed.metricCalls * 10);
+  });
+
   test("refuses a checkpoint taken against a different seed candidate", async () => {
     const interrupted = await new BootstrapSearchOptimizer({
       candidates: 1,
@@ -292,6 +380,62 @@ describe("BootstrapSearchOptimizer concurrency", () => {
 
     expect(result.stopReason).toBe("scoreReached");
     expect(tracked.maxInFlight()).toBe(1);
+  });
+
+  test("waits for the sweeps it dispatched before reporting a failure", async () => {
+    // A wave dispatches its sweeps and then reads them in order. Leaving on the
+    // first failure abandons the ones behind it: they keep calling the adapter,
+    // and keep spending, after the caller has already been handed the error.
+    const TRAIN: Split[] = Array.from({ length: 4 }, (_, id) => ({
+      id,
+      kind: "train",
+    }));
+    const VALIDATE: Split[] = Array.from({ length: 2 }, (_, id) => ({
+      id,
+      kind: "validate",
+    }));
+
+    let sweeps = 0;
+    let inFlight = 0;
+
+    const running = new BootstrapSearchOptimizer({
+      candidates: 4,
+      concurrency: 4,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: TRAIN,
+      validationSet: VALIDATE,
+      demoComponents: ["demos"] as const,
+      maxMetricCalls: 600,
+      adapter: {
+        evaluate: async ({ batch }) => {
+          const scored = {
+            outputs: batch.map((datum) => `answer ${datum.id}`),
+            scores: batch.map(() => 0.5),
+          };
+          if (batch[0]?.kind !== "validate") {
+            return scored;
+          }
+
+          sweeps += 1;
+          const mine = sweeps;
+          inFlight += 1;
+          try {
+            await new Promise((resolve) => setTimeout(resolve, mine * 5));
+            if (mine === 2) {
+              throw new Error("boom");
+            }
+            return scored;
+          } finally {
+            inFlight -= 1;
+          }
+        },
+      },
+    });
+
+    await expect(running).rejects.toThrow("boom");
+    expect(inFlight).toBe(0);
   });
 
   test("rejects a concurrency below one", () => {

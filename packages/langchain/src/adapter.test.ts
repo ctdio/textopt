@@ -2,6 +2,8 @@ import type { EvaluationContext } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createKeywordReflector } from "textopt/testing";
 import type { CallbackManager } from "@langchain/core/callbacks/manager";
+import { AIMessage } from "@langchain/core/messages";
+import type { ChatGeneration } from "@langchain/core/outputs";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import type { RunnableConfig } from "@langchain/core/runnables";
@@ -116,6 +118,82 @@ describe("createLangChainAdapter", () => {
 
     expect(evaluation.usage).toEqual([
       { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.00009 },
+    ]);
+  });
+
+  test("counts a provider reporting both token shapes only once", async () => {
+    // Newer chat models populate `usage_metadata` while the integration still
+    // fills the legacy `llmOutput.tokenUsage` for the same call. Reading both
+    // is what makes this portable; adding both bills the run twice.
+    const generation: ChatGeneration = {
+      text: "hardware",
+      message: new AIMessage({
+        content: "hardware",
+        usage_metadata: {
+          input_tokens: 10,
+          output_tokens: 4,
+          total_tokens: 14,
+        },
+      }),
+    };
+    const runnable = RunnableLambda.from(
+      async (input: { text: string }, config?: { callbacks?: unknown }) => {
+        const manager = config?.callbacks as CallbackManager;
+        const run = await manager.handleLLMStart(
+          { lc: 1, type: "not_implemented", id: ["counter"] },
+          [input.text],
+        );
+        await run[0]?.handleLLMEnd({
+          generations: [[generation]],
+          llmOutput: {
+            tokenUsage: {
+              promptTokens: 10,
+              completionTokens: 4,
+              totalTokens: 14,
+            },
+          },
+        });
+        return "hardware";
+      },
+    );
+
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => runnable,
+      score: () => ({ score: 1 }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { system: "classify" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(evaluation.usage).toEqual([
+      { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
+    ]);
+  });
+
+  test("reports usage a scorer accounted for when the run itself counted none", async () => {
+    // A judge called from `score` is the expensive half of some setups, and
+    // the model under optimization may report nothing at all.
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => RunnableLambda.from(async () => "hardware"),
+      score: () => ({
+        score: 1,
+        usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.25 },
+      }),
+    });
+
+    const evaluation = await adapter.evaluate({
+      batch: [TICKETS[0] as Ticket],
+      candidate: { system: "classify" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(evaluation.usage).toEqual([
+      { inputTokens: 10, outputTokens: 4, costUsd: 0.25 },
     ]);
   });
 

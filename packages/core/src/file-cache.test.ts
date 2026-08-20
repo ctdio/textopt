@@ -57,6 +57,21 @@ describe("createFileCache", () => {
     expect(reopened.get("val:abc:1")).toBeUndefined();
   });
 
+  test("keeps the first entry written after a truncated one", () => {
+    // The half-written record is already lost. Appending onto the line it left
+    // open loses the next one too, and that one is a score this run paid for.
+    const cache = createFileCache({ path });
+    cache.set("val:abc:0", { score: 0.5 });
+    cache.set("val:abc:1", { score: 0.25 });
+    const written = readFileSync(path, "utf8");
+    writeFileSync(path, written.slice(0, written.length - 12));
+
+    const reopened = createFileCache({ path });
+    reopened.set("val:abc:2", { score: 0.75 });
+
+    expect(createFileCache({ path }).get("val:abc:2")).toEqual({ score: 0.75 });
+  });
+
   test("offers no entries to a snapshot, because the file already holds them", () => {
     // Checkpoints exist to make scores survive a crash. This cache already
     // does, so copying them into every snapshot would only make it larger.

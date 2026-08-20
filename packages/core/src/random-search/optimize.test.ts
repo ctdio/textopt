@@ -24,6 +24,21 @@ function baseAdapter(): Adapter<
   return { evaluate: (args) => keyword.evaluate(args) };
 }
 
+/** The base adapter, reporting ten input tokens for every rollout it runs. */
+function pricedAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      usage: args.batch.map(() => ({ inputTokens: 10, outputTokens: 5 })),
+    }),
+  };
+}
+
 function task() {
   return {
     seedCandidate: SEED,
@@ -315,6 +330,72 @@ describe("RandomSearchOptimizer checkpoints", () => {
     expect(resumed.rounds).toBe(3);
     expect(resumed.seedScore).toBe(interrupted.seedScore);
     expect(resumed.bestScore).toBeGreaterThanOrEqual(interrupted.bestScore);
+  });
+
+  test("does not restart candidate ids after a resume", async () => {
+    // Reporters key rows by candidateId. Restarting the counter at zero makes a
+    // resumed run's candidates collide with the interrupted run's in whatever
+    // store the reporter is writing to.
+    let before = 0;
+    let after = 0;
+
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              before = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    await new RandomSearchOptimizer({ variants: 2, maxRounds: 4 }).optimize({
+      ...task(),
+      resumeFrom: interrupted.snapshot,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "finish") {
+              after = event.bestCandidateId;
+            }
+          },
+        },
+      ],
+    });
+
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBeGreaterThanOrEqual(before);
+  });
+
+  test("carries usage already spent into a resumed run", async () => {
+    // `maxCostUsd` is a ceiling on the run, not on the segment. A resumed run
+    // that restarts its token accounting at zero lets an interrupted-and-
+    // resumed loop spend the ceiling over and over.
+    const priced = {
+      ...task(),
+      cache: false as const,
+      adapter: pricedAdapter(),
+    };
+
+    const interrupted = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 1,
+    }).optimize(priced);
+
+    const resumed = await new RandomSearchOptimizer({
+      variants: 2,
+      maxRounds: 3,
+    }).optimize({ ...priced, resumeFrom: interrupted.snapshot });
+
+    expect(interrupted.usage.inputTokens).toBeGreaterThan(0);
+    // Ten input tokens a rollout, uncached, over both segments.
+    expect(resumed.usage.inputTokens).toBe(resumed.metricCalls * 10);
   });
 
   test("charges a resumed run for what the checkpoint already spent", async () => {

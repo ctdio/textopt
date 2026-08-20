@@ -101,6 +101,34 @@ describe("createEvaluator", () => {
     });
   });
 
+  test("refuses a usage reading no ceiling could be checked against", async () => {
+    // A NaN cost makes every `maxCostUsd` comparison false, so the ceiling
+    // stops holding and the run spends the rest of its allowance without one.
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: {
+        evaluate: ({ batch }) => ({
+          outputs: [...batch],
+          scores: batch.map(() => 1),
+          usage: batch.map(() => ({ costUsd: Number.NaN })),
+        }),
+      },
+      budget: createBudget({ maxMetricCalls: 100 }),
+      cache: createMemoryCache(),
+    });
+
+    await expect(
+      evaluator.evaluate({
+        candidate: { instruction: "text" },
+        batch: BATCH,
+        ids: IDS,
+        split: "val",
+        phase: "validation",
+        candidateId: 1,
+        iteration: 0,
+      }),
+    ).rejects.toThrow(/costUsd/);
+  });
+
   test("re-runs a transiently failed instance and keeps the score it earns", async () => {
     const adapter = flakyAdapter(1);
 

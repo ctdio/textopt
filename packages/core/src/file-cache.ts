@@ -22,7 +22,14 @@ export function createFileCache(args: {
   const { path, maxEntries = 1_000_000 } = args;
 
   mkdirSync(dirname(path), { recursive: true });
-  const entries = readLog(path);
+  const log = readLog(path);
+  const entries = log.entries;
+  // A process killed mid-write leaves its last record unterminated. That one is
+  // already lost; closing the line keeps the next write from being appended
+  // onto it and lost with it.
+  if (log.unterminated) {
+    appendFileSync(path, "\n");
+  }
 
   return {
     get: (key) => entries.get(key),
@@ -47,14 +54,17 @@ export function createFileCache(args: {
  * a log whose process was killed mid-write is routinely half-written, and
  * losing one cached score is not worth failing a run over.
  */
-function readLog(path: string): Map<string, CachedScore> {
+function readLog(path: string): {
+  entries: Map<string, CachedScore>;
+  unterminated: boolean;
+} {
   const entries = new Map<string, CachedScore>();
 
   let contents: string;
   try {
     contents = readFileSync(path, "utf8");
   } catch {
-    return entries;
+    return { entries, unterminated: false };
   }
 
   for (const line of contents.split("\n")) {
@@ -66,7 +76,10 @@ function readLog(path: string): Map<string, CachedScore> {
       entries.set(entry[0], entry[1]);
     }
   }
-  return entries;
+  return {
+    entries,
+    unterminated: contents.length > 0 && !contents.endsWith("\n"),
+  };
 }
 
 function parseEntry(line: string): [string, CachedScore] | undefined {

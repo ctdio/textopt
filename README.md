@@ -35,7 +35,7 @@ Optimizing a LangChain runnable additionally needs the adapter, which takes `@la
 npm install @textopt/langchain
 ```
 
-`@textopt/ai-sdk`, `@textopt/braintrust` and `@textopt/langsmith` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle. Both match their framework's types structurally, so neither declares that framework as a dependency.
+`@textopt/ai-sdk`, `@textopt/braintrust` and `@textopt/langsmith` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle. Each matches its framework's types structurally, so none of them declares that framework as a dependency.
 
 ## Concepts
 

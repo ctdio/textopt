@@ -79,6 +79,11 @@ export async function harvestFewShotExamples<
   batchSize?: number;
   /** Ceiling on rollouts. Defaults to one pass over the trainingSet. */
   maxMetricCalls?: number;
+  /**
+   * Ceiling on dollars this pass may spend, checked between batches. Harvesting
+   * runs on its own evaluator, so a caller bounding spend has to say so here.
+   */
+  maxCostUsd?: number;
   /** Shuffles the trainingSet first, so demos are not all drawn from its head. */
   rng?: Rng;
   renderDemo?: DemoRenderer<Datum, Output>;
@@ -92,6 +97,7 @@ export async function harvestFewShotExamples<
     maxDemos = DEFAULT_MAX_DEMOS,
     batchSize = maxDemos,
     maxMetricCalls = trainingSet.length,
+    maxCostUsd,
     rng,
     renderDemo,
     signal,
@@ -108,6 +114,7 @@ export async function harvestFewShotExamples<
     maxRollouts: maxDemos,
     batchSize,
     maxMetricCalls,
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
     ...(minScore === undefined ? {} : { minScore }),
     ...(rng === undefined ? {} : { rng }),
     ...(signal === undefined ? {} : { signal }),

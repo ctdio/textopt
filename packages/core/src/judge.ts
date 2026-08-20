@@ -62,6 +62,11 @@ export function createJudge<Datum = string, Output = string>(args: {
   if (criteria.length === 0) {
     throw new Error("createJudge requires at least one criterion");
   }
+  // Every grade is normalized by dividing by this, so anything else turns a
+  // verdict into a non-finite or negative score the search then ranks by.
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new Error(`scale must be a positive number, received ${scale}`);
+  }
 
   return async ({ input, output, expected, signal }) => {
     const response = await model({

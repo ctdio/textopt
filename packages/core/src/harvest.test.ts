@@ -94,6 +94,29 @@ describe("harvestRollouts", () => {
     expect(result.metricCalls).toBe(2);
   });
 
+  test("stops at the cost ceiling", async () => {
+    // Rollout counts are a poor proxy for spend, and a harvesting pass over a
+    // large pool is where that gap is widest: the caller bounding dollars can
+    // only do so if this pass reads the same ceiling between its batches.
+    const keyword = createKeywordAdapter();
+    const result = await harvestRollouts({
+      adapter: {
+        evaluate: (args) => ({
+          ...keyword.evaluate(args),
+          usage: args.batch.map(() => ({ costUsd: 1 })),
+        }),
+      },
+      candidate: { instruction: "nothing useful here" },
+      data: POOL,
+      batchSize: 2,
+      maxCostUsd: 3,
+    });
+
+    // Two batches of two: the second crosses the ceiling and no third runs.
+    expect(result.usage.costUsd).toBe(4);
+    expect(result.metricCalls).toBe(4);
+  });
+
   test("reports what it spent", async () => {
     const result = await harvestRollouts({
       adapter: adapter(),

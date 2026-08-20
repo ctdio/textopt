@@ -92,6 +92,15 @@ describe("createJudge", () => {
     expect(verdict.score).toBe(1);
   });
 
+  test("refuses a scale that cannot normalize a grade", () => {
+    // Every grade is divided by it, so a zero or negative scale turns each
+    // verdict into a non-finite number or a negative one, and the search then
+    // ranks candidates by it.
+    expect(() =>
+      createJudge({ model: replying(""), criteria: CRITERIA, scale: 0 }),
+    ).toThrow(/scale/);
+  });
+
   test("shows the judge the input, the output and the expected answer", async () => {
     let seen = "";
     const judge = createJudge({

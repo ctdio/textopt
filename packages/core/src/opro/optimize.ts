@@ -1,6 +1,6 @@
 import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
-import { createMemoryCache, stableHash } from "../cache.js";
+import { createMemoryCache, defaultInstanceId, stableHash } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
@@ -904,18 +904,30 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     }
 
     round += 1;
+
+    // Before the checkpoint, not after: a snapshot names the round it was
+    // taken at, and a resumed run schedules the next sweep an interval past
+    // that round. Checkpointing first would describe half a round and the
+    // resume would skip this sweep entirely.
+    let cadenceStop: OproStopReason | undefined;
+    if (
+      roundStop === undefined &&
+      scoringSet !== undefined &&
+      round % fullEvalInterval === 0 &&
+      (await refreshIncumbent()) === "stop"
+    ) {
+      cadenceStop = signal?.aborted ? "aborted" : "budgetExhausted";
+    }
+
     await checkpoint();
 
     if (roundStop !== undefined) {
       stopReason = roundStop;
       break;
     }
-
-    if (scoringSet !== undefined && round % fullEvalInterval === 0) {
-      if ((await refreshIncumbent()) === "stop") {
-        stopReason = signal?.aborted ? "aborted" : "budgetExhausted";
-        break;
-      }
+    if (cadenceStop !== undefined) {
+      stopReason = cadenceStop;
+      break;
     }
   }
 
@@ -1038,9 +1050,4 @@ function assertConfig(config: OproConfig): void {
       `exemplars must be a non-negative integer, received ${config.exemplars}`,
     );
   }
-}
-
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
 }

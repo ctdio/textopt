@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   candidateHash,
   createMemoryCache,
+  defaultInstanceId,
   evaluationCacheKey,
 } from "./cache.js";
 
@@ -111,5 +112,25 @@ describe("createMemoryCache", () => {
     const cache = createMemoryCache({ entries: [["a", { score: 0.25 }]] });
 
     expect(cache.get("a")?.score).toBe(0.25);
+  });
+});
+
+describe("defaultInstanceId", () => {
+  test("names two instances holding the same content the same", () => {
+    expect(defaultInstanceId({ datum: { question: "a" }, index: 0 })).toBe(
+      defaultInstanceId({ datum: { question: "a" }, index: 3 }),
+    );
+  });
+
+  test("separates instances a content hash cannot tell apart", () => {
+    // A Map, a Set and a class instance all serialize to `{}`. One id shared
+    // between two rows serves each of them the score the other measured.
+    const first = defaultInstanceId({ datum: new Map([["q", "a"]]), index: 0 });
+    const second = defaultInstanceId({
+      datum: new Map([["q", "b"]]),
+      index: 1,
+    });
+
+    expect(first).not.toBe(second);
   });
 });

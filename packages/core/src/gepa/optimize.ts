@@ -1,6 +1,6 @@
 import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
-import { createMemoryCache, stableHash } from "../cache.js";
+import { createMemoryCache, defaultInstanceId } from "../cache.js";
 import {
   assertResumable,
   candidateFingerprint,
@@ -1737,10 +1737,6 @@ function collectDominatorIds(records: readonly CandidateRecord[]): number[] {
  * the dataset for no benefit. Data that will not serialize falls back to its
  * position, which is stable for as long as the dataset order is.
  */
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
-}
 
 /**
  * The two rollout sets restricted to the instances both of them measured.

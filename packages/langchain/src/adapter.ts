@@ -199,7 +199,13 @@ export function createLangChainAdapter<Datum, Output>(
         feedback: results.map((result) => result.scored.feedback ?? ""),
       };
 
-      if (results.some((result) => Object.keys(result.usage).length > 0)) {
+      if (
+        results.some(
+          (result) =>
+            result.scored.usage !== undefined ||
+            Object.keys(result.usage).length > 0,
+        )
+      ) {
         evaluation.usage = results.map(
           (result) => result.scored.usage ?? result.usage,
         );
@@ -459,9 +465,29 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
   /**
    * LangChain reports tokens in two shapes depending on the integration: the
    * legacy `llmOutput.tokenUsage` and the message-level `usage_metadata` newer
-   * chat models attach. Reading both is what makes this work across providers.
+   * chat models attach. Reading both is what makes this work across providers;
+   * an integration that fills both describes one call twice, so the
+   * message-level shape wins and the legacy total is only a fallback.
    */
   function countTokens(output: LlmResultLike): void {
+    let fromMetadata = false;
+    for (const generation of output.generations?.flat() ?? []) {
+      const metadata = generation.message?.usage_metadata;
+      if (metadata === undefined) {
+        continue;
+      }
+      fromMetadata = true;
+      counted = true;
+      tokens.inputTokens += metadata.input_tokens ?? 0;
+      tokens.outputTokens += metadata.output_tokens ?? 0;
+      tokens.totalTokens +=
+        metadata.total_tokens ??
+        (metadata.input_tokens ?? 0) + (metadata.output_tokens ?? 0);
+    }
+    if (fromMetadata) {
+      return;
+    }
+
     const legacy = output.llmOutput?.tokenUsage;
     if (legacy !== undefined) {
       counted = true;
@@ -470,19 +496,6 @@ function createTraceCollector(args: { includeChainSteps: boolean }): {
       tokens.totalTokens +=
         legacy.totalTokens ??
         (legacy.promptTokens ?? 0) + (legacy.completionTokens ?? 0);
-    }
-
-    for (const generation of output.generations?.flat() ?? []) {
-      const metadata = generation.message?.usage_metadata;
-      if (metadata === undefined) {
-        continue;
-      }
-      counted = true;
-      tokens.inputTokens += metadata.input_tokens ?? 0;
-      tokens.outputTokens += metadata.output_tokens ?? 0;
-      tokens.totalTokens +=
-        metadata.total_tokens ??
-        (metadata.input_tokens ?? 0) + (metadata.output_tokens ?? 0);
     }
   }
 

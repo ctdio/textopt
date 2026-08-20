@@ -1,5 +1,5 @@
 import { createBudget } from "./budget.js";
-import { createEvaluator } from "./evaluation.js";
+import { costExhausted, createEvaluator } from "./evaluation.js";
 import type { Rng } from "./rng.js";
 import type { Adapter, Candidate, UsageTotals } from "./types.js";
 
@@ -71,6 +71,12 @@ export async function harvestRollouts<
   batchSize?: number;
   /** Ceiling on rollouts run. Defaults to one pass over `data`. */
   maxMetricCalls?: number;
+  /**
+   * Ceiling on dollars this pass may spend, checked between batches. Rollout
+   * counts are a poor proxy for spend, and a caller bounding dollars cannot
+   * bound this pass from outside: it runs on its own evaluator.
+   */
+  maxCostUsd?: number;
   /** Shuffles `data` first, so rollouts are not all drawn from its head. */
   rng?: Rng;
   signal?: AbortSignal;
@@ -83,6 +89,7 @@ export async function harvestRollouts<
     maxRollouts = Number.POSITIVE_INFINITY,
     batchSize = Math.min(maxRollouts, data.length),
     maxMetricCalls = data.length,
+    maxCostUsd,
     rng,
     signal,
   } = args;
@@ -106,6 +113,9 @@ export async function harvestRollouts<
 
   for (let start = 0; start < order.length; start += batchSize) {
     if (rollouts.length >= maxRollouts || signal?.aborted) {
+      break;
+    }
+    if (costExhausted({ usage: evaluator.usage(), maxCostUsd })) {
       break;
     }
 

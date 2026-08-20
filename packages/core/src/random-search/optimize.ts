@@ -1,6 +1,6 @@
 import { createDeadline } from "../deadline.js";
 import { createBudget } from "../budget.js";
-import { createMemoryCache, stableHash } from "../cache.js";
+import { createMemoryCache, defaultInstanceId } from "../cache.js";
 import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
@@ -660,9 +660,4 @@ function assertConfig(config: RandomSearchConfig): void {
       `maxRounds must be a positive integer, received ${maxRounds}`,
     );
   }
-}
-
-function defaultInstanceId(args: { datum: unknown; index: number }): string {
-  const hash = stableHash(args.datum);
-  return hash === "" ? String(args.index) : hash;
 }
