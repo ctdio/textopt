@@ -38,12 +38,9 @@ function pricedAdapter(): Adapter<
  */
 function createAdviceReflector(): TextModel {
   return async ({ prompt }) => {
-    const components = (
-      prompt.match(/<components>\n([\s\S]*?)\n<\/components>/)?.[1] ?? ""
-    )
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const components = [...prompt.matchAll(/<component name="([^"]+)">/g)].map(
+      (match) => match[1] as string,
+    );
 
     const missing = new Set<string>();
     for (const match of prompt.matchAll(
@@ -141,6 +138,32 @@ describe("SimbaOptimizer", () => {
     });
 
     expect(result.bestCandidate.instruction).toBe(SEED.instruction);
+  });
+
+  test("keeps what a component already said when a demo lands in it", async () => {
+    const result = await optimizer({
+      strategies: ["appendDemo"] as const,
+    }).optimize({
+      ...ruleTask(),
+      demoComponents: ["instruction"] as const,
+    });
+
+    expect(result.bestCandidate.instruction).toContain("<demo>");
+    expect(result.bestCandidate.instruction.startsWith(SEED.instruction)).toBe(
+      true,
+    );
+  });
+
+  test("writes rules into the only component even when it holds the demos", async () => {
+    const result = await optimizer({
+      strategies: ["appendDemo", "appendRule"] as const,
+      maxSteps: 4,
+    }).optimize({
+      ...ruleTask(),
+      demoComponents: ["instruction"] as const,
+    });
+
+    expect(result.reflectionCalls).toBeGreaterThan(0);
   });
 
   test("calls no reflection model when only demos are being appended", async () => {

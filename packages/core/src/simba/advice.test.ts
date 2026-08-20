@@ -5,6 +5,7 @@ describe("buildAdvicePrompt", () => {
   test("names every component the advice is wanted for", () => {
     const prompt = buildAdvicePrompt({
       components: ["planner", "writer"],
+      current: { planner: "", writer: "" },
       input: { question: "How do I reset a device?" },
       better: {
         output: "hold ten seconds",
@@ -18,9 +19,22 @@ describe("buildAdvicePrompt", () => {
     expect(prompt).toContain("writer");
   });
 
+  test("shows what each component currently says, so advice can build on it", () => {
+    const prompt = buildAdvicePrompt({
+      components: ["planner", "writer"],
+      current: { planner: "Break the task into steps.", writer: "" },
+      input: { question: "How do I reset a device?" },
+      better: { output: "hold ten seconds", score: 1 },
+      worse: { output: "turn it off", score: 0 },
+    });
+
+    expect(prompt).toContain("Break the task into steps.");
+  });
+
   test("shows both trajectories with their rewards", () => {
     const prompt = buildAdvicePrompt({
       components: ["writer"],
+      current: { writer: "" },
       input: { question: "How do I reset a device?" },
       better: {
         output: "hold ten seconds",
@@ -38,6 +52,7 @@ describe("buildAdvicePrompt", () => {
   test("omits the better trajectory when there is none to contrast", () => {
     const prompt = buildAdvicePrompt({
       components: ["writer"],
+      current: { writer: "" },
       input: { question: "How do I reset a device?" },
       worse: { output: "turn it off", score: 0, feedback: "Missing: hold." },
     });

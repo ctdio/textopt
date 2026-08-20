@@ -7,6 +7,12 @@ export interface AdviceTrajectory<Output = unknown> {
 export interface AdvicePromptArgs<Datum = unknown, Output = unknown> {
   /** Components the advice is wanted for, named so each can be addressed. */
   components: readonly string[];
+  /**
+   * What each of those components currently says. Advice is appended to this
+   * text rather than replacing it, so a proposer that cannot see it writes
+   * blind: it restates what is already there, and cannot correct it.
+   */
+  current: Record<string, string>;
   input: Datum;
   /** The higher scoring run of this instance, when there is one to contrast. */
   better?: AdviceTrajectory<Output>;
@@ -32,7 +38,7 @@ const ADVICE_BLOCK = /<advice\s+component="([^"]+)"\s*>([\s\S]*?)<\/advice>/g;
 export function buildAdvicePrompt<Datum, Output>(
   args: AdvicePromptArgs<Datum, Output>,
 ): string {
-  const { components, input, better, worse } = args;
+  const { components, current, input, better, worse } = args;
 
   return [
     "Two runs of the same system on the same input are shown below, with the reward each earned.",
@@ -44,11 +50,21 @@ export function buildAdvicePrompt<Datum, Output>(
     ...(worse === undefined ? [] : trajectoryBlock("worse", worse)),
     ...(better === undefined ? [] : trajectoryBlock("better", better)),
     "",
-    "Write advice for each of these components:",
+    "Write advice for each of these components, shown with what it says now:",
     "",
     "<components>",
-    components.join("\n"),
+    components
+      .map((component) =>
+        [
+          `<component name="${component}">`,
+          current[component] ?? "",
+          "</component>",
+        ].join("\n"),
+      )
+      .join("\n"),
     "</components>",
+    "",
+    "Your advice is appended to what the component already says. Do not restate advice it already carries; add what is missing or correct what is wrong.",
     "",
     "The component will not have access to this example, so advice that only covers this input is wasted. State the general behaviour it should adopt, and be concrete about when it applies.",
     "Address each component's own sub-task rather than the system as a whole.",

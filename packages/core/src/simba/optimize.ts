@@ -8,7 +8,7 @@ import type { CachedScore, EvaluationCache } from "../cache.js";
 import { assertResumable, runFingerprint } from "../checkpoint.js";
 import { mapWithConcurrency } from "../concurrency.js";
 import { createDeadline } from "../deadline.js";
-import { formatDemos, parseDemos } from "../demos.js";
+import { parseDemos, replaceDemos } from "../demos.js";
 import type { Demo, DemoRenderer } from "../demos.js";
 import {
   BudgetExhausted,
@@ -314,9 +314,13 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   const emit = createEmitter<SimbaEvent<K>>(reporters);
 
   const components = componentNames(seedCandidate);
+  // A component holding demos can hold instructions too: advice is spliced in
+  // around the demo blocks rather than over them. The default still prefers to
+  // leave a dedicated demo component to its examples, and only writes into one
+  // when there is no other component to write into.
+  const nonDemo = components.filter((name) => !demoComponents.includes(name));
   const ruleComponents =
-    instructionComponents ??
-    components.filter((name) => !demoComponents.includes(name));
+    instructionComponents ?? (nonDemo.length > 0 ? nonDemo : components);
   const enabled =
     strategies ??
     (demoComponents.length > 0
@@ -894,12 +898,13 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
     const next = { ...candidate };
     for (const [name, demos] of blocks) {
-      next[name] = formatDemos(
-        demos.filter((_, index) => !drops.has(index)),
-        renderDemo === undefined
+      next[name] = replaceDemos({
+        text: next[name] ?? "",
+        demos: demos.filter((_, index) => !drops.has(index)),
+        ...(renderDemo === undefined
           ? {}
-          : { render: renderDemo as DemoRenderer<unknown, unknown> },
-      );
+          : { render: renderDemo as DemoRenderer<unknown, unknown> }),
+      });
     }
     return next;
   }
@@ -935,13 +940,14 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
 
     const next = { ...candidate };
     for (const name of demoComponents) {
-      const kept = parseDemos(next[name] ?? "");
-      next[name] = formatDemos(
-        [...kept, demo as Demo],
-        renderDemo === undefined
+      const text = next[name] ?? "";
+      next[name] = replaceDemos({
+        text,
+        demos: [...parseDemos(text), demo as Demo],
+        ...(renderDemo === undefined
           ? {}
-          : { render: renderDemo as DemoRenderer<unknown, unknown> },
-      );
+          : { render: renderDemo as DemoRenderer<unknown, unknown> }),
+      });
     }
     return next;
   }
@@ -987,6 +993,9 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     const response = await reflect({
       prompt: buildPrompt({
         components: ruleComponents,
+        current: Object.fromEntries(
+          ruleComponents.map((name) => [name, candidate[name] ?? ""]),
+        ),
         input: bucket.datum,
         ...(better === undefined ? {} : { better }),
         ...(worse === undefined ? {} : { worse }),
