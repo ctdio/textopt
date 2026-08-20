@@ -1,5 +1,5 @@
 ---
-"textopt": minor
+"textopt": patch
 ---
 
 SIMBA's advice proposer sees what each component already says.

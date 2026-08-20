@@ -1,5 +1,5 @@
 ---
-"textopt": minor
+"textopt": patch
 "@textopt/langchain": patch
 ---
 
