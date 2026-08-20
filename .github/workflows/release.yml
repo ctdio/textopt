@@ -15,14 +15,17 @@ permissions: {}
 jobs:
   release:
     runs-on: ubuntu-latest
-    # This job holds the only npm credential in the repository. Add required
-    # reviewers to the `npm` environment in the repository settings so a publish
-    # needs a human, even if something in this job runs code it should not.
+    # The environment name is half of what npm authenticates. A trusted
+    # publisher names the repository, the workflow file and the environment, so
+    # renaming any of the three stops the publish rather than weakening it. The
+    # required reviewers on it are the human gate; `prevent self-review` cannot
+    # be set while one person is the only reviewer, since the merge that
+    # triggers the run also disqualifies them from approving it.
     environment: npm
     permissions:
       contents: write # push the version commit, the tags, and the releases
       pull-requests: write # open and update the version pull request
-      id-token: write # sign the published tarballs with npm provenance
+      id-token: write # mint the OIDC token npm publishes against
     steps:
       # Third-party actions are pinned by commit. A tag or branch reference is
       # mutable; `changesets/action@v2` is a branch, not a tag.
@@ -32,12 +35,14 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       # No dependency cache here on purpose: a cache this job restores can be
       # written by any other job in the repository, and this job publishes.
+      # No `registry-url`: it writes an .npmrc holding `${NODE_AUTH_TOKEN}`,
+      # and with no such token set pnpm used to send that placeholder as the
+      # credential and get a 404 before OIDC could be tried. Fixed in pnpm
+      # 11.1.3, but the registry it would configure is already the default, so
+      # the setting only buys back a failure mode.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-          # Writes the .npmrc that reads NODE_AUTH_TOKEN. The action stopped
-          # handling npm credentials itself in v2.
-          registry-url: https://registry.npmjs.org
       # Every dependency is public, so the install needs no credential, and
       # --ignore-scripts keeps dependency code from executing in the one job
       # that has one. pnpm already blocks these by default; this is explicit.
@@ -63,6 +68,7 @@ jobs:
           publish-script: pnpm release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
+        # No npm credential of any kind: the publish authenticates as this
+        # workflow through OIDC, against the trusted publisher configured on
+        # each package. Provenance needs no flag either — npm attests a trusted
+        # publish by default, which is the only way to attest one at all.
