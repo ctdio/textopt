@@ -159,6 +159,46 @@ describe("RandomSearchOptimizer", () => {
     expect(result.stopReason).toBe("budgetExhausted");
   });
 
+  test("spends the budget to within one sweep of the ceiling", async () => {
+    // Four variants over a four-instance validation set price a full round at
+    // 16 rollouts. Refusing any round that cannot fund all four strands the
+    // remainder: 20 of 30 spent without truncated rounds, 28 of 30 with them.
+    const result = await new RandomSearchOptimizer({
+      variants: 4,
+    }).optimize({ ...task(), maxMetricCalls: 30 });
+
+    expect(result.metricCalls).toBeGreaterThan(30 - KEYWORD_EXAMPLES.length);
+    expect(result.metricCalls).toBeLessThanOrEqual(30);
+    expect(result.stopReason).toBe("budgetExhausted");
+  });
+
+  test("never buys a partial validation sweep at the end of the budget", async () => {
+    // A variant scored on part of the validation set is not comparable to one
+    // scored on all of it, so the tail of the budget must fund whole sweeps or
+    // nothing: every evaluation is the full set, never the rollouts left over.
+    const batches: number[] = [];
+    const keyword = createKeywordAdapter();
+
+    const result = await new RandomSearchOptimizer({
+      variants: 4,
+    }).optimize({
+      ...task(),
+      maxMetricCalls: 30,
+      adapter: {
+        evaluate: (args) => {
+          batches.push(args.batch.length);
+          return keyword.evaluate(args);
+        },
+      },
+    });
+
+    expect(result.metricCalls).toBeLessThanOrEqual(30);
+    expect(batches.length).toBeGreaterThan(0);
+    for (const size of batches) {
+      expect(size).toBe(KEYWORD_EXAMPLES.length);
+    }
+  });
+
   test("stops once the round limit is reached", async () => {
     const result = await new RandomSearchOptimizer({
       variants: 2,

@@ -442,10 +442,14 @@ async function runRandomSearch<
       stopReason = "deadlineReached";
       break;
     }
-    // A round is only worth starting if every variant in it can be both
-    // proposed and scored: a half-funded round spends rollouts on variants
-    // that can never be compared against the rest.
-    if (!budget.canAfford(variants * validationSet.length)) {
+    // A round starts whenever one more full sweep is affordable, and the
+    // scheduling below truncates it to the variants the remainder can fund
+    // whole sweeps for. Demanding the whole round up front instead stranded
+    // up to `variants * |val| - 1` rollouts — a fifth of a typical budget —
+    // and a variant needs only its own sweep to be compared against the
+    // incumbent. What truncation costs is bounded and paid once: the final
+    // round proposes up to `variants - 1` texts it can never score.
+    if (!budget.canAfford(validationSet.length)) {
       stopReason = "budgetExhausted";
       break;
     }

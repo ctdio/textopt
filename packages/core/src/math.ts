@@ -58,20 +58,73 @@ export function signFlipPValue(args: {
     return normalTailProbability({ differences: moved, observed });
   }
 
-  const assignments = 2 ** moved.length;
-  let atLeastAsExtreme = 0;
+  const sums = achievableSums(moved);
+  const atLeastAsExtreme = sums.filter((total) => total >= observed).length;
+  return atLeastAsExtreme / sums.length;
+}
 
-  for (let mask = 0; mask < assignments; mask += 1) {
-    let total = 0;
-    for (let index = 0; index < moved.length; index += 1) {
-      const sign = (mask >> index) & 1 ? -1 : 1;
-      total += sign * (moved[index] as number);
+/**
+ * Holm-Bonferroni step-down adjustment: the p-value each comparison would need
+ * to survive on its own if the whole family were held to one error rate,
+ * rather than letting the smallest of several tests read as significant by
+ * volume alone. Sorted ascending, each rank is scaled by how many comparisons
+ * are still in contention at that rank, and the running maximum keeps a later,
+ * less-scaled rank from reporting looser than an earlier one already has.
+ *
+ * `familySize` may exceed `pValues.length`: a comparison `signFlipPValue`
+ * could not test at all (every paired difference identical, so no p reflects
+ * a real margin) is still a member of the family being controlled for, and
+ * excluding it from the denominator would understate the correction owed to
+ * the comparisons that could be tested.
+ */
+export function holmAdjust(args: {
+  pValues: readonly number[];
+  familySize: number;
+}): number[] {
+  const { pValues, familySize } = args;
+
+  const ranked = pValues
+    .map((pValue, index) => ({ pValue, index }))
+    .sort((a, b) => a.pValue - b.pValue);
+
+  const adjusted = new Array<number>(pValues.length);
+  let runningMax = 0;
+  ranked.forEach(({ pValue, index }, rank) => {
+    runningMax = Math.max(
+      runningMax,
+      Math.min(1, pValue * (familySize - rank)),
+    );
+    adjusted[index] = runningMax;
+  });
+
+  return adjusted;
+}
+
+/**
+ * Every total reachable by flipping some subset of `differences`' signs,
+ * built by doubling rather than by scoring each of the 2^n sign masks
+ * independently: after `k` differences there are 2^k sums, and folding in
+ * difference `k+1` only ever adds or subtracts it from each of them, so the
+ * whole enumeration costs O(2^n) instead of the O(2^n * n) a per-mask loop
+ * pays for re-summing n terms every time. Measured at n=20, twenty seeds
+ * being the bench's ceiling: about 63ms scoring masks one at a time against
+ * about 16ms building sums this way — the difference between affording exact
+ * enumeration through a full twenty-seed run and falling back to the normal
+ * approximation, which is what raising `EXACT_LIMIT` in compare.ts to 20
+ * relies on.
+ */
+function achievableSums(differences: readonly number[]): number[] {
+  let sums = [0];
+  for (const difference of differences) {
+    const next = new Array<number>(sums.length * 2);
+    for (let index = 0; index < sums.length; index += 1) {
+      const total = sums[index] as number;
+      next[index] = total + difference;
+      next[index + sums.length] = total - difference;
     }
-    if (total >= observed) {
-      atLeastAsExtreme += 1;
-    }
+    sums = next;
   }
-  return atLeastAsExtreme / assignments;
+  return sums;
 }
 
 /**

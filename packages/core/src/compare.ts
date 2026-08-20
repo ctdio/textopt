@@ -1,5 +1,5 @@
 import { mapWithConcurrency } from "./concurrency.js";
-import { signFlipPValue } from "./math.js";
+import { holmAdjust, signFlipPValue } from "./math.js";
 import type { OptimizerResult } from "./optimizer.js";
 
 export interface ComparisonRun {
@@ -10,6 +10,10 @@ export interface ComparisonRun {
   bestScore: number;
   testScore?: number;
   metricCalls: number;
+  /** Rollouts this run got from the cache instead of paying for. */
+  cacheHits: number;
+  /** Calls to a proposal or reflection model, outside the metric budget. */
+  reflectionCalls: number;
   costUsd: number;
   stopReason: string;
 }
@@ -23,12 +27,33 @@ export interface ComparisonSummary {
   maxScore: number;
   meanMetricCalls: number;
   meanCostUsd: number;
+  meanCacheHits: number;
+  meanReflectionCalls: number;
+  /**
+   * How many distinct values this entrant's score took across its seeds.
+   * 1 means every seed landed on the same number — the seed changed nothing
+   * about the outcome, whatever the search did internally with it.
+   */
+  distinctScores: number;
   /**
    * How often the winner's margin over this entrant would arise if the two
-   * were equally good and each seed's outcome were a coin flip. Absent for the
-   * winner itself.
+   * were equally good and each seed's outcome were a coin flip. Absent for
+   * the winner itself, and also absent when every seed produced the exact
+   * same margin: a sign-flip test over n seeds is answering a question about
+   * n independent trials, and identical margins mean the seed never actually
+   * put that to the test — there was one realization, repeated. Reporting a
+   * p-value there would state a precision (as fine as 2^-n) that the run
+   * never earned, so it is withheld rather than printed misleadingly small.
    */
   pValueVsWinner?: number;
+  /**
+   * `pValueVsWinner` after Holm-Bonferroni step-down across the other
+   * entrants in this same `compare()` call — the family the raw p-value
+   * would otherwise be read against in isolation. Absent wherever the raw
+   * p-value is: a withheld comparison has nothing to adjust, but it still
+   * occupies a slot in the family the other comparisons are corrected for.
+   */
+  pValueVsWinnerHolm?: number;
 }
 
 export interface Comparison {
@@ -38,7 +63,9 @@ export interface Comparison {
   runs: ComparisonRun[];
 }
 
-const EXACT_LIMIT = 16;
+const EXACT_LIMIT = 20;
+/** Well above float subtraction noise (~1e-16), well below a real margin. */
+const DEGENERACY_TOLERANCE = 1e-9;
 
 /**
  * Run several optimizers over the same seeds and report which one actually won.
@@ -96,6 +123,8 @@ export async function compare<K extends string, Output = unknown>(args: {
           ? {}
           : { testScore: result.testScore }),
         metricCalls: result.metricCalls,
+        cacheHits: result.cacheHits,
+        reflectionCalls: result.reflectionCalls ?? 0,
         costUsd: result.usage.costUsd,
         stopReason: result.stopReason,
       } satisfies ComparisonRun;
@@ -109,21 +138,32 @@ export async function compare<K extends string, Output = unknown>(args: {
     summary.meanScore > best.meanScore ? summary : best,
   );
 
+  const rawPValues = summaries.map((summary) =>
+    summary.entrant === winner.entrant
+      ? undefined
+      : margin({
+          winner: winner.entrant,
+          entrant: summary.entrant,
+          runs,
+          seeds,
+        }),
+  );
+  const holmAdjusted = holmAdjustSparse({
+    pValues: rawPValues,
+    familySize: names.length - 1,
+  });
+
   return {
     winner: winner.entrant,
-    summaries: summaries.map((summary) =>
-      summary.entrant === winner.entrant
-        ? summary
+    summaries: summaries.map((summary, index) => ({
+      ...summary,
+      ...(rawPValues[index] === undefined
+        ? {}
         : {
-            ...summary,
-            pValueVsWinner: margin({
-              winner: winner.entrant,
-              entrant: summary.entrant,
-              runs,
-              seeds,
-            }),
-          },
-    ),
+            pValueVsWinner: rawPValues[index],
+            pValueVsWinnerHolm: holmAdjusted[index],
+          }),
+    })),
     runs,
   };
 }
@@ -144,6 +184,9 @@ function summarize(args: {
     maxScore: Math.max(...scores),
     meanMetricCalls: mean(runs.map((run) => run.metricCalls)),
     meanCostUsd: mean(runs.map((run) => run.costUsd)),
+    meanCacheHits: mean(runs.map((run) => run.cacheHits)),
+    meanReflectionCalls: mean(runs.map((run) => run.reflectionCalls)),
+    distinctScores: new Set(scores).size,
   };
 }
 
@@ -151,13 +194,25 @@ function summarize(args: {
  * Paired across seeds rather than pooled: the same seed puts both entrants on
  * the same sampling order, so the difference at a seed is a comparison and the
  * spread between seeds is not.
+ *
+ * Returns `undefined` when every seed produced the exact same nonzero margin.
+ * That is not evidence of an n-seed-strong result — it is one realization the
+ * seed never varied, and a sign-flip p-value would report a precision from n
+ * independent trials that never happened. A margin of exactly zero every seed
+ * is not this case: `signFlipPValue` already reports that honestly as 1, no
+ * significance claimed either way, which is not a fabricated number.
+ *
+ * "Exact same" is judged within `DEGENERACY_TOLERANCE`, not `===`: subtracting
+ * two scores that are equal in substance can still land a few ULPs apart
+ * (0.95 - 0.55 and 0.9 - 0.5 differ at the 16th digit), and treating that as
+ * n real trials would be the same fabrication this check exists to prevent.
  */
 function margin(args: {
   winner: string;
   entrant: string;
   runs: readonly ComparisonRun[];
   seeds: readonly number[];
-}): number {
+}): number | undefined {
   const { winner, entrant, runs, seeds } = args;
 
   const differences = seeds.map((seed) => {
@@ -165,6 +220,20 @@ function margin(args: {
     const lost = scoreOf({ runs, entrant, seed });
     return won - lost;
   });
+
+  const [first] = differences;
+  if (first !== undefined) {
+    const spread = differences.reduce(
+      (widest, difference) => Math.max(widest, Math.abs(difference - first)),
+      0,
+    );
+    if (
+      spread < DEGENERACY_TOLERANCE &&
+      Math.abs(first) > DEGENERACY_TOLERANCE
+    ) {
+      return undefined;
+    }
+  }
 
   return signFlipPValue({
     differences,
@@ -184,6 +253,37 @@ function scoreOf(args: {
   );
 
   return run?.score ?? 0;
+}
+
+/**
+ * `holmAdjust` over the raw p-values that exist, skipping the slots a
+ * withheld comparison left `undefined` — those still count toward
+ * `familySize`, they just have nothing of their own to adjust.
+ */
+function holmAdjustSparse(args: {
+  pValues: readonly (number | undefined)[];
+  familySize: number;
+}): (number | undefined)[] {
+  const { pValues, familySize } = args;
+
+  const present = pValues
+    .map((pValue, index) => ({ pValue, index }))
+    .filter(
+      (entry): entry is { pValue: number; index: number } =>
+        entry.pValue !== undefined,
+    );
+
+  const adjusted = holmAdjust({
+    pValues: present.map((entry) => entry.pValue),
+    familySize,
+  });
+
+  const result = new Array<number | undefined>(pValues.length).fill(undefined);
+  present.forEach((entry, rank) => {
+    result[entry.index] = adjusted[rank];
+  });
+
+  return result;
 }
 
 function mean(values: readonly number[]): number {

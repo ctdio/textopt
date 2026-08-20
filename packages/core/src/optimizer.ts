@@ -78,6 +78,21 @@ export interface OptimizerResult<
   bestOutputs?: (Output | undefined)[];
   metricCalls: number;
   /**
+   * Rollouts served from the cache rather than charged to `metricCalls`. Every
+   * optimizer here caches by default, so the same `maxMetricCalls` can buy a
+   * search that revisits scored candidates a longer effective run than one
+   * that never does — a comparison over `metricCalls` alone hides that. Zero
+   * for a run with caching disabled.
+   */
+  cacheHits: number;
+  /**
+   * Calls made to a proposal or reflection model, which no metric budget
+   * covers — see each optimizer's own accounting for what a call costs there.
+   * Absent from a search that proposes nothing of its own: bootstrap search
+   * only accepts or rejects rollouts the metric already scored.
+   */
+  reflectionCalls?: number;
+  /**
    * Tokens and dollars the search spent, summed from what the adapter reported.
    * Zero throughout when the adapter reports no usage. `maxCostUsd` is checked
    * against this, so the held-out sweep — which runs after the search has
