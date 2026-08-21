@@ -14,6 +14,14 @@ export interface OptimizerTask<
   K extends string = string,
 > {
   seedCandidate: Candidate<K>;
+  /**
+   * Instances the search draws evidence from. Reflective optimizers mine these
+   * for what a candidate got wrong, so a training row earns its place by being
+   * diagnostic — a row every candidate already passes teaches the rewriter
+   * nothing.
+   *
+   * @see docs/data-prep.md
+   */
   trainingSet: readonly Datum[];
   /**
    * Instances the search selects candidates against. Defaults to
@@ -21,6 +29,11 @@ export interface OptimizerTask<
    * number to report from one — the result carries a warning saying so.
    * `"reuseTraining"` is that same default with the caller's name on it, and
    * carries no warning.
+   *
+   * Split by group rather than by row: near-duplicate instances that straddle
+   * the boundary leak, and the run reports a score nothing earned.
+   *
+   * @see docs/data-prep.md
    */
   validationSet?: readonly Datum[] | "reuseTraining";
   /**
@@ -36,6 +49,18 @@ export interface OptimizerTask<
    * number in a result that no candidate was ever selected against.
    */
   testSet?: readonly Datum[];
+  /**
+   * Scored rollouts the search may spend. Cache hits do not count, and test
+   * rollouts are outside it entirely.
+   *
+   * Spending it is only worth anything if the metric separates candidates
+   * first: a metric that scores every candidate alike turns the whole budget
+   * into ranked ties, and the run reports a stop reason that looks like any
+   * other.
+   *
+   * @see docs/metric-preflight.md
+   * @see docs/tuning.md
+   */
   maxMetricCalls: number;
   /**
    * Dollars the run may spend, as reported by the adapter's usage. Checked

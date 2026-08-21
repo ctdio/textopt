@@ -4,6 +4,8 @@ Core interfaces and optimizers for textopt.
 
 This package has no runtime dependencies. For an overview of the algorithms and guidance on choosing one, see the [project README](https://github.com/ctdio/textopt#readme).
 
+The long-form guides ship with the package, under `docs/`, so an installed copy documents the version installed rather than whatever `main` has become. Agent-facing guidance lives there and in the doc comments on the API itself.
+
 ## Entry points
 
 | Import                     | Contains                                                                                                                            |
@@ -125,7 +127,7 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits, usage })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `cacheHits` and `usage` seed the counters from a checkpoint, so a resumed run reports totals rather than deltas. `usage()` covers the charged rollouts a ceiling is checked against; `unchargedUsage()` covers what `charge: false` bought. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
-**`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, maxCostUsd, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. `maxCostUsd` bounds its dollars, checked between batches — a caller bounding spend cannot bound this pass from outside, since it runs on its own evaluator. Sweeping a validation set is the mistake to avoid — see [Distilling a run](../../docs/distillation.md).
+**`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, maxCostUsd, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. `maxCostUsd` bounds its dollars, checked between batches — a caller bounding spend cannot bound this pass from outside, since it runs on its own evaluator. Sweeping a validation set is the mistake to avoid — see [Distilling a run](./docs/distillation.md).
 
 **`toTrainingJsonl({ rollouts, render })`** serializes harvested rollouts as one chat-messages example per line. `render` turns a rollout into `{ messages }` or returns `null` to skip it, and decides how much of the optimized candidate stays in the training input. Returns the text; writing it is the caller's job.
 

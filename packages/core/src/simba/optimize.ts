@@ -58,7 +58,15 @@ export interface SimbaFinalist<K extends string = string> {
 }
 
 export interface SimbaConfig {
-  /** Instances per step. Default 32. */
+  /**
+   * Instances per step. Default 32.
+   *
+   * Minibatch defaults do not transfer between optimizers — GEPA's 3 and
+   * MIPRO's 35 mean different things, and SIMBA's ranks instances within a
+   * batch by how much its programs disagreed.
+   *
+   * @see docs/tuning.md
+   */
   minibatchSize?: number;
   /** Programs sampled per step, and candidates built from them. Default 6. */
   candidates?: number;
@@ -73,7 +81,18 @@ export interface SimbaConfig {
    * which call returned first.
    */
   concurrency?: number;
-  /** Steps to run. Default 8. */
+  /**
+   * Steps to run. Default 8.
+   *
+   * A run has to be funded past the finalist reserve before any step happens:
+   * `min(candidates + 1, maxSteps + 1) * validationSet.length` rollouts are
+   * held back to sweep the finalists, and each step then costs
+   * `candidates * minibatchSize + minibatchSize`. Fund only the steps and the
+   * run stops after one, reporting `budgetExhausted` like any other exhausted
+   * budget.
+   *
+   * @see docs/tuning.md
+   */
   maxSteps?: number;
   /** Demos a candidate may hold before the loop starts dropping them. Default 4. */
   maxDemos?: number;

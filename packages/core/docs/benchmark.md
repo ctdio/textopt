@@ -1,6 +1,6 @@
 # Benchmark
 
-`pnpm bench` runs every optimizer over four offline tasks and twenty seeds, and writes [`bench/results/latest.json`](../bench/results/latest.json).
+`pnpm bench` runs every optimizer over four offline tasks and twenty seeds, and writes [`bench/results/latest.json`](../../../bench/results/latest.json).
 
 Each task is a support-ticket policy. A ticket has four features — `tier`, `channel`, `issue` and `region` — and a hidden policy of nine rules says which actions a correct answer must take. The system under optimization reads rules out of the candidate and applies them to the ticket, so a candidate is scored on what it made the system do rather than on the words it contains. No rule keys on `region`: it is there to be mistaken for a reason, and a search that believes it pays for the belief.
 

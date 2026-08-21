@@ -127,7 +127,8 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.cts",
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "scripts": {
     "build": "tsdown",

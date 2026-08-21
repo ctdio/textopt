@@ -22,7 +22,9 @@ import type {
  * `frontier` chooses what the fronts are taken over. "instance" is GEPA as
  * published. "objective" tracks candidates leading each named objective the
  * adapter reports, and "hybrid" pools both — a candidate then earns selection
- * weight for every instance it wins *and* every objective it leads.
+ * weight for every instance it wins *and* every objective it leads. The
+ * objectives are whatever the adapter put in `objectiveScores`, which for a
+ * judge is every criterion it graded, including any at `weight: 0`.
  */
 export function paretoSelector(
   args: { epsilon?: number; frontier?: ParetoFrontier } = {},

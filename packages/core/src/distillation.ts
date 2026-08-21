@@ -19,7 +19,7 @@ export interface TrainingExample {
  * candidate to leave in the input. Dropping it entirely moves the whole prompt
  * into weights and gives up the ability to steer the model with text
  * afterwards; keeping a short task statement distills away only the tokens the
- * search accreted. See `docs/distillation.md`.
+ * search accreted. See `docs/distillation.md` in this package.
  */
 export type TrainingExampleRenderer<Datum, Output> = (args: {
   rollout: Rollout<Datum, Output>;

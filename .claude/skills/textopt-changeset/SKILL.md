@@ -24,8 +24,13 @@ published package can now do differently — not what moved in the source tree.
 
 Within a published package, these do not earn a changeset on their own:
 `*.test.ts`, `tsconfig.json`, `tsdown.config.ts`. Nothing a consumer installs
-changes. A package `README.md` does ship in the tarball; a README-only change
-takes a `patch` if it is worth releasing and nothing otherwise.
+changes.
+
+`packages/core` lists `docs` in its `files` alongside `dist`, so
+`packages/core/docs/**` and any package `README.md`
+all ship in the tarball and are things a consumer installs. A change to one
+takes a `patch` if it is worth releasing and nothing otherwise. Guidance that
+contradicts the code it ships beside is worth releasing.
 
 If the only affected packages are ignored ones, say so and stop. Do not write a
 file that changesets will throw away.

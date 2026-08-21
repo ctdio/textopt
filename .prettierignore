@@ -1,3 +1,7 @@
 node_modules
 dist
 pnpm-lock.yaml
+
+# eval prompts are measurement stimuli, not source: reformatting one
+# silently changes what a recorded result was measured against
+packages/core/evals/

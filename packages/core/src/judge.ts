@@ -8,8 +8,13 @@ export interface JudgeCriterion {
    * Share of the instance score this criterion carries, relative to the other
    * criteria. Default 1, which is the unweighted mean.
    *
-   * 0 keeps a criterion as a reported objective without letting it move the
-   * number selection reads — a diagnostic the Pareto frontier can still track.
+   * 0 removes a criterion from the aggregate, not from the search. It is still
+   * graded and still recorded in `objectiveScores`, which
+   * `paretoSelector({ frontier: "objective" })` and `"hybrid"` build their
+   * selection fronts from — so a candidate leading a zero-weight criterion
+   * still earns parent selection under those. Under the default instance
+   * frontier, 0 is enough. For a number that can never steer the search,
+   * compute it outside the judge.
    */
   weight?: number;
   /**
@@ -21,6 +26,14 @@ export interface JudgeCriterion {
    * one non-negotiable criterion and aces three cosmetic ones outranks the
    * incumbent that kept the rule. Anything a caller would not ship without is
    * a gate rather than a term in the average.
+   *
+   * Enforce it once. A gate already makes the requirement non-negotiable, so a
+   * heavy `weight` on the same criterion redistributes score only among
+   * candidates that all cleared it — and pins that share of the aggregate near
+   * its ceiling, narrowing the range the search has left to move in. Gate it,
+   * then weight it low.
+   *
+   * @see docs/metric-preflight.md
    */
   gate?: number;
 }

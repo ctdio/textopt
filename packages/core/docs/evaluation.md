@@ -51,6 +51,16 @@ The gap between `bestScore` and `testScore` estimates validation overfitting. Te
 
 All optimizers expose these fields through `OptimizerTask` and `OptimizerResult`.
 
+## Reading the winning text
+
+`result.bestCandidate` is a prompt. That it is readable is the entire advantage over tuning weights, and it is the check no metric performs. Look for:
+
+- **Absorbed facts.** Specific names, numbers, or dates from validation instances written into the instruction. That is memorisation, and it will not transfer, whatever `testScore` said.
+- **Accreted rules.** A long tail of narrow "if the input mentions X, do Y" clauses is a search patching instances rather than learning the task.
+- **Instructions that contradict.** Reflective search appends; nothing prunes.
+
+If the prompt looks wrong and the number looks good, believe the prompt.
+
 ## Comparing optimizers
 
 A difference in means over a handful of seeds is usually noise. `compare()` runs each entrant over the same seeds, ranks them on `testScore` where a run reports one, and reports a paired sign-flip p-value against the winner:

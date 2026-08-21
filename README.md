@@ -47,11 +47,11 @@ npm install @textopt/langsmith
 
 **A candidate is a record of named strings.** Components can be system prompts, tool descriptions, routing rules, few-shot blocks, regexes, or configuration. Component names are inferred from the seed candidate, so a misspelled name fails type checking rather than silently optimizing nothing.
 
-**An adapter runs and scores the system.** It returns one score per instance, and may return textual feedback alongside it. That feedback is what reflective search reads — a bare `0.0` tells a rewriting model nothing about what to change. See [Adapters and metrics](docs/adapters.md) for the interface and the AI SDK, LangChain, and Braintrust adapters.
+**An adapter runs and scores the system.** It returns one score per instance, and may return textual feedback alongside it. That feedback is what reflective search reads — a bare `0.0` tells a rewriting model nothing about what to change. See [Adapters and metrics](packages/core/docs/adapters.md) for the interface and the AI SDK, LangChain, and Braintrust adapters.
 
 **The reflection model is any text-in, text-out function.** `reflect` implements `({ prompt, signal }) => Promise<string>`, so a vendor SDK, a LangChain chat model, a local model, or a deterministic stub all satisfy it. The model under optimization is usually cheaper than the one revising it.
 
-**`maxMetricCalls` is the budget.** It bounds scored rollouts; cache hits do not count, and reflection calls have their own limit. A run that cannot afford its next unit of work stops and reports `stopReason: "budgetExhausted"` with whatever it found — it does not throw. [Tuning a run](docs/tuning.md) is the arithmetic for pricing one before starting it.
+**`maxMetricCalls` is the budget.** It bounds scored rollouts; cache hits do not count, and reflection calls have their own limit. A run that cannot afford its next unit of work stops and reports `stopReason: "budgetExhausted"` with whatever it found — it does not throw. [Tuning a run](packages/core/docs/tuning.md) is the arithmetic for pricing one before starting it.
 
 **Three sets, one of them held out.** The search proposes against `trainingSet` and selects against `validationSet`, which defaults to it. `bestScore` is therefore fitted to the instances that chose the winner; pass a `testSet` to get a number that no candidate was selected against.
 
@@ -106,9 +106,9 @@ All six use the same `Optimizer` interface, adapter, and budget accounting, so s
 | `BootstrapSearchOptimizer` | a **scalar** score                | few-shot demonstrations, with no proposal model at all            |
 | `RandomSearchOptimizer`    | a **scalar** score                | establishing a score-independent paraphrasing baseline            |
 
-`BootstrapSearchOptimizer` answers the cheapest question first — whether the instruction is already fine and consistency is what is failing — and calls no proposal model to do it. Reach for a reflective search once that is ruled out, and pick between them with [`compare()`](docs/evaluation.md#comparing-optimizers) rather than from a table.
+`BootstrapSearchOptimizer` answers the cheapest question first — whether the instruction is already fine and consistency is what is failing — and calls no proposal model to do it. Reach for a reflective search once that is ruled out, and pick between them with [`compare()`](packages/core/docs/evaluation.md#comparing-optimizers) rather than from a table.
 
-[Optimizers](docs/optimizers.md) covers what each one reads and how to configure it.
+[Optimizers](packages/core/docs/optimizers.md) covers what each one reads and how to configure it.
 
 ## Packages
 
@@ -124,15 +124,38 @@ Each optimizer ships behind its own subpath — `textopt/gepa`, `textopt/simba`,
 
 ## Documentation
 
-| Page                                     | Covers                                                                                   |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [Optimizers](docs/optimizers.md)         | Choosing one, how GEPA works, configuring each search, few-shot demos                    |
-| [Adapters and metrics](docs/adapters.md) | The adapter interface, framework adapters, the reflection model, model judges, pipelines |
-| [Tuning a run](docs/tuning.md)           | What a run costs, noisy metrics, cost and wall-clock budgets, caching and resume         |
-| [Measuring a result](docs/evaluation.md) | Held-out evaluation and `compare()`                                                      |
-| [Distilling a run](docs/distillation.md) | Harvesting rollouts, training-set export, checking the student beat the teacher          |
-| [Benchmark](docs/benchmark.md)           | What every optimizer scores on four offline tasks over twenty seeds                      |
-| [Examples](examples/README.md)           | Runnable scripts, offline and against real providers                                     |
+| Page                                                          | Covers                                                                                            |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [Preparing the data](packages/core/docs/data-prep.md)         | What the three sets do, splitting by group, class coverage, sizes                                 |
+| [Validating a metric](packages/core/docs/metric-preflight.md) | The four checks to run before a search, and what to fix in which order                            |
+| [Optimizers](packages/core/docs/optimizers.md)                | Choosing one, how GEPA works, configuring each search, few-shot demos                             |
+| [Adapters and metrics](packages/core/docs/adapters.md)        | The adapter interface, framework adapters, the reflection model, model judges, pipelines          |
+| [Tuning a run](packages/core/docs/tuning.md)                  | What a run costs, minibatch sizes, noisy metrics, cost and wall-clock budgets, caching and resume |
+| [Measuring a result](packages/core/docs/evaluation.md)        | Run warnings, held-out evaluation, reading the winning text, `compare()`                          |
+| [Distilling a run](packages/core/docs/distillation.md)        | Harvesting rollouts, training-set export, checking the student beat the teacher                   |
+| [Benchmark](packages/core/docs/benchmark.md)                  | What every optimizer scores on four offline tasks over twenty seeds                               |
+| [Examples](examples/README.md)                                | Runnable scripts, offline and against real providers                                              |
+
+Every page above ships inside the `textopt` tarball, so an installed copy has
+the guides for the version it is: `node_modules/textopt/docs/`.
+
+## Working with an agent
+
+The guidance an agent needs to use this library well is not the API reference,
+and most of it is about the metric rather than the search. It reaches an agent
+two ways, both of which ship in the tarball:
+
+- **Doc comments on the API.** The trap sits on the symbol it applies to, so it
+  arrives when the agent reads the type rather than when it thinks to go
+  looking.
+- **`docs/`,** for the long form: [preparing the
+  data](./packages/core/docs/data-prep.md), [validating a metric before a search
+  runs](./packages/core/docs/metric-preflight.md), and
+  [measuring a result](./packages/core/docs/evaluation.md) are the three that
+  decide whether a run means anything.
+
+An installed copy carries both at `node_modules/textopt/`, so they describe the
+version installed rather than whatever `main` has become.
 
 ## Development
 

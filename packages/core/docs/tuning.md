@@ -50,6 +50,10 @@ Minibatch defaults differ by an order of magnitude between optimizers — GEPA 3
 
 `BootstrapSearchOptimizer` answers the cheapest question worth asking first — whether the instruction is already fine and consistency is what is failing — and it calls no proposal model to do it, so a run costs rollouts and nothing else. Its two answers are both worth having: on the benchmark's `demonstrated` task it beats every entrant that searches instructions except the two GEPA rows, and on `clean` it scores zero, which is what "your system is not inconsistent, it is mis-instructed" looks like. Reach for a reflective search once that has been ruled out, and pick between them with [`compare()`](./evaluation.md#comparing-optimizers) under one budget rather than from the [benchmark table](./benchmark.md).
 
+## Minibatch sizes do not transfer
+
+The defaults differ by an order of magnitude — GEPA 3, SIMBA 32, MIPRO 35 — because they mean different things. GEPA compares a child against its own parent on the same instances, so three already say something. MIPRO hands the batch mean to a surrogate as an absolute reading. SIMBA ranks instances within a batch by how much its programs disagreed. Carrying one number to another optimizer makes it read noise.
+
 ## Noisy metrics
 
 The default acceptance rule takes any minibatch improvement, and the default winner is the highest validation mean. Both are the right reading when a rollout of the same text on the same instance always scores the same. When it does not — a sampled model, a judge, a flaky tool — a run accumulates changes that only ever won a coin flip.

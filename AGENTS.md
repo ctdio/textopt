@@ -23,12 +23,19 @@ packages/core        the substrate and every optimizer
   src/random-search/     "./random-search"
   src/file-cache.ts      "./file-cache"         the only entry point using node:fs
   src/testing.ts         "./testing"            fixtures shared by tests
+  docs/                                    long-form guides
+  evals/                                   eval cases measuring those guides
 packages/ai-sdk, packages/braintrust, packages/langchain    adapters
 packages/langsmith                                          run reporting
 examples/                                                   runnable scripts
 bench/                                                      offline seed sweeps
-docs/                                                       long-form guides
 ```
+
+`docs/` sits inside the package rather than at the repository root because it is
+listed in its `files`. A guide that ships with the code it
+describes cannot document an API the installed version does not have, which is
+the whole reason it moved — and it means a change to it is a change to what a
+consumer installs. See `## Releasing`.
 
 Each optimizer owns its directory and exports through its own entrypoint. The
 substrate must stay free of anything shaped like a particular optimizer — if a
@@ -166,7 +173,7 @@ you cannot articulate the cost, you do not yet understand the deviation.
 
 ## Claims in documentation are measured
 
-The READMEs and the pages under `docs/` quote real numbers ("0.87 mean best, 8
+The READMEs and the pages under `packages/core/docs/` quote real numbers ("0.87 mean best, 8
 runs in 15"). Those came from sweeps, not intuition. Two rules follow:
 
 - **Measure across seeds.** A single-seed result has twice overturned a
@@ -205,6 +212,103 @@ task rather than keeping the number.
 
 Sweeps do not belong in the test suite; a focused regression test pinned to one
 seed does.
+
+## The shipped docs are evaluated
+
+`docs/` ships in the tarball and its consumer is often an agent, so it gets
+measured: given the docs and a task with a trap in it, does an agent reach the
+right answer? Cases live in `packages/core/evals/`, which is not in the
+package's `files` and never ships.
+
+```bash
+# early access, enabled per organization; the variable is for machines that
+# cannot receive the rollout. Set it in the shell or ~/.claude/settings.json
+# `env` — a repo's .claude/settings.json cannot grant it, because project
+# settings only apply allowlisted variables and this is not one.
+export CLAUDE_CODE_WALNUT_SPIRE=1
+
+claude plugin eval --eval-dir packages/core/evals --ablation none \
+  --scaffold --allow-tools Bash Write Edit \
+  --output-dir packages/core/evals/results
+```
+
+**There is no ablation, because there is nothing to ablate.** An earlier version
+of this suite shipped an agent skill and measured it with `--ablation
+with-without`. Seven cases returned Δ 0.00, every one of them, including the two
+hardest: a frontier model with `docs/` on disk funds a SIMBA run past its
+finalist reserve and refuses a saturated metric just as reliably without the
+skill as with it. The skill was dropped and its net-new content became
+`docs/data-prep.md` and `docs/metric-preflight.md`. What survives is a docs
+gate: if a guide is rewritten badly, the case that depends on it fails.
+
+Δ is a tempting instrument and a bad one here. A grader that names a library
+identifier is one a no-docs arm structurally cannot pass, so it scores whether
+the docs were readable; a grader general enough for that arm to attempt is one a
+frontier model already passes unaided. The number to read is the pass rate.
+
+An executable case is a directory with `case.yaml` naming a `scaffold_script`
+**path** (inline bash is read as a filename and fails), `prompt.md`, a
+`fixtures/` directory, and graders that read the oracle's verdict:
+
+```
+splits-a-leaky-dataset/
+  case.yaml            context.scaffold_script: fixtures/scaffold.sh
+  prompt.md            the task, and the output contract it must satisfy
+  fixtures/scaffold.sh builds the workspace
+  fixtures/make-data.mjs   deterministic dataset, with the trap in it
+  fixtures/verify.mjs      the oracle: re-derives every judgment, writes a verdict
+  graders/*.md         regex over { source: file, path: out/verdict.json }
+```
+
+The scaffold copies `dist/` and `docs/` into `node_modules/textopt` rather than
+installing a tarball — no network, and a full GEPA run against
+`textopt/testing`'s offline stand-ins finishes in milliseconds, so an oracle can
+afford to re-run an agent's own configuration to check it.
+
+| Case                          | What it pins                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `splits-a-leaky-dataset`      | Near-duplicate families are grouped before splitting, not after                      |
+| `builds-a-metric-that-gates`  | A non-negotiable requirement zeroes the score; a watch-only one moves it not at all  |
+| `funds-the-simba-reserve`     | The run is funded past SIMBA's validation reserve without brute-forcing the budget   |
+| `refuses-a-saturated-run`     | A seed already at the ceiling stops the run instead of spending the budget on ties   |
+| `enforces-a-requirement-once` | A gated requirement is not also weighted heavily, which would eat the metric's range |
+
+A case that only asserts a property of this library belongs in a unit test
+instead, where it runs free on every commit. What earns a place here is a
+judgment an agent has to make from the docs.
+
+Two rules, both learned by breaking them:
+
+**Grade outcomes, never mechanisms.** A rubric here failed two agents for
+computing a dashboard-only criterion outside the judge instead of using
+`weight: 0` — the mechanism it named in its fail clause was one its own pass
+clause allowed, and the excluded-by-construction design was the better answer
+anyway, since `weight: 0` still leaves a criterion in `objectiveScores` where an
+objective frontier selects on it. A split verdict from an LLM grader
+(`FAIL PASS FAIL` on one run, `PASS FAIL PASS` on the next) is a verdict on the
+grader's validity, not noise to average away.
+
+**Pre-flight a case before trusting it**, exactly as `metric-preflight.md` tells
+a user to pre-flight theirs. Write a known-bad and a known-good solution, run
+both through the oracle, and confirm the checks separate them. A case whose
+correct answer cannot score full marks is a broken case, and you will not learn
+that from a run.
+
+A case listing `Bash` in `allowed_tools` still does not get it: gated tools
+need the operator grant `--allow-tools Bash Write Edit` on the command line as
+well. Omit it and every executable case scores 0.00 in both arms with
+`Bash called 0x` — a broken invocation that reads exactly like a broken case.
+
+Runs cost real money — a prose case is roughly $0.30 an agent run and an
+executable one more, so this is a run-on-docs-change gate, not CI. Watch for
+`max_turns` exhaustion: a case that runs out of turns produces no final message,
+and any grader reading `last_message` then scores nothing.
+
+Results land in `packages/core/evals/results/` and are gitignored. A umask of
+002 makes that directory group-writable, which the harness refuses to write
+into — `chmod g-w` it. With no plugin target the harness resolves the
+location to `packages/` rather than the eval dir, so pass `--output-dir`
+as well.
 
 ## Tests
 
