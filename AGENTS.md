@@ -34,6 +34,14 @@ Each optimizer owns its directory and exports through its own entrypoint. The
 substrate must stay free of anything shaped like a particular optimizer — if a
 type only makes sense for reflective search, it belongs in `gepa/`.
 
+Two shared seams every optimizer goes through, whatever it searches.
+`resolveValidationSet` from `warnings.ts` is how a task's `validationSet`
+becomes the instances a run selects against: it is the only place that knows
+`"reuseTraining"` and the only thing that reports the reuse. And every result
+and `finish` event carries `warnings` — what a run could see about its own
+measurement that its numbers cannot say. A new optimizer wires both; a search
+that resolves its own validation set silently reintroduces the footgun.
+
 `reporting.ts` is where that rule earns its keep. Every search emits its own
 event union, but `candidateAccepted` and `finish` intersect a shared payload,
 so one reporter reads a run without knowing which optimizer produced it. A new

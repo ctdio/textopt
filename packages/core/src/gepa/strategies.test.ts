@@ -321,6 +321,29 @@ describe("pairedPermutationAcceptance", () => {
       }),
     ).toBe(true);
   });
+
+  test("reports the smallest minibatch on which it could ever accept", () => {
+    // 2^-n is the smallest p-value n paired instances can produce, so a bar
+    // below it rejects every proposal a run will ever make.
+    expect(pairedPermutationAcceptance({ alpha: 0.2 }).minimumPairs).toBe(3);
+    expect(pairedPermutationAcceptance({ alpha: 0.125 }).minimumPairs).toBe(3);
+    expect(pairedPermutationAcceptance({ alpha: 0.05 }).minimumPairs).toBe(5);
+  });
+
+  test("reports one past maxExact when no exact batch could clear the bar", () => {
+    // Past `maxExact` the p-value is approximated rather than enumerated, and
+    // the 2^-n floor no longer applies — so the smallest workable batch is the
+    // first one that leaves the exact regime, not the unreachable exact answer.
+    expect(
+      pairedPermutationAcceptance({ alpha: 1e-9, maxExact: 16 }).minimumPairs,
+    ).toBe(17);
+  });
+
+  test("refuses an alpha no p-value can fall at or below", () => {
+    expect(() => pairedPermutationAcceptance({ alpha: 0 })).toThrow(
+      /alpha must be/,
+    );
+  });
 });
 
 describe("lowerBoundEvaluationPolicy", () => {

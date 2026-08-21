@@ -238,7 +238,13 @@ export function pairedPermutationAcceptance(
 ): AcceptancePolicy {
   const { alpha = 0.2, maxExact = 16 } = args;
 
-  return ({ parentScores, childScores }) => {
+  if (!Number.isFinite(alpha) || alpha <= 0 || alpha > 1) {
+    throw new Error(
+      `alpha must be greater than 0 and at most 1, received ${alpha}`,
+    );
+  }
+
+  const policy: AcceptancePolicy = ({ parentScores, childScores }) => {
     const differences: number[] = [];
     for (let index = 0; index < parentScores.length; index += 1) {
       differences.push(
@@ -252,6 +258,40 @@ export function pairedPermutationAcceptance(
     }
     return signFlipPValue({ differences, observed, maxExact }) <= alpha;
   };
+
+  policy.minimumPairs = smallestAcceptableBatch({ alpha, maxExact });
+  return policy;
+}
+
+/**
+ * Smallest paired batch on which a sign-flip test at `alpha` could return a
+ * verdict of "accept" at all.
+ *
+ * Enumerating n non-zero differences gives 2^n equally likely sign
+ * assignments, so the smallest attainable p-value is 2^-n and no batch below
+ * `log2(1/alpha)` pairs can clear the bar. Past `maxExact` the p-value comes
+ * from a normal approximation, which has no such floor — so when the exact
+ * requirement is out of that regime's reach, the first batch that leaves the
+ * regime is the honest answer rather than an exact size that never applies.
+ */
+function smallestAcceptableBatch(args: {
+  alpha: number;
+  maxExact: number;
+}): number {
+  const { alpha, maxExact } = args;
+
+  let pairs = 1;
+  // Doubling rather than log2: the bar is routinely a power of two, where the
+  // rounding on a logarithm decides the answer.
+  let smallestPValue = 0.5;
+  while (smallestPValue > alpha) {
+    pairs += 1;
+    smallestPValue /= 2;
+    if (pairs > maxExact) {
+      return maxExact + 1;
+    }
+  }
+  return pairs;
 }
 
 /**

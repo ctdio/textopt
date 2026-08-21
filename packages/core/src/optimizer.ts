@@ -1,5 +1,6 @@
 import type { RetryPolicy } from "./evaluation.js";
 import type { Adapter, Candidate, UsageTotals } from "./types.js";
+import type { RunWarning } from "./warnings.js";
 
 /**
  * The run-level inputs every optimizer needs, whatever search it runs. An
@@ -14,7 +15,14 @@ export interface OptimizerTask<
 > {
   seedCandidate: Candidate<K>;
   trainingSet: readonly Datum[];
-  validationSet?: readonly Datum[];
+  /**
+   * Instances the search selects candidates against. Defaults to
+   * `trainingSet`, which is the right default for a first run and the wrong
+   * number to report from one — the result carries a warning saying so.
+   * `"reuseTraining"` is that same default with the caller's name on it, and
+   * carries no warning.
+   */
+  validationSet?: readonly Datum[] | "reuseTraining";
   /**
    * `NoInfer` keeps the adapter out of `K`'s inference: an adapter built by a
    * factory knows nothing about component names, and one inference candidate of
@@ -118,6 +126,13 @@ export interface OptimizerResult<
    */
   testUsage?: UsageTotals;
   stopReason: Stop;
+  /**
+   * What this run cannot say about itself from its own numbers — selection
+   * that reused the training instances, a seed the metric could not separate.
+   * Empty when there is nothing to say. Never fatal, and repeated on the
+   * `finish` event so a reporter sees them next to the score.
+   */
+  warnings: RunWarning[];
 }
 
 /**

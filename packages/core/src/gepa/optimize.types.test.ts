@@ -154,6 +154,25 @@ test("keeps the component names a widened annotation threw away", async () => {
   expect(fromPreserved.bestCandidate.onlyOne).toBeTypeOf("string");
 });
 
+/**
+ * Feedback is what separates reflective search from blind search, and an
+ * adapter that returns only scores leaves the reflection prompt printing empty
+ * diagnoses — a run that looks completely normal and searches at random. The
+ * shared `EvaluationBatch` leaves it optional because the optimizers that never
+ * reflect have no use for it; `GepaAdapter` is where it stops being optional.
+ */
+export function feedbackIsRequired(): GepaAdapter<Ticket, null, string> {
+  return {
+    // @ts-expect-error a GEPA adapter must report per-instance feedback
+    evaluate: ({ batch }) => ({
+      outputs: batch.map(() => ""),
+      scores: batch.map(() => 0.5),
+      trajectories: batch.map(() => null),
+    }),
+    makeReflectiveDataset: () => ({}),
+  };
+}
+
 function createTicketAdapter(): GepaAdapter<
   Ticket,
   null,

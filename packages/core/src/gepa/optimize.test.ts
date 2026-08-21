@@ -12,6 +12,7 @@ import { GepaOptimizer } from "./optimize.js";
 import type { GepaResult } from "./optimize.js";
 import {
   fullEvaluationPolicy,
+  pairedPermutationAcceptance,
   subsampledEvaluationPolicy,
 } from "./strategies.js";
 import type {
@@ -921,6 +922,147 @@ describe("optimize", () => {
     );
   });
 
+  test("warns that selection reused the instances reflection read", async () => {
+    // The reflection prompt mines domain facts out of the traces it is shown.
+    // With no validationSet those traces are the instances that then pick the
+    // winner, so the facts are memorised and scored on the same rows.
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "validationSetReusesTraining",
+    );
+  });
+
+  test("stays quiet when the caller named the reuse", async () => {
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      validationSet: "reuseTraining",
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).not.toContain(
+      "validationSetReusesTraining",
+    );
+  });
+
+  test("carries the warnings on the finish event a reporter reads", async () => {
+    const events: GepaEvent[] = [];
+
+    await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+      reporters: [{ onEvent: (event) => events.push(event) }],
+    });
+
+    const finish = events.find((event) => event.type === "finish");
+
+    expect(finish?.type === "finish" && finish.warnings).toContainEqual(
+      expect.objectContaining({ code: "validationSetReusesTraining" }),
+    );
+  });
+
+  test("warns when the seed already scores perfectly on every instance", async () => {
+    // Nothing left to improve: every proposal ties, and acceptance resolves
+    // ties by whatever the metric's noise did that iteration.
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      validationSet: "reuseTraining",
+      adapter: {
+        ...createKeywordAdapter(),
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 1),
+          feedback: batch.map(() => "perfect"),
+        }),
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).toEqual([
+      "seedScoreSaturated",
+    ]);
+  });
+
+  test("warns when the seed scores zero on every instance", async () => {
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      validationSet: "reuseTraining",
+      adapter: {
+        ...createKeywordAdapter(),
+        evaluate: ({ batch }) => ({
+          outputs: batch.map(() => ""),
+          scores: batch.map(() => 0),
+          feedback: batch.map(() => "nothing landed"),
+        }),
+      },
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).toEqual([
+      "seedScoreFloored",
+    ]);
+  });
+
+  test("rejects a significance bar the minibatch is too small to ever clear", () => {
+    // A sign-flip test over three instances bottoms out at p = 0.125, so at
+    // alpha 0.05 every proposal is rejected on arithmetic. The run spends its
+    // whole budget and returns the seed, which is indistinguishable from a
+    // search that genuinely found nothing.
+    expect(
+      () =>
+        new GepaOptimizer({
+          minibatchSize: 3,
+          acceptance: pairedPermutationAcceptance({ alpha: 0.05 }),
+        }),
+    ).toThrow(/minibatchSize/);
+  });
+
+  test("allows a minibatch exactly wide enough for the bar", () => {
+    expect(
+      () =>
+        new GepaOptimizer({
+          minibatchSize: 5,
+          acceptance: pairedPermutationAcceptance({ alpha: 0.05 }),
+        }),
+    ).not.toThrow();
+  });
+
   test("scores validation instances separately from trainingSet instances sharing an id", async () => {
     // Positional instance ids are a reasonable thing for a user to write, and
     // they make train instance "0" and val instance "0" collide in the cache.
@@ -1423,6 +1565,7 @@ describe("optimize", () => {
           evaluate: ({ batch }) => ({
             outputs: batch.map(() => ""),
             scores: batch.map(() => 0),
+            feedback: batch.map(() => ""),
             objectiveScores: [{ coverage: 1 }],
           }),
         },
@@ -1447,6 +1590,7 @@ describe("optimize", () => {
           evaluate: ({ batch }) => ({
             outputs: [""],
             scores: batch.map(() => 0),
+            feedback: batch.map(() => ""),
           }),
         },
         reflect: createKeywordReflector(),
@@ -1470,6 +1614,7 @@ describe("optimize", () => {
           evaluate: ({ batch }) => ({
             outputs: batch.map(() => ""),
             scores: batch.map(() => 0),
+            feedback: batch.map(() => ""),
             transient: [true],
           }),
         },

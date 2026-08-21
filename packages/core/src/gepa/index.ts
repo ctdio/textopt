@@ -44,6 +44,7 @@ export type {
   GepaStopReason,
   MakeReflectiveDatasetArgs,
   ProposeArgs,
+  ReflectiveBatch,
   ReflectiveDataset,
   ReflectiveRecord,
   RejectedProposal,

@@ -27,6 +27,7 @@ import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, UsageTotals } from "../types.js";
+import { resolveValidationSet } from "../warnings.js";
 
 /**
  * Where a candidate's demo block came from. `zeroShot` holds no demos at all,
@@ -275,7 +276,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     demoComponents,
@@ -293,6 +294,11 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const emit = createEmitter<BootstrapSearchEvent<K>>(reporters);
 
@@ -626,6 +632,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
@@ -656,6 +663,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
           testMetricCalls: evaluator.unchargedCalls(),
           testUsage: evaluator.unchargedUsage(),
         }),
+    warnings,
     stopReason,
   };
 

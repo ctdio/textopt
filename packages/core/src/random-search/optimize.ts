@@ -22,6 +22,7 @@ import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
+import { resolveValidationSet } from "../warnings.js";
 
 /** Builds the prompt one variant is drawn from. */
 export type ParaphrasePromptBuilder = (args: {
@@ -252,7 +253,7 @@ async function runRandomSearch<
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     reflect,
@@ -268,6 +269,11 @@ async function runRandomSearch<
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const emit = createEmitter<RandomSearchEvent<K>>(reporters);
 
@@ -612,6 +618,7 @@ async function runRandomSearch<
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
@@ -643,6 +650,7 @@ async function runRandomSearch<
     metricCalls: budget.spent(),
     reflectionCalls,
     cacheHits: evaluator.cacheHits(),
+    warnings,
     stopReason,
   };
 }

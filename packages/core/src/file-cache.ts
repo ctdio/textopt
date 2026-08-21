@@ -13,17 +13,37 @@ import type { CachedScore, EvaluationCache } from "./cache.js";
  * Append-only rather than rewritten: a score is never invalidated (the key
  * names the candidate, the instance, and the environment), and a log survives
  * a process killed mid-write, which a file rewritten in place does not.
+ *
+ * `namespace` is what makes that invariant true. A cached score measures a
+ * whole system, not a candidate, and this log outlives every part of that
+ * system a run does not pass through the key: the model id behind an alias the
+ * provider upgraded, the decoding settings, the scorer's own version. It is
+ * required rather than optional because the failure it prevents is silent —
+ * scores from one system served to a run of another, with a normal-looking
+ * result and no way to read afterwards that it happened.
  */
 export function createFileCache(args: {
   path: string;
+  /**
+   * Names the system these scores measure — model id, decoding settings,
+   * scorer version. Change it whenever any of them changes.
+   */
+  namespace: string;
   /** Entries kept in memory. The file itself is never trimmed. */
   maxEntries?: number;
 }): EvaluationCache {
-  const { path, maxEntries = 1_000_000 } = args;
+  const { path, namespace, maxEntries = 1_000_000 } = args;
+
+  if (namespace.trim() === "") {
+    throw new Error(
+      "createFileCache requires a non-empty namespace naming the system these scores measure",
+    );
+  }
 
   mkdirSync(dirname(path), { recursive: true });
   const log = readLog(path);
   const entries = log.entries;
+  const scope = (key: string) => `${namespace}\u0000${key}`;
   // A process killed mid-write leaves its last record unterminated. That one is
   // already lost; closing the line keeps the next write from being appended
   // onto it and lost with it.
@@ -32,16 +52,17 @@ export function createFileCache(args: {
   }
 
   return {
-    get: (key) => entries.get(key),
+    get: (key) => entries.get(scope(key)),
     set: (key, cached) => {
-      if (entries.size >= maxEntries && !entries.has(key)) {
+      const scoped = scope(key);
+      if (entries.size >= maxEntries && !entries.has(scoped)) {
         const oldest = entries.keys().next();
         if (!oldest.done) {
           entries.delete(oldest.value);
         }
       }
-      entries.set(key, cached);
-      appendFileSync(path, `${JSON.stringify([key, cached])}\n`);
+      entries.set(scoped, cached);
+      appendFileSync(path, `${JSON.stringify([scoped, cached])}\n`);
     },
     // Deliberately absent: `entries` exists so a checkpoint can carry scores
     // that would otherwise be lost, and these are already on disk.

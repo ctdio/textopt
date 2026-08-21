@@ -4,6 +4,7 @@ import type { Rng } from "../rng.js";
 import type {
   Adapter,
   Candidate,
+  EvaluateArgs,
   EvaluationBatch,
   EvaluationPhase,
   EvaluationSplit,
@@ -81,6 +82,24 @@ export interface ProposeArgs<K extends string = string> {
 }
 
 /**
+ * A scored batch that carries the per-instance diagnosis reflection is written
+ * from. `feedback` is optional on `EvaluationBatch` because the searches that
+ * never reflect have no use for it; here it is the input to the whole method,
+ * so it is required.
+ *
+ * An adapter that returns scores and no prose reduces every rollout to a
+ * number, and reflection then rewrites the instruction from a prompt whose
+ * feedback blocks are empty. That run spends its whole budget, reports a
+ * normal-looking `stopReason`, and has been doing blind search — which is
+ * exactly the failure no reading of the result can distinguish from a hard
+ * task. It is a type error instead.
+ */
+export type ReflectiveBatch<
+  Trajectory = unknown,
+  Output = unknown,
+> = EvaluationBatch<Trajectory, Output> & { feedback: string[] };
+
+/**
  * An adapter GEPA can reflect against: evaluation, plus the traces reflection
  * reads. `makeReflectiveDataset` is what turns a scored batch into the
  * per-component evidence a reflection call is written from.
@@ -91,6 +110,12 @@ export interface GepaAdapter<
   Output = unknown,
   K extends string = string,
 > extends Adapter<Datum, Trajectory, Output, K> {
+  evaluate(
+    args: EvaluateArgs<Datum, K>,
+  ):
+    | Promise<ReflectiveBatch<Trajectory, Output>>
+    | ReflectiveBatch<Trajectory, Output>;
+
   makeReflectiveDataset(
     args: MakeReflectiveDatasetArgs<Datum, Trajectory, Output, K>,
   ): Promise<ReflectiveDataset<K>> | ReflectiveDataset<K>;
@@ -152,10 +177,21 @@ export type ComponentSelector<K extends string = string> = (args: {
   rng: Rng;
 }) => K[];
 
-export type AcceptancePolicy = (args: {
+export type AcceptancePolicy = ((args: {
   parentScores: readonly number[];
   childScores: readonly number[];
-}) => boolean;
+}) => boolean) & {
+  /**
+   * Smallest minibatch this policy could ever accept on, when it has one. A
+   * policy that tests for significance has a floor its batch size must clear
+   * — a sign-flip test over three instances cannot report a p-value below
+   * 0.125 — and below it every proposal is rejected on arithmetic rather than
+   * on evidence. The run that results looks exactly like a search that found
+   * nothing, so the optimizer refuses the combination at construction instead
+   * of spending the budget discovering it.
+   */
+  minimumPairs?: number;
+};
 
 /**
  * Which validation instances a candidate is scored on, and how the best

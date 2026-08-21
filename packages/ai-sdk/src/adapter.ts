@@ -1,7 +1,6 @@
 import { mapWithConcurrency, priceUsage } from "textopt";
 import type {
   Candidate,
-  EvaluationBatch,
   EvaluationContext,
   RolloutUsage,
   ScoreResult,
@@ -9,6 +8,7 @@ import type {
 } from "textopt";
 import type {
   GepaAdapter,
+  ReflectiveBatch,
   ReflectiveDataset,
   ReflectiveRecord,
 } from "textopt/gepa";
@@ -217,7 +217,7 @@ export function createAiSdkAdapter<Datum, Output = string>(
         signal,
       });
 
-      const evaluation: EvaluationBatch<AiSdkTrace, Output | null> = {
+      const evaluation: ReflectiveBatch<AiSdkTrace, Output | null> = {
         outputs: results.map((result) => result.output),
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),

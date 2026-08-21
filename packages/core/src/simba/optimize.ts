@@ -29,6 +29,7 @@ import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
+import { resolveValidationSet } from "../warnings.js";
 import { buildAdvicePrompt, parseAdvice } from "./advice.js";
 import type { AdvicePromptBuilder } from "./advice.js";
 import {
@@ -289,7 +290,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     reflect,
@@ -310,6 +311,11 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const emit = createEmitter<SimbaEvent<K>>(reporters);
 
@@ -795,6 +801,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId: acceptedCandidates,
     bestScore: best.score,
     metricCalls: budget.spent(),
@@ -826,6 +833,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
           testMetricCalls: evaluator.unchargedCalls(),
           testUsage: evaluator.unchargedUsage(),
         }),
+    warnings,
     stopReason,
   };
 

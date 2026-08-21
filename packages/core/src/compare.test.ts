@@ -232,6 +232,7 @@ function scoring(args: {
       metricCalls: 10,
       cacheHits,
       reflectionCalls,
+      warnings: [],
       usage: {
         inputTokens: 0,
         outputTokens: 0,

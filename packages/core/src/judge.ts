@@ -4,6 +4,25 @@ import type { ScoreResult, TextModel } from "./types.js";
 export interface JudgeCriterion {
   name: string;
   description: string;
+  /**
+   * Share of the instance score this criterion carries, relative to the other
+   * criteria. Default 1, which is the unweighted mean.
+   *
+   * 0 keeps a criterion as a reported objective without letting it move the
+   * number selection reads — a diagnostic the Pareto frontier can still track.
+   */
+  weight?: number;
+  /**
+   * Grade, on the judge's own scale, that this criterion must reach for the
+   * instance to score at all. Below it the instance scores 0 whatever the
+   * other criteria said.
+   *
+   * A mean lets a search trade a hard requirement away: a candidate that tanks
+   * one non-negotiable criterion and aces three cosmetic ones outranks the
+   * incumbent that kept the rule. Anything a caller would not ship without is
+   * a gate rather than a term in the average.
+   */
+  gate?: number;
 }
 
 export type JudgePromptBuilder = (args: {
@@ -67,6 +86,7 @@ export function createJudge<Datum = string, Output = string>(args: {
   if (!Number.isFinite(scale) || scale <= 0) {
     throw new Error(`scale must be a positive number, received ${scale}`);
   }
+  assertCriteria({ criteria, scale });
 
   return async ({ input, output, expected, signal }) => {
     const response = await model({
@@ -119,6 +139,12 @@ export function buildJudgePrompt(args: {
     `Grade each criterion from 0 to ${scale}, where ${scale} is a perfect answer.`,
     "",
     "Then write feedback. It is read by a program that rewrites the system's instructions, not by a person reviewing this output, so say what the instructions should tell the system to do differently. Feedback about this particular answer is of no use to it.",
+    ...(expected === undefined
+      ? []
+      : [
+          "",
+          "Do not restate the expected answer, or any fact drawn from it, in the feedback. The instruction it is rewritten into is reused on inputs whose answers you have not seen: a fact copied out of the expected answer becomes an answer key memorised in the prompt, which raises the score on this input and teaches the system nothing. Name the kind of thing the answer was missing, not the thing itself.",
+        ]),
     "",
     "Reply in exactly this format and nothing else:",
     ...criteria.map((criterion) => `<score name="${criterion.name}">…</score>`),
@@ -146,6 +172,10 @@ function readVerdict(args: {
   }
 
   const objectiveScores: Record<string, number> = {};
+  let gated = false;
+  let weighted = 0;
+  let totalWeight = 0;
+
   for (const criterion of criteria) {
     const grade = graded.get(criterion.name);
     if (grade === undefined || Number.isNaN(grade)) {
@@ -155,16 +185,63 @@ function readVerdict(args: {
         transient: true,
       };
     }
-    objectiveScores[criterion.name] = clamp(grade / scale);
+
+    const normalized = clamp(grade / scale);
+    objectiveScores[criterion.name] = normalized;
+
+    if (criterion.gate !== undefined && grade < criterion.gate) {
+      gated = true;
+    }
+
+    const weight = criterion.weight ?? 1;
+    weighted += normalized * weight;
+    totalWeight += weight;
   }
 
-  const grades = Object.values(objectiveScores);
-
+  // The objectives are reported either way: the aggregate says the instance
+  // failed, and only the per-criterion grades say which requirement failed it.
   return {
-    score: grades.reduce((total, grade) => total + grade, 0) / grades.length,
+    score: gated ? 0 : weighted / totalWeight,
     feedback,
     objectiveScores,
   };
+}
+
+function assertCriteria(args: {
+  criteria: readonly JudgeCriterion[];
+  scale: number;
+}): void {
+  const { criteria, scale } = args;
+
+  let totalWeight = 0;
+  for (const { name, weight = 1, gate } of criteria) {
+    if (!Number.isFinite(weight) || weight < 0) {
+      throw new Error(
+        `weight on criterion "${name}" must be a non-negative number, received ${weight}`,
+      );
+    }
+    totalWeight += weight;
+
+    // A gate at or below 0 can never fire and one above the scale can never be
+    // cleared, so either one is a requirement the caller believes is enforced
+    // and is not.
+    if (gate !== undefined && (!Number.isFinite(gate) || gate <= 0)) {
+      throw new Error(
+        `gate on criterion "${name}" must be greater than 0, received ${gate}; no grade can fall below 0`,
+      );
+    }
+    if (gate !== undefined && gate > scale) {
+      throw new Error(
+        `gate on criterion "${name}" is ${gate}, above the scale of ${scale}; no grade can reach it`,
+      );
+    }
+  }
+
+  if (totalWeight <= 0) {
+    throw new Error(
+      "criteria weights must sum to more than 0; at least one criterion has to count towards the score",
+    );
+  }
 }
 
 function stringify(value: unknown): string {

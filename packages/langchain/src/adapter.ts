@@ -1,13 +1,13 @@
 import { mapWithConcurrency, priceUsage } from "textopt";
 import type {
   Candidate,
-  EvaluationBatch,
   RolloutUsage,
   ScoreResult,
   TokenPricing,
 } from "textopt";
 import type {
   GepaAdapter,
+  ReflectiveBatch,
   ReflectiveDataset,
   ReflectiveRecord,
 } from "textopt/gepa";
@@ -193,7 +193,7 @@ export function createLangChainAdapter<Datum, Output>(
         signal,
       });
 
-      const evaluation: EvaluationBatch<LangChainTrace, Output | null> = {
+      const evaluation: ReflectiveBatch<LangChainTrace, Output | null> = {
         outputs: results.map((result) => result.output),
         scores: results.map((result) => result.scored.score),
         feedback: results.map((result) => result.scored.feedback ?? ""),

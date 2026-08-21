@@ -55,6 +55,8 @@ export type {
 export type { Rng } from "./rng.js";
 export type { BatchSampler } from "./sampling.js";
 export { parseProposedText } from "./text.js";
+export { resolveValidationSet, seedScoreWarnings } from "./warnings.js";
+export type { RunWarning, RunWarningCode } from "./warnings.js";
 export { componentNames } from "./types.js";
 export { priceUsage } from "./usage.js";
 export type { TokenPricing } from "./usage.js";

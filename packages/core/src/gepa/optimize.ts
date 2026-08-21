@@ -33,6 +33,7 @@ import type {
   EvaluationSplit,
   TextModel,
 } from "../types.js";
+import { resolveValidationSet, seedScoreWarnings } from "../warnings.js";
 import { proposeMerge, selectMergeSubsample } from "./merge.js";
 import {
   buildInstanceFronts,
@@ -365,7 +366,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     reflect,
@@ -384,6 +385,11 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const deadline = createDeadline({ maxWallClockMs });
   const seedComponents = componentNames(seedCandidate);
@@ -790,6 +796,12 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
         source: "seed",
         updatedComponents: [],
       }),
+    );
+    // Read once, off the seed's own row: a seed the metric scores identically
+    // everywhere leaves the search nothing to rank candidates by, and the run
+    // that follows spends its whole budget resolving ties.
+    warnings.push(
+      ...seedScoreWarnings({ scores: seedEvaluation.scores, perfectScore }),
     );
     lastIterationAccepted = false;
     mergesDue = 0;
@@ -1423,6 +1435,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId,
     bestScore: best.aggregateScore,
     metricCalls: budget.spent(),
@@ -1461,6 +1474,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     reflectionCalls,
     cacheHits: evaluator.cacheHits(),
     iterations: iteration,
+    warnings,
     stopReason,
     snapshot: takeSnapshot(),
   };
@@ -1485,6 +1499,7 @@ function assertGepaConfig(config: GepaConfig): void {
   const {
     minibatchSize = DEFAULT_MINIBATCH_SIZE,
     maxIterations = Number.POSITIVE_INFINITY,
+    acceptance,
     perfectScore = 1,
     rejectedProposalMemory = DEFAULT_REJECTED_PROPOSAL_MEMORY,
     proposals,
@@ -1511,6 +1526,16 @@ function assertGepaConfig(config: GepaConfig): void {
   if (!Number.isInteger(minibatchSize) || minibatchSize < 1) {
     throw new Error(
       `minibatchSize must be a positive integer, received ${minibatchSize}`,
+    );
+  }
+  // A policy that tests for significance cannot clear its own bar below a
+  // certain batch width, and rejects every proposal a run makes when it is not
+  // met. Both halves are the caller's, and only their combination is wrong, so
+  // this is the one place that can catch it.
+  const minimumPairs = acceptance?.minimumPairs;
+  if (minimumPairs !== undefined && minibatchSize < minimumPairs) {
+    throw new Error(
+      `this acceptance policy cannot accept anything on fewer than ${minimumPairs} instances, but minibatchSize is ${minibatchSize}; raise minibatchSize or loosen the policy`,
     );
   }
   if (!Number.isFinite(perfectScore)) {

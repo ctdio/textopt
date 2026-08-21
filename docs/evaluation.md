@@ -4,6 +4,26 @@ Two questions a finished run cannot answer about itself: how much of its score
 is fitted to the set that picked the winner, and whether it beat another
 optimizer by more than noise.
 
+## What a run says about itself
+
+`result.warnings` is what a run could see about its own measurement and its
+numbers could not say. It is never fatal and never empty of meaning: an entry is
+a reason to read `bestScore` as less than it appears.
+
+| Code                          | What it means                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `validationSetReusesTraining` | No `validationSet` was given, so selection ran on the instances reflection read. Pass one, or `"reuseTraining"` to accept it |
+| `seedScoreSaturated`          | The seed already scores perfectly on every validation instance, so every proposal ties and acceptance resolves noise         |
+| `seedScoreFloored`            | The seed scores 0 on every validation instance — a seed with everything to gain, or a metric that scores nothing             |
+
+The last two are read once, off the seed's own validation row, before the search
+spends anything. Both describe a metric that does not separate the instances it
+is being asked to rank candidates by, which no amount of search budget fixes.
+
+The same list rides on the `finish` event, so a reporter writing a score
+somewhere permanent writes the caveat beside it rather than leaving it in a
+console nobody kept.
+
 ## Held-out evaluation
 
 The optimizer selects candidates against `validationSet`, so `bestScore` is fitted to that set and may overstate performance on unseen data.

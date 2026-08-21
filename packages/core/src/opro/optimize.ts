@@ -23,6 +23,7 @@ import { createSeededRng } from "../rng.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
+import { resolveValidationSet } from "../warnings.js";
 
 /** One instruction that was tried, and what it scored. */
 /** A history entry plus the system state its score was measured in. */
@@ -372,7 +373,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     reflect,
@@ -389,6 +390,11 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const emit = createEmitter<OproEvent<K>>(reporters);
 
@@ -963,6 +969,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
@@ -994,6 +1001,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     metricCalls: budget.spent(),
     reflectionCalls,
     cacheHits: evaluator.cacheHits(),
+    warnings,
     stopReason,
   };
 }

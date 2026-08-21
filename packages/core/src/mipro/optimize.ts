@@ -28,6 +28,7 @@ import type { BatchSampler } from "../sampling.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
+import { resolveValidationSet } from "../warnings.js";
 import { proposeConfiguration } from "./tpe.js";
 import type { Observation } from "./tpe.js";
 
@@ -463,7 +464,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   const {
     seedCandidate,
     trainingSet,
-    validationSet = trainingSet,
+    validationSet: requestedValidationSet,
     testSet,
     adapter,
     reflect,
@@ -485,6 +486,11 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     resumeFrom,
     signal,
   } = task;
+
+  const { validationSet, warnings } = resolveValidationSet({
+    validationSet: requestedValidationSet,
+    trainingSet,
+  });
 
   const emit = createEmitter<MiproEvent<K>>(reporters);
 
@@ -1128,6 +1134,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
   emit({
     type: "finish",
     reason: stopReason,
+    warnings,
     bestCandidateId: acceptedCandidates,
     bestScore,
     metricCalls: budget.spent(),
@@ -1162,6 +1169,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     metricCalls: budget.spent(),
     reflectionCalls,
     cacheHits: evaluator.cacheHits(),
+    warnings,
     stopReason,
   };
 }

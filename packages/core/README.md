@@ -95,7 +95,7 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 
 **`transient`** marks scores caused by infrastructure failures such as rate limits, 5xx responses, or network errors. Transient scores are not cached.
 
-**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, `maxCostUsd`, `maxWallClockMs`, `cacheNamespace`, `retry`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `usage`, `testScore`, `testMetricCalls`, `testUsage`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
+**`Optimizer<Stop extends string>`** defines `optimize(task: OptimizerTask) => Promise<OptimizerResult>`. `OptimizerTask` contains the shared run inputs: `seedCandidate`, `trainingSet`, `validationSet`, `testSet`, `adapter`, `maxMetricCalls`, `maxCostUsd`, `maxWallClockMs`, `cacheNamespace`, `retry`, and `signal`. `OptimizerResult` contains `bestCandidate`, `bestScore`, `bestOutputs`, `metricCalls`, `usage`, `testScore`, `testMetricCalls`, `testUsage`, `warnings`, and `stopReason`. Optimizer-specific task and result types extend these interfaces.
 
 **`maxCostUsd`** and **`maxWallClockMs`** are checked between evaluations, so a run overruns by whatever it had in flight when the ceiling was reached — one evaluation at the default concurrency, and up to `concurrency` of them above it. Neither bounds the held-out sweep, which runs once the search has already stopped: it is reported apart from the search as `testMetricCalls` and `testUsage`, and has to be budgeted for separately. Neither follows from `maxMetricCalls`: reflective search grows the text it optimizes, so late rollouts cost more than early ones, and a run behind a rate limit spends almost nothing while taking as long as the provider makes it take.
 
@@ -106,6 +106,10 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 **`UsageTotals`** (`inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `rollouts`) is summed from the `RolloutUsage` entries an adapter reports. Zero throughout when the adapter reports none.
 
 **`testSet`** is excluded from search and evaluated once against the winner. Because candidates are selected on `validationSet`, `bestScore` may be fitted to it. `testScore` measures held-out performance. Test rollouts are reported as `testMetricCalls` costing `testUsage`, outside `maxMetricCalls` and `maxCostUsd` both.
+
+**`validationSet`** defaults to `trainingSet`, and a run that took that default reports a `validationSetReusesTraining` warning: the search selected candidates on the instances reflection read. Pass `validationSet: "reuseTraining"` to accept it by name and silence the warning.
+
+**`warnings`** is a `RunWarning[]` of what a run cannot say about itself from its own numbers — selection that reused the training instances, a seed the metric scored identically on every instance. Never fatal, always present (empty when there is nothing to say), and repeated on the `finish` event so a reporter records them next to the score.
 
 **`TextModel`** is the provider-independent interface `({ prompt, signal }) => Promise<string>`.
 
@@ -131,7 +135,11 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`parseProposedText(text)`** extracts a proposal from a reflection response, including responses with fenced blocks or surrounding commentary.
 
-**`createJudge({ model, criteria, scale = 5, renderInput, renderOutput, buildPrompt })`** returns a `Judge<Datum, Output>`: `({ input, output, expected, signal }) => Promise<ScoreResult>`. Each `JudgeCriterion` is graded on a small integer scale and normalized; per-criterion values are returned as `objectiveScores` and the aggregate `score` is their mean. A criterion the judge failed to grade returns a transient score rather than a zero, so the instance is retried instead of recorded as a failure. **`buildJudgePrompt`** is the default template and implements `JudgePromptBuilder`.
+**`createJudge({ model, criteria, scale = 5, renderInput, renderOutput, buildPrompt })`** returns a `Judge<Datum, Output>`: `({ input, output, expected, signal }) => Promise<ScoreResult>`. Each `JudgeCriterion` is graded on a small integer scale and normalized; per-criterion values are returned as `objectiveScores` and the aggregate `score` is their weighted mean. A criterion the judge failed to grade returns a transient score rather than a zero, so the instance is retried instead of recorded as a failure. **`buildJudgePrompt`** is the default template and implements `JudgePromptBuilder`.
+
+A `JudgeCriterion` takes `weight` (default 1; 0 reports the criterion as an objective without letting it move the score) and `gate`. **`gate`** is the grade, on the judge's own scale, that a criterion must reach for the instance to score at all — below it the instance scores 0 whatever the rest said, and the per-criterion objectives still report which one failed it. A mean lets a search trade a hard requirement away: a candidate that tanks one non-negotiable criterion and aces three cosmetic ones outranks the incumbent that kept the rule. Anything you would not ship without is a gate rather than a term in the average.
+
+When `expected` is passed, the default prompt forbids the feedback from restating it. Feedback is rewritten into a reusable instruction, so "the instruction never says to state the thirty-day refund window" is addressed to the instructions as asked and copies the answer key into the prompt.
 
 **`compare({ entrants, seeds, concurrency = 1 })`** runs each entrant over every seed and returns a `Comparison` of `winner`, `summaries`, and `runs`. Entrants are `({ seed }) => Promise<OptimizerResult>`, so the caller builds the optimizer-specific task. Ranking is on `testScore` where a run reports one, because the validation score is the number the search selected against. Each `ComparisonSummary` carries `meanScore`, `sdScore`, `minScore`, `maxScore`, `meanMetricCalls`, `meanCostUsd`, and a paired sign-flip `pValueVsWinner`.
 
@@ -222,11 +230,14 @@ TypeScript infers component names and the datum type from `seedCandidate` and `t
 Extends `Adapter` with what reflection needs:
 
 ```ts
+evaluate(args: EvaluateArgs<Datum, K>): ReflectiveBatch<Trajectory, Output>
 makeReflectiveDataset(args: MakeReflectiveDatasetArgs<Datum, Trajectory, Output, K>): ReflectiveDataset<K>
 proposeNewTexts?(args: ProposeArgs<K>): ComponentPatch<K>   // optional
 ```
 
-Both methods may be synchronous or asynchronous. `ReflectiveDataset` is a partial map from component names to `ReflectiveRecord[]`. Each record contains `inputs`, `generatedOutputs`, `feedback`, `score`, and a typed `evidence` field. Adapters only need to return records for the requested components.
+A `ReflectiveBatch` is an `EvaluationBatch` with `feedback` required. It is optional on the shared type because the searches that never reflect have no use for it; here it is the input to the whole method. An adapter that returns scores and no prose reduces every rollout to a number, and reflection then rewrites the instruction from a prompt whose feedback blocks are empty — a run that spends its whole budget, reports a normal-looking `stopReason`, and has been doing blind search. Nothing in the result distinguishes that from a hard task, so it is a type error instead.
+
+All three methods may be synchronous or asynchronous. `ReflectiveDataset` is a partial map from component names to `ReflectiveRecord[]`. Each record contains `inputs`, `generatedOutputs`, `feedback`, `score`, and a typed `evidence` field. Adapters only need to return records for the requested components.
 
 When `proposeNewTexts` is implemented, the adapter generates proposals without calling `reflect`. The task type still requires `reflect`, so offline runs can pass a stub.
 
@@ -248,7 +259,7 @@ When `proposeNewTexts` is implemented, the adapter generates proposals without c
 
 Each export is a factory. Selector and acceptance interfaces accept custom functions. A `ValEvaluationPolicy` is an object with `selectInstances` and `bestCandidate` methods.
 
-`pairedPermutationAcceptance` and `lowerBoundEvaluationPolicy` exist for metrics whose readings vary between runs of the same text. Both are strictly more conservative than the defaults. In the twenty-seed benchmark the pair scores 0.931 against plain GEPA's 0.920 on the noisy task and 0.945 against 0.947 on the noiseless one, neither gap significant over those seeds — conservative enough to be worth having on a metric that varies, cheap enough not to hurt on one that does not. A sign-flip test also needs a wide enough minibatch to say anything — over three instances the smallest p-value it can produce is 0.125, so at the default `minibatchSize` no proposal clears an `alpha` below that.
+`pairedPermutationAcceptance` and `lowerBoundEvaluationPolicy` exist for metrics whose readings vary between runs of the same text. Both are strictly more conservative than the defaults. In the twenty-seed benchmark the pair scores 0.931 against plain GEPA's 0.920 on the noisy task and 0.945 against 0.947 on the noiseless one, neither gap significant over those seeds — conservative enough to be worth having on a metric that varies, cheap enough not to hurt on one that does not. A sign-flip test also needs a wide enough minibatch to say anything — over three instances the smallest p-value it can produce is 0.125, so at the default `minibatchSize` no proposal clears an `alpha` below that. `GepaOptimizer` refuses that combination at construction rather than letting the run discover it: an acceptance policy reports the smallest batch it could ever accept on as `minimumPairs`, and a `minibatchSize` below it throws.
 
 ### Reflection prompts
 
@@ -496,12 +507,17 @@ The paraphrase prompt receives no score or feedback. Compare random search with 
 ```ts
 import { createFileCache } from "textopt/file-cache";
 
-const cache = createFileCache({ path: ".textopt/scores.jsonl" });
+const cache = createFileCache({
+  path: ".textopt/scores.jsonl",
+  namespace: "gpt-4o-mini@t0/scorer-v3",
+});
 ```
 
 An `EvaluationCache` that outlives the process, as an append-only JSONL log. A long run against a real provider is measured in hours and dollars, and an in-memory cache throws all of it away when the run ends.
 
 Append-only rather than rewritten: a score is never invalidated, because the key names the candidate, the instance, and the environment — and a log survives a process killed mid-write, which a file rewritten in place does not. A record that does not parse is dropped rather than fatal, since the last line of an interrupted log is routinely half-written. Later records win, so a re-measured instance replaces its earlier reading.
+
+`namespace` is required and scopes every key to the system the scores measure — model id, decoding settings, scorer version. It is not optional the way `cacheNamespace` is, because this log outlives every part of that system a key does not name: an alias the provider upgraded under you, an edited scorer. Entries written under one namespace are never served to a run under another. Change it whenever anything outside the candidate text changes.
 
 `maxEntries` (default 1,000,000) bounds what is held in memory; the file itself is never trimmed. `entries()` is deliberately absent — it exists so a checkpoint can carry scores that would otherwise be lost, and these are already on disk.
 

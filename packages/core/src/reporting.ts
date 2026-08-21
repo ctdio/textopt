@@ -1,4 +1,5 @@
 import type { Candidate } from "./types.js";
+import type { RunWarning } from "./warnings.js";
 
 /**
  * Where a run's progress goes, for any optimizer. Observability only:
@@ -88,6 +89,12 @@ export interface RunFinished {
   testInstanceScores?: readonly (number | undefined)[];
   /** Aligned with `testInstanceScores`. Only under `trackBestOutputs`. */
   testOutputs?: readonly unknown[];
+  /**
+   * What the run cannot say about itself from its own numbers. A reporter that
+   * writes the score somewhere permanent writes these beside it, or the record
+   * outlives the only place the caveat was ever stated.
+   */
+  warnings: readonly RunWarning[];
 }
 
 /**

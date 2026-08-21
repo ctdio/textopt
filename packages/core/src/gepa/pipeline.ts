@@ -1,5 +1,9 @@
 import { mapWithConcurrency } from "../concurrency.js";
-import type { GepaAdapter, ReflectiveRecord } from "./types.js";
+import type {
+  GepaAdapter,
+  ReflectiveBatch,
+  ReflectiveRecord,
+} from "./types.js";
 import type { Candidate, EvaluationBatch, ScoreResult } from "../types.js";
 
 /** One module of the system: a component's text, applied to what reached it. */
@@ -99,7 +103,7 @@ export function createPipelineAdapter<
         },
       });
 
-      const batchResult: EvaluationBatch<PipelineTrace, Output> = {
+      const batchResult: ReflectiveBatch<PipelineTrace, Output> = {
         outputs: rollouts.map((rollout) => rollout.output),
         scores: rollouts.map((rollout) => rollout.scored.score),
         feedback: rollouts.map((rollout) => rollout.scored.feedback ?? ""),
