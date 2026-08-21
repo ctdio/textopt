@@ -1,6 +1,6 @@
 {
   "name": "textopt",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Prompt optimization for TypeScript, with GEPA, SIMBA, OPRO, MIPRO, bootstrapped few-shot search, and random search behind a shared interface",
   "keywords": [
     "prompt-optimization",
