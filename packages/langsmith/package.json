@@ -1,6 +1,6 @@
 {
   "name": "@textopt/langsmith",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "LangSmith experiment reporting for textopt",
   "keywords": [
     "prompt-optimization",
