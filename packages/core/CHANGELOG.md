@@ -1,5 +1,55 @@
 # textopt
 
+## 0.2.0
+
+### Minor Changes
+
+- c2c4d3e: `GepaOptimizer` refuses an acceptance policy that cannot accept anything at the
+  configured `minibatchSize`. A sign-flip test over three instances bottoms out at
+  p = 0.125, so `pairedPermutationAcceptance({ alpha: 0.05 })` at the default
+  minibatch rejected every proposal and returned the seed after spending the whole
+  budget. Acceptance policies report the batch they need as `minimumPairs`; raise
+  `minibatchSize` to at least that, or loosen `alpha`.
+- c2c4d3e: `createFileCache` requires a `namespace` naming the system its scores measure,
+  and never serves an entry written under a different one. A durable log outlives
+  the model behind an alias, the decoding settings, and the scorer version — every
+  part of a measurement a cache key does not name. Pass the same string you would
+  pass as `cacheNamespace`.
+- c2c4d3e: `GepaAdapter.evaluate` returns a `ReflectiveBatch` — an `EvaluationBatch` with
+  `feedback` required. An adapter that returned scores and no prose left the
+  reflection prompt rewriting instructions from empty feedback blocks, which is
+  blind search reported as a normal run. Adapters that already return `feedback`
+  need no change; the rest now fail to compile.
+- c2c4d3e: `JudgeCriterion` takes `weight` and `gate`. A gated criterion that grades below
+  its bar scores the instance 0 whatever the other criteria said, so a hard
+  requirement is no longer something a search can trade away against three
+  cosmetic ones. When `expected` is passed, the default judge prompt also forbids
+  the feedback from restating it — feedback is rewritten into a reusable
+  instruction, and a fact copied out of the gold answer becomes an answer key
+  memorised in the prompt.
+- c2c4d3e: Every result and `finish` event carries `warnings`: what a run could see about
+  its own measurement that its numbers cannot say. A run given no `validationSet`
+  reports that selection ran on the instances reflection read, and a seed the
+  metric scores identically on every validation instance reports that there was
+  nothing to rank. Pass `validationSet: "reuseTraining"` to accept the reuse by
+  name. Custom optimizers implementing `OptimizerResult` or emitting `RunFinished`
+  must now populate `warnings`.
+
+### Patch Changes
+
+- 3f5824b: The long-form guides ship in the tarball, under `docs/`, so an installed copy
+  documents the version installed rather than whatever `main` has become. Two of
+  them are new: `data-prep.md` on splitting a dataset a search can be trusted
+  with, and `metric-preflight.md` on checking a metric separates candidates —
+  and moves over a wide enough interval — before a budget is spent on it.
+
+  Doc comments on the API carry the traps that belong beside the code: that
+  `weight: 0` removes a criterion from the aggregate but not from
+  `objectiveScores`, that a `gate` and a heavy `weight` on the same criterion
+  enforce a requirement twice and narrow the range a search has left to move in,
+  and that a SIMBA run has to be funded past its finalist reserve before any step
+  happens.
+
 ## 0.1.0
 
 ### Minor Changes
