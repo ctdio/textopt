@@ -111,10 +111,9 @@ is permanently unattested.
 
 ### Promoting a package out of beta
 
-`@textopt/ai-sdk`, `@textopt/braintrust` and `@textopt/langsmith` are `private`
-and listed in `.changeset/config.json` under `ignore`, so they neither version
-nor publish. Removing both markers is most of what promotes one, but not all of
-it.
+`@textopt/ai-sdk` and `@textopt/braintrust` are `private` and listed in
+`.changeset/config.json` under `ignore`, so they neither version nor publish.
+Removing both markers is most of what promotes one, but not all of it.
 
 The registry will not accept the first version from CI. A trusted publisher can
 only be configured on a package that already exists, and this workflow holds no

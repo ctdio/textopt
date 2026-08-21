@@ -18,6 +18,7 @@ published package can now do differently — not what moved in the source tree.
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/core/**`                                   | `textopt`                                                                                                                         |
 | `packages/langchain/**`                              | `@textopt/langchain`                                                                                                              |
+| `packages/langsmith/**`                              | `@textopt/langsmith`                                                                                                              |
 | `packages/ai-sdk/**`, `packages/braintrust/**`       | none — both are `private` and listed under `ignore` in `.changeset/config.json`, so a changeset naming them is silently discarded |
 | `examples/**`, `bench/**`, `.github/**`, root config | none                                                                                                                              |
 

@@ -133,7 +133,7 @@ importers:
   packages/langsmith:
     dependencies:
       textopt:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       langsmith:

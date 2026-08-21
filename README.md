@@ -35,7 +35,13 @@ Optimizing a LangChain runnable additionally needs the adapter, which takes `@la
 npm install @textopt/langchain
 ```
 
-`@textopt/ai-sdk`, `@textopt/braintrust` and `@textopt/langsmith` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle. Each matches its framework's types structurally, so none of them declares that framework as a dependency.
+Reporting a run to LangSmith needs `@textopt/langsmith`, which matches LangSmith's `Client` structurally and declares no dependency on the `langsmith` SDK:
+
+```bash
+npm install @textopt/langsmith
+```
+
+`@textopt/ai-sdk` and `@textopt/braintrust` are beta and are not published to npm. Use them from a checkout of this repository until their interfaces settle. Each matches its framework's types structurally, so neither declares that framework as a dependency.
 
 ## Concepts
 
@@ -112,7 +118,7 @@ All six use the same `Optimizer` interface, adapter, and budget accounting, so s
 | `@textopt/langchain`  | Adapter for LangChain runnables, chains, agents, and LangGraph graphs.                                                 |
 | `@textopt/ai-sdk`     | Vercel AI SDK adapter for `generateText` and `generateObject`. **Beta, unpublished.**                                  |
 | `@textopt/braintrust` | autoevals scorer integration and a Braintrust logging decorator. **Beta, unpublished.**                                |
-| `@textopt/langsmith`  | Reports any optimizer's run to LangSmith, one experiment per candidate. **Beta, unpublished.**                         |
+| `@textopt/langsmith`  | Reports any optimizer's run to LangSmith, one experiment per candidate.                                                |
 
 Each optimizer ships behind its own subpath — `textopt/gepa`, `textopt/simba`, `textopt/opro`, `textopt/mipro`, `textopt/bootstrap-search`, `textopt/random-search` — alongside `textopt/file-cache` for a durable cache and `textopt/testing` for fixtures that need no LLM. [`packages/core/README.md`](packages/core/README.md) is the API reference.
 

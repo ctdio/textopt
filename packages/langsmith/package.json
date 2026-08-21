@@ -1,7 +1,6 @@
 {
   "name": "@textopt/langsmith",
   "version": "0.0.0",
-  "private": true,
   "description": "LangSmith experiment reporting for textopt",
   "keywords": [
     "prompt-optimization",
@@ -24,6 +23,9 @@
   "sideEffects": false,
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "exports": {
     ".": {
@@ -48,7 +50,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "textopt": "workspace:*"
+    "textopt": "workspace:^"
   },
   "devDependencies": {
     "langsmith": "0.8.11"
