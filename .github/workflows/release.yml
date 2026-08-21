@@ -20,7 +20,7 @@ jobs:
     outputs:
       pending: ${{ steps.pending.outputs.pending }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: pending
         run: |
           # A changeset waiting in the tree means the version pull request has
@@ -84,7 +84,7 @@ jobs:
     steps:
       # Third-party actions are pinned by commit. A tag or branch reference is
       # mutable; `changesets/action@v2` is a branch, not a tag.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
