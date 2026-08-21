@@ -4,17 +4,72 @@ on:
   push:
     branches: [main]
 
-# Two releases must never publish at once, and cancelling one mid-publish would
-# leave the registry and the git tags disagreeing.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 permissions: {}
 
 jobs:
-  release:
+  # Every push to main used to raise a deployment review on the `npm`
+  # environment, docs-only ones included. An environment gate stops a job
+  # before its first step, so the release job could not work out that it had
+  # nothing to do without first asking to be approved. This job answers that
+  # question with no environment and no write permission, so the approval is
+  # only ever requested for a push that will actually do something.
+  preflight:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - id: pending
+        run: |
+          # A changeset waiting in the tree means the version pull request has
+          # to be opened or refreshed. Everything else is a question for the
+          # registry, because `changeset publish` decides what to publish by
+          # asking npm which versions exist, not by reading the git history.
+          if [ -n "$(find .changeset -name '*.md' ! -name 'README.md')" ]; then
+            echo "a changeset is waiting: the version pull request needs a run"
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          for manifest in packages/*/package.json; do
+            # Private packages are the ones `changeset publish` skips, so they
+            # are the ones this check skips to agree with it.
+            if [ "$(jq -r '.private // false' "$manifest")" = true ]; then
+              continue
+            fi
+            name=$(jq -r .name "$manifest")
+            version=$(jq -r .version "$manifest")
+            # The slash in a scoped name is encoded in the registry path.
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 \
+              "https://registry.npmjs.org/${name//\//%2f}/$version")
+            if [ "$status" != 200 ]; then
+              # 404 is a version this repository has not published yet. Any
+              # other answer, including the 000 curl reports for a network
+              # failure, is unknown — and the safe unknown asks the human
+              # rather than silently skipping a release.
+              echo "$name@$version is not on the registry (HTTP $status)"
+              echo "pending=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "no changeset waiting, every version published: nothing to do"
+          echo "pending=false" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: preflight
+    if: needs.preflight.outputs.pending == 'true'
+    runs-on: ubuntu-latest
+    # Two releases must never publish at once, and cancelling one mid-publish
+    # would leave the registry and the git tags disagreeing. This sits on the
+    # job rather than the workflow so that a push with nothing to release is
+    # not held in the queue behind a run waiting on its approval — and then
+    # cancelled by the push after it.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     # The environment name is half of what npm authenticates. A trusted
     # publisher names the repository, the workflow file and the environment, so
     # renaming any of the three stops the publish rather than weakening it. The

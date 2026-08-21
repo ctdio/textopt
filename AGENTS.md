@@ -75,6 +75,13 @@ Merging that pull request runs the workflow again, and the second run publishes.
 Both runs stop at the `npm` environment for a human approval, including the one
 that only refreshes the version pull request and publishes nothing.
 
+A push with neither a changeset waiting nor an unpublished version — a docs
+commit, say — never gets that far. An environment gate stops a job before its
+first step, so the release job cannot find out it has nothing to do without
+first asking to be approved; a `preflight` job holding no environment answers
+that question instead, and the approval is only requested for a push that will
+act on it.
+
 Both published packages are on 0.x, where `^0.1.0` does not cross a minor. So
 `minor` is the breaking lever and `patch` covers additions and fixes. A changed
 default that makes an unmodified call search differently is breaking. The
