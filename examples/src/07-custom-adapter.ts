@@ -9,6 +9,11 @@
  * system becomes optimizable: an HTTP call, a retrieval pipeline, a compiler
  * pass, a shell script.
  *
+ * Writing both by hand is the case where the trajectory matters. Here it is a
+ * parse failure: the reflection model has to see the raw response that would
+ * not parse, which no score carries. A system whose evidence is just its input
+ * and its output wants `createPromptAdapter`, which writes both methods.
+ *
  * The task model here is the cheapest tier, deliberately. The interesting
  * result of an optimization run is usually not "the big model got better" but
  * "the small model caught up once the prompt carried the domain knowledge".

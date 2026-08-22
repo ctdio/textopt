@@ -317,6 +317,16 @@ createDemoProposer({ components, minScore, maxDemos, render, fallback });
 
 This `proposeNewTexts` implementation fills selected components with few-shot examples from the reflective dataset. It uses existing record inputs, outputs, and scores, so it requires no additional rollouts or reflection calls. Examples are deduplicated by input and appended to the parent's block. `fallback` handles components not listed in `components`.
 
+### `createPromptAdapter`
+
+```ts
+createPromptAdapter({ run, input, score, concurrency });
+```
+
+A `GepaAdapter` for the common case: one prompt, one component, one call. `run({ instruction, input, datum, signal })` receives the candidate's text as `instruction` and returns the output; `score({ datum, output })` grades it. `input(datum)` shapes what the prompt receives and defaults to the datum itself.
+
+The candidate must have exactly one component, and the adapter reads which one off the candidate rather than being told. A second component would be text the search rewrites every iteration and nothing runs, so it throws and names `createPipelineAdapter` instead.
+
 ### `createPipelineAdapter`
 
 ```ts

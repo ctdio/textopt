@@ -1,5 +1,6 @@
 export { createDemoProposer } from "./demos.js";
 export { createPipelineAdapter } from "./pipeline.js";
+export { createPromptAdapter } from "./prompt.js";
 export type {
   PipelineModule,
   PipelineStep,

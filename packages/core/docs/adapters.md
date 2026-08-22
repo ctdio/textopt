@@ -22,6 +22,8 @@ interface GepaAdapter<Datum, Trajectory, Output, K extends string> {
 
 Methods may be synchronous or asynchronous; the example shows the asynchronous form.
 
+Most systems do not need this written by hand. [`createPromptAdapter`](#one-prompt) covers one prompt and one component, [`createPipelineAdapter`](#multi-module-pipelines) covers several modules in sequence, and the framework adapters below cover the AI SDK and LangChain. Implement the interface directly when none of them describes your system.
+
 `evaluate` returns one score per instance and may include textual feedback. GEPA uses that feedback during reflection.
 
 - **`args.run`** identifies the rollout's `iteration`, `phase`, `split`, and `candidateId`. Forward it to your tracing system.
@@ -157,6 +159,25 @@ Each criterion is graded on a small integer scale and normalized afterwards, bec
 
 The prompt asks for feedback addressed to the _instructions_ rather than to the graded output. "The instruction never says to state the refund window" is something a rewriting model can act on; "this answer should have mentioned the refund window" is not. A criterion the judge failed to grade comes back as a transient score, so the instance is retried rather than recorded as a zero.
 
+## One prompt
+
+Most systems under optimization are a single call with a single instruction, and `createPromptAdapter` is that case named:
+
+```ts
+import { createPromptAdapter } from "textopt/gepa";
+
+const adapter = createPromptAdapter<Ticket, string>({
+  input: (datum) => datum.text,
+  run: ({ instruction, input, signal }) => classify(instruction, input, signal),
+  score: ({ datum, output }) => gradeLabel(datum, output),
+  concurrency: 4,
+});
+```
+
+`run` receives the candidate's text as `instruction`, and `input(datum)` is what the prompt receives — the datum itself by default. That default is worth overriding whenever a row carries fields the system never sees: reflection reads the record, and a record carrying the label teaches the reflection model to write rules about an answer key the task model was never given.
+
+The candidate must have exactly one component, and the adapter reads which one off the candidate rather than being told. That is the check, not a limitation: a second component nobody runs is text the search rewrites every iteration for no effect, a budget spent on proposals that cannot move the score and a run that reports nothing unusual. Two instructions want the section below.
+
 ## Multi-module pipelines
 
 When a system runs several modules in sequence and each has its own instruction, reflection is only as good as the evidence it sees — and the evidence a module needs is what _it_ received and produced, not the pipeline's input and final answer. `createPipelineAdapter` builds that attribution:
@@ -182,7 +203,7 @@ const adapter = createPipelineAdapter<Ticket, string, "planner" | "writer">({
 
 Each module's output is threaded into the next, and the reflective dataset gives each component only its own step. The feedback is end-to-end and every module sees the same string: a metric scores the final output, so nothing in a score alone says which module lost the point. `score` is handed the whole trace for callers who can attribute better.
 
-**One module is the single-prompt case.** Optimizing one instruction is a `modules` array of length one, and everything above still holds — the trace has a single step and `score` reads the final output. Nothing else is needed for it.
+`createPromptAdapter` above is this helper with a single module, and the two share every behaviour described here.
 
 ### Text a component can countermand
 
