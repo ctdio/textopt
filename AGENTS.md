@@ -50,11 +50,13 @@ measurement that its numbers cannot say. A new optimizer wires both; a search
 that resolves its own validation set silently reintroduces the footgun.
 
 `reporting.ts` is where that rule earns its keep. Every search emits its own
-event union, but `candidateAccepted` and `finish` intersect a shared payload,
-so one reporter reads a run without knowing which optimizer produced it. A new
-optimizer emits `candidateAccepted` only when the incumbent moves and a full
-validation sweep measured it: a row aligned with a minibatch is not a row a
-reporter can name instances against.
+event union, but five members — `start`, `evaluation`, `rollout`,
+`candidateAccepted` and `finish` — intersect shared payloads, so one reporter
+reads a run without knowing which optimizer produced it. A new optimizer emits
+all five, names its events in its own `<NAME>_EVENT_TYPES` list, and emits
+`candidateAccepted` only when the incumbent moves and a full validation sweep
+measured it: a row aligned with a minibatch is not a row a reporter can name
+instances against.
 
 ## Commands
 
@@ -170,6 +172,47 @@ source before asserting what a reference does:
 departure from the reference gets a comment saying what the reference does, why
 this differs, and what it costs — next to the code, not only in the README. If
 you cannot articulate the cost, you do not yet understand the deviation.
+
+## A feature lands in every search, or it is not a feature
+
+Six algorithms over one substrate is the whole claim, so anything the substrate
+gains is owed by all six. The failure mode is not writing wrong code — it is
+writing correct code for the one search you happened to have open.
+
+**Wire it into all six, and make the compiler hold it there.** Adding `rollout`
+to the event substrate was six unions, six `<NAME>_EVENT_TYPES` lists, six
+`emit` calls, and the adapters that do the counting. Those lists exist so the
+work cannot be left half-done: each is `as const satisfies readonly
+XEvent["type"][]`, `reporting.types.test.ts` asserts the reverse assignment, and
+both stop compiling the moment a union and its list disagree.
+
+**A check that fires on correct code is worse than no check.** The first version
+of the reporter check compared handler names against the running optimizer's
+list alone, so a reporter written once and attached to three searches warned on
+every run about a handler doing exactly what its author meant. Before adding a
+warning, name the legitimate setups that trip it, starting with the ones this
+library advertises. A warning the reader learns to skip costs more than the
+silence it replaced, because it stands next to warnings that matter.
+
+**Check what a helper requires before filing it under one optimizer.**
+`createPromptAdapter` lives in `gepa/` and returns a `GepaAdapter`, which is the
+base `Adapter` with reflection's evidence added — so the other five take it
+unchanged. Nothing prevented that; the docs merely implied otherwise, and a
+SIMBA user reading them writes an adapter by hand.
+
+**A capability with no name is undiscovered.** Optimizing a single prompt was a
+`modules` array of length one for as long as `createPipelineAdapter` has
+existed. An integrator on neither framework adapter wrote `evaluate` and
+`makeReflectiveDataset` themselves rather than find it, because nothing was
+named for the case they had. Expressible is not discoverable: when the common
+case takes a sentence to explain, it wants an export.
+
+**A claim about types is asserted, the way a claim about numbers is measured.**
+`everyEventNameIsListed`, `oneReporterFitsEveryOptimizer` and
+`promptAdapterFitsEveryOptimizer` are never called — each is an assignment the
+compiler accepts or rejects, and each holds a sentence of documentation that
+would otherwise quietly stop being true. Five lines beats a paragraph nobody
+rechecks. `## Claims in documentation are measured` covers the numbers.
 
 ## Claims in documentation are measured
 
@@ -325,6 +368,10 @@ not evidence of anything.
   which path ran. A fixture's scoring function may branch; assertions may not.
 - **Name the behaviour**, not the function: `"retries a rejected text once
 another component has moved"`.
+- **The compiler is a test runner.** A `*.types.test.ts` file holds what no
+  runtime assertion can reach — an event union against its name list, a helper's
+  adapter against the interface every optimizer takes. Nothing in them is
+  called; a failing `pnpm typecheck` is the red.
 
 When a test's threshold encodes a measurement, put both numbers in a comment —
 what it is with the change and what it was without — so the next person can tell
