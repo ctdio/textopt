@@ -22,12 +22,12 @@
  *   ANTHROPIC_API_KEY=... pnpm --filter textopt-examples judge
  */
 import { anthropic } from "@ai-sdk/anthropic";
-import { createJudge } from "textopt";
+import { consoleReporter, createJudge } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createAiSdkAdapter } from "@textopt/ai-sdk";
 import { generateText } from "ai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 import { TRAIN_TICKETS, VAL_TICKETS, type Ticket } from "./shared/tickets.js";
 
 requireApiKey("ANTHROPIC_API_KEY");
@@ -109,7 +109,7 @@ const result = await new GepaOptimizer({
   // which is text in and text out and carries no usage, so their spend is real
   // and outside this number.
   maxCostUsd: 5,
-  reporters: [{ onEvent: logEvent }],
+  reporters: [consoleReporter()],
 });
 
 printResult(result);

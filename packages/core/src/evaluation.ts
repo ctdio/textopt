@@ -27,6 +27,29 @@ export interface EvaluationEvent {
   meanScore: number;
 }
 
+/**
+ * One rollout finished, reported as the batch that bought it runs. The finest
+ * grained signal a run emits, and the only one that moves during a validation
+ * sweep — which is where a run against a slow provider spends minutes looking
+ * indistinguishable from a hung process.
+ *
+ * Reported by the adapter, because the adapter owns the loop: the evaluator
+ * hands it a whole batch and sees nothing until the batch comes back.
+ */
+export interface RolloutProgress {
+  iteration: number;
+  phase: EvaluationPhase;
+  split: EvaluationSplit;
+  candidateId: number | null;
+  /** Rollouts settled in this evaluation so far, counting from one. */
+  completed: number;
+  /**
+   * Rollouts this evaluation will make. Cached instances are not among them:
+   * they buy nothing and take no time.
+   */
+  total: number;
+}
+
 /** Scores plus, when the adapter reports them, their per-objective breakdown. */
 export interface ScoredBatch<Output> {
   scores: number[];
@@ -153,6 +176,8 @@ export function createEvaluator<
   /** Keep what each rollout produced. Costs memory proportional to outputs. */
   trackOutputs?: boolean;
   onEvaluation?: (event: EvaluationEvent) => void;
+  /** Per settled rollout, for adapters that report them. */
+  onRollout?: (event: RolloutProgress) => void;
   signal?: AbortSignal;
   /** Resumed counters, so a continued run reports totals rather than deltas. */
   cacheHits?: number;
@@ -178,6 +203,7 @@ export function createEvaluator<
     cache,
     trackOutputs = false,
     onEvaluation,
+    onRollout,
     signal,
     cacheHits: initialCacheHits = 0,
     usage: initialUsage,
@@ -286,6 +312,8 @@ export function createEvaluator<
   }): Promise<EvaluationBatch<Trajectory, Output>> {
     const { candidate, rows, captureTraces, charge, ...context } = call;
 
+    let completed = 0;
+
     reserve({ calls: rows.length, charge });
     try {
       const evaluation = await adapter.evaluate({
@@ -293,6 +321,14 @@ export function createEvaluator<
         candidate,
         captureTraces,
         run: context,
+        ...(onRollout === undefined
+          ? {}
+          : {
+              onRollout: () => {
+                completed += 1;
+                onRollout({ ...context, completed, total: rows.length });
+              },
+            }),
         signal,
       });
       assertEvaluation({ evaluation, expected: rows.length });

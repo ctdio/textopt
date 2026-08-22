@@ -17,13 +17,13 @@
  */
 import { anthropic } from "@ai-sdk/anthropic";
 import Anthropic from "@anthropic-ai/sdk";
-import { mapWithConcurrency } from "textopt";
+import { consoleReporter, mapWithConcurrency } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import type { GepaAdapter } from "textopt/gepa";
 import { openai } from "@ai-sdk/openai";
 import OpenAI from "openai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 
 type Vendor = "anthropic" | "openai";
 
@@ -153,10 +153,13 @@ const adapter: GepaAdapter<
   string,
   "instruction"
 > = {
-  evaluate: async ({ batch, candidate, signal }) => {
+  evaluate: async ({ batch, candidate, onRollout, signal }) => {
     const results = await mapWithConcurrency({
       items: batch,
       limit: 4,
+      // One `rollout` event per settled instance. Without it a run reports
+      // nothing between the start of a validation sweep and its end.
+      onSettled: onRollout,
       task: async (line) => {
         const response = await complete({
           instruction: candidate.instruction,
@@ -217,7 +220,7 @@ const result = await gepa.optimize({
   reflect,
   maxMetricCalls: 120,
   instanceId: ({ datum }) => datum.id,
-  reporters: [{ onEvent: logEvent }],
+  reporters: [consoleReporter()],
 });
 
 printResult(result);

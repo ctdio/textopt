@@ -125,7 +125,7 @@ For Redis, SQLite, or file-backed caching, implement **`EvaluationCache`** with 
 
 **`componentNames(candidate)`** returns `Object.keys(candidate)` while preserving the component-name union.
 
-**`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, signal, cacheHits, usage })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `cacheHits` and `usage` seed the counters from a checkpoint, so a resumed run reports totals rather than deltas. `usage()` covers the charged rollouts a ceiling is checked against; `unchargedUsage()` covers what `charge: false` bought. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
+**`createEvaluator({ adapter, budget, cache, cacheNamespace, retry, trackOutputs, onEvaluation, onRollout, signal, cacheHits, usage })`** handles adapter calls, caching, budget accounting, transient scores, and evaluation events. `cacheHits` and `usage` seed the counters from a checkpoint, so a resumed run reports totals rather than deltas. `usage()` covers the charged rollouts a ceiling is checked against; `unchargedUsage()` covers what `charge: false` bought. `evaluate` returns a `ScoredBatch`. `evaluateTraced` returns an `EvaluationBatch`, or `null` when the remaining budget cannot cover the batch. A batch that exceeds the charged budget throws `BudgetExhausted`. All included optimizers use this evaluator.
 
 **`harvestRollouts({ adapter, candidate, data, minScore, maxRollouts, batchSize, maxMetricCalls, maxCostUsd, rng, signal })`** runs a candidate over `data` and returns the `Rollout`s the metric rewarded, alongside `metricCalls` and `attempted`. Omit `minScore` to keep any rollout scoring above zero; omit `maxRollouts` to sweep the whole pool. It carries its own budget and does not use the score cache, because it needs the outputs a cache hit cannot return. `maxCostUsd` bounds its dollars, checked between batches — a caller bounding spend cannot bound this pass from outside, since it runs on its own evaluator. Sweeping a validation set is the mistake to avoid — see [Distilling a run](./docs/distillation.md).
 
@@ -155,15 +155,49 @@ When `expected` is passed, the default prompt forbids the feedback from restatin
 
 ### Reporting
 
+Two reporters ship with the package, and a first run wants both:
+
+```ts
+import { consoleReporter } from "textopt";
+import { jsonlReporter } from "textopt/file-reporter";
+
+reporters: [consoleReporter(), jsonlReporter({ path: "runs/today.jsonl" })];
+```
+
+**`consoleReporter({ log, level })`** prints one line per event and never rewrites one in place: a progress bar is unreadable the moment a run is redirected to a file, which is where a run long enough to need one ends up. `level` is `"quiet"` (what moved the search), `"normal"` (the default, including a line per rollout) or `"verbose"` (every event a search emits). It is typed against the tag alone, so it drops into any optimizer.
+
+**`jsonlReporter({ path, only })`** appends every event to a JSON Lines file as it happens, rather than buffering to the end — the run with the most to say about itself is the one that was killed. It needs `node:fs`, so it lives in its own entry point. `only` narrows what is written: `["candidateAccepted", "finish"]` is a record kept for comparison rather than for debugging.
+
 Every optimizer takes **`reporters`**, an array of **`Reporter<Event>`** with an optional `onEvent` and an optional `flush`. `onEvent` is called synchronously on the search's hot path, so a reporter that ships anywhere over a network buffers there and uploads in `flush`, which is awaited once as the run ends — including when it ends by throwing. A reporter that throws is warned about and skipped: observability never fails a run. Persisting a run so it can be resumed is `onCheckpoint`, which is durability and a separate concern.
 
-Each search emits its own discriminated union, but two members are shared. **`CandidateAccepted`** carries `candidateId`, the `candidate` text, its `aggregateScore`, its `instanceScores` over the validation set, and its `outputs` under `trackBestOutputs`. **`RunFinished`** carries `bestCandidateId`, `bestScore`, `metricCalls`, and the winner's held-out `testScore`, `testInstanceScores` and `testOutputs`. In both rows, `undefined` marks an instance nothing measured — the evaluation policy skipped it, or an infrastructure failure lost it — and reporting one as a zero shows as a regression that never happened.
+Write your own with **`createReporter`**, one handler per event rather than one callback that switches on a tag:
+
+```ts
+import { createReporter } from "textopt/gepa";
+import type { GepaEvent } from "textopt/gepa";
+
+createReporter<GepaEvent>({
+  on: {
+    candidateAccepted: (event) =>
+      track(event.candidateId, event.aggregateScore),
+    finish: (event) => track("done", event.bestScore),
+  },
+});
+```
+
+Handler keys are the union's own tags, so a handler named after an event that does not exist does not compile, and one named after an event _this_ optimizer does not emit is warned about when the run starts. Both matter more than they look: a reporter annotated `Reporter<{ type: string }>` — which is what an integrator writes before knowing the union — accepts any tag it is compared against, so a run wired to `rolloutCompleted` type-checks, runs, prints nothing for its whole length, and reports no error. Reach for `createReporter`, or annotate with the optimizer's own union; never with the widened form. Both the reporters and the event types are re-exported from every optimizer's entry point, so `textopt/gepa` alone is enough to write one.
+
+Each search emits its own discriminated union, but five members are shared, and **`ReportableEvent`** names them. **`RunStarted`** carries the `components` and the `validationSetSize`. **`EvaluationEvent`** carries one scored batch: its `phase`, `split`, `metricCalls`, `cacheHits` and `meanScore`. **`RolloutProgress`** carries one settled rollout as `completed` of `total`. **`CandidateAccepted`** carries `candidateId`, the `candidate` text, its `aggregateScore`, its `instanceScores` over the validation set, its `objectiveScores` where the adapter scored any, and its `outputs` under `trackBestOutputs`. **`RunFinished`** carries `bestCandidateId`, `bestScore`, `metricCalls`, and the winner's held-out `testScore`, `testInstanceScores` and `testOutputs`. In both rows, `undefined` marks an instance nothing measured — the evaluation policy skipped it, or an infrastructure failure lost it — and reporting one as a zero shows as a regression that never happened.
+
+`rollout` is the finest signal a run emits and the only one that moves during a validation sweep, where a slow provider otherwise leaves minutes between events. The adapter owns the loop, so the adapter reports it: the adapters in this repository already do, and a hand-written one calls the `onRollout` it is handed in `evaluate`. One that never calls it simply reports no progress below the batch.
+
+`objectiveScores` on an acceptance is the per-objective mean over the same instances `aggregateScore` averages. Watching a single objective collapse while the aggregate holds is how a degenerate metric channel announces itself, and a run that only reports it at the end reports it after the budget is spent. An objective missing from any measured instance is left out rather than averaged over the subset that has it.
 
 `candidateAccepted` fires only when the incumbent moves and a full validation sweep measured it, so `instanceScores` never means "a subset, and you work out which". SIMBA accepts on a minibatch, which is too small a sample to name a row against; it reports those in its own `candidate` event and emits `candidateAccepted` when the sweep that confirms a step winner lands.
 
 Every optimizer reports the seed as `candidateId` 0 once its own sweep lands, so a report opens with the baseline every later candidate is read against rather than with the first improvement. A resumed run does not re-emit it. Each search adds its own fields to the event — GEPA its `iteration`, `parentIds` and `source`, MIPRO its `trial`, SIMBA its `step`, OPRO and random search their `round`, bootstrap search its `source` and `demos` — and drops anything the seed could not honestly carry, since the events that name a component or a menu selection already carry it.
 
-A reporter that reads only those two takes **`OptimizerEvent`** — `{ type: string }` — and narrows with **`isCandidateAccepted`** and **`isRunFinished`**. Because a literal tag is assignable to `string` and the parameter position is contravariant, one such reporter drops into any optimizer's `reporters` array. **`ReportableEvent`** names the union it reads. `@textopt/langsmith` is written this way.
+A reporter that reads only the shared events takes **`OptimizerEvent`** — `{ type: string }` — and narrows with **`isRunStarted`**, **`isEvaluation`**, **`isRollout`**, **`isCandidateAccepted`** and **`isRunFinished`**. Because a literal tag is assignable to `string` and the parameter position is contravariant, one such reporter drops into any optimizer's `reporters` array; `consoleReporter` and `@textopt/langsmith` are both written this way. This is the one place the widened annotation is right, and the guards are what make it safe — a bare `event.type === "…"` comparison against `string` is checked by nothing.
 
 ## `textopt/gepa`
 
@@ -301,7 +335,7 @@ Feedback is end-to-end and every module receives the same string. A metric score
 
 **`stopReason`** is one of `"budgetExhausted"`, `"costExhausted"`, `"deadlineReached"`, `"reflectionBudgetExhausted"`, `"aborted"`, or `"maxIterations"`.
 
-**`reporters`** is an array of `Reporter<GepaEvent>`, each with an optional `onEvent` and an optional `flush`. `onEvent` receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`. It is called synchronously, on the search's hot path, so a reporter that ships anywhere over a network buffers in `onEvent` and uploads in `flush`, which is awaited once as the run ends — including when it ends by throwing. A reporter that throws is warned about and skipped: observability never fails a run.
+**`reporters`** is an array of `Reporter<GepaEvent>`, each with an optional `onEvent` and an optional `flush`. `onEvent` receives a discriminated `GepaEvent`: `start`, `iterationStart`, `evaluation`, `rollout`, `proposal`, `candidateAccepted`, `candidateRejected` (with `reason: "worse" | "notSelected"`), `error`, and `finish`. It is called synchronously, on the search's hot path, so a reporter that ships anywhere over a network buffers in `onEvent` and uploads in `flush`, which is awaited once as the run ends — including when it ends by throwing. A reporter that throws is warned about and skipped: observability never fails a run.
 
 `candidateAccepted` fires for the seed too, and carries the `candidate` text, its `instanceScores` over the validation set, and its `outputs` under `trackBestOutputs` — the row a candidate put on the frontier, not just the mean. `finish` carries the same for the held-out sweep in `testInstanceScores` and `testOutputs`. In both, `undefined` marks an instance nothing measured — the evaluation policy skipped it, or an infrastructure failure lost it — and reporting one as a zero shows as a regression that never happened.
 

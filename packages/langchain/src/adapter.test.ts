@@ -273,6 +273,25 @@ describe("createLangChainAdapter", () => {
     ]);
   });
 
+  test("reports each rollout as it settles", async () => {
+    const settled: number[] = [];
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: (candidate) => echoRunnable(candidate.instruction ?? ""),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "classify" },
+      captureTraces: false,
+      run: RUN,
+      onRollout: () => settled.push(settled.length + 1),
+    });
+
+    expect(settled).toEqual([1, 2]);
+  });
+
   test("passes the candidate text into the runnable", async () => {
     const seen: string[] = [];
     const adapter = createLangChainAdapter<Ticket, string>({

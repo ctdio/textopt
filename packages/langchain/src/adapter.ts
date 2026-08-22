@@ -105,7 +105,14 @@ export function createLangChainAdapter<Datum, Output>(
   } = options;
 
   return {
-    evaluate: async ({ batch, candidate, captureTraces, run, signal }) => {
+    evaluate: async ({
+      batch,
+      candidate,
+      captureTraces,
+      run,
+      onRollout,
+      signal,
+    }) => {
       const runnable = buildRunnable(candidate);
       // Inert without a tracer configured, and the difference between a
       // LangSmith project full of anonymous rollouts and one you can filter
@@ -120,6 +127,7 @@ export function createLangChainAdapter<Datum, Output>(
       const results = await mapWithConcurrency({
         items: batch,
         limit: concurrency,
+        ...(onRollout === undefined ? {} : { onSettled: onRollout }),
         task: async (datum) => {
           const collector = createTraceCollector({ includeChainSteps });
           const startedAt = Date.now();

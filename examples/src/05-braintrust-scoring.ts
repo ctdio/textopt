@@ -15,6 +15,7 @@
  *   OPENAI_API_KEY=... pnpm --filter textopt-examples braintrust
  */
 import { openai } from "@ai-sdk/openai";
+import { consoleReporter } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createAiSdkAdapter } from "@textopt/ai-sdk";
 import {
@@ -26,7 +27,7 @@ import { generateText } from "ai";
 import { ExactMatch, Levenshtein } from "autoevals";
 import { initLogger } from "braintrust";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 import {
   TICKET_LABELS,
   TRAIN_TICKETS,
@@ -142,7 +143,7 @@ const result = await gepa.optimize({
   reflect,
   maxMetricCalls: 150,
   instanceId: ({ datum }) => datum.id,
-  reporters: [{ onEvent: logEvent }],
+  reporters: [consoleReporter()],
 });
 
 printResult(result);

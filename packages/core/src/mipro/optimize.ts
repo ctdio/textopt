@@ -13,15 +13,25 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent } from "../evaluation.js";
+import type { EvaluationEvent, RolloutProgress } from "../evaluation.js";
 import { mean } from "../math.js";
 import type {
   Optimizer,
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
-import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
-import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
+import {
+  createEmitter,
+  flushReporters,
+  instanceRow,
+  objectiveScoresOf,
+} from "../reporting.js";
+import type {
+  CandidateAccepted,
+  Reporter,
+  RunFinished,
+  RunStarted,
+} from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
@@ -242,9 +252,10 @@ export type MiproStopReason =
   | "aborted";
 
 export type MiproEvent<K extends string = string> =
-  | { type: "start"; components: K[]; validationSetSize: number }
+  | ({ type: "start" } & RunStarted<K>)
   | { type: "menu"; menu: Record<K, string[]>; reflectionCalls: number }
   | ({ type: "evaluation" } & EvaluationEvent)
+  | ({ type: "rollout" } & RolloutProgress)
   | {
       type: "trial";
       trial: number;
@@ -255,6 +266,21 @@ export type MiproEvent<K extends string = string> =
     }
   | ({ type: "candidateAccepted"; trial: number } & CandidateAccepted<K>)
   | ({ type: "finish"; reason: MiproStopReason } & RunFinished);
+
+/**
+ * Every name `MiproEvent` carries, as data, so a reporter that says which events
+ * it reads can be told at once when it names one MIPRO never emits — the
+ * failure that otherwise reads as a search with nothing to report.
+ */
+export const MIPRO_EVENT_TYPES = [
+  "start",
+  "menu",
+  "evaluation",
+  "rollout",
+  "trial",
+  "candidateAccepted",
+  "finish",
+] as const satisfies readonly MiproEvent["type"][];
 
 export interface MiproObservation {
   trial: number;
@@ -492,7 +518,10 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     trainingSet,
   });
 
-  const emit = createEmitter<MiproEvent<K>>(reporters);
+  const emit = createEmitter<MiproEvent<K>>({
+    reporters,
+    emits: MIPRO_EVENT_TYPES,
+  });
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -561,6 +590,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+    onRollout: (event) => emit({ type: "rollout", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -840,6 +870,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       candidate: seedCandidate,
       aggregateScore: seedScore,
       instanceScores: instanceRow(seedEvaluation),
+      ...objectiveScoresOf(seedEvaluation),
       ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
     });
   }
@@ -983,6 +1014,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
         candidate,
         aggregateScore: score,
         instanceScores: instanceRow(evaluation),
+        ...objectiveScoresOf(evaluation),
         ...(trackBestOutputs ? { outputs: evaluation.outputs } : {}),
       });
     }

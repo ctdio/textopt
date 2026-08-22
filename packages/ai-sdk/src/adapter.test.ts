@@ -75,6 +75,24 @@ describe("createAiSdkAdapter", () => {
     expect(compatible).toBe(true);
   });
 
+  test("reports each rollout as it settles", async () => {
+    const settled: number[] = [];
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async ({ datum }) => resultFor(datum.answer),
+      score: () => ({ score: 1 }),
+    });
+
+    await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "be terse" },
+      captureTraces: false,
+      run: RUN,
+      onRollout: () => settled.push(settled.length + 1),
+    });
+
+    expect(settled).toEqual([1, 2]);
+  });
+
   test("uses result.text as the output by default", async () => {
     const adapter = createAiSdkAdapter<Question, string>({
       run: async ({ datum }) => resultFor(datum.answer),

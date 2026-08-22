@@ -53,7 +53,7 @@ export function createKeywordAdapter(): GepaAdapter<
   string
 > {
   return {
-    evaluate: ({ batch, candidate }) => {
+    evaluate: ({ batch, candidate, onRollout }) => {
       const answer = Object.values(candidate).join(" ");
       const trajectories: KeywordTrajectory[] = [];
       const scores: number[] = [];
@@ -78,6 +78,7 @@ export function createKeywordAdapter(): GepaAdapter<
           answer,
           missing,
         });
+        onRollout?.();
       }
 
       return {

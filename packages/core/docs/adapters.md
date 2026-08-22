@@ -25,7 +25,21 @@ Methods may be synchronous or asynchronous; the example shows the asynchronous f
 `evaluate` returns one score per instance and may include textual feedback. GEPA uses that feedback during reflection.
 
 - **`args.run`** identifies the rollout's `iteration`, `phase`, `split`, and `candidateId`. Forward it to your tracing system.
+- **`args.onRollout`** is what turns a batch into progress. Call it as each rollout settles and the optimizer emits a `rollout` event per call; skip it and the run reports nothing between the start of a validation sweep and its end, which against a slow provider is minutes of silence indistinguishable from a hung process. The adapters below already call it, and so does anything built on `mapWithConcurrency` — pass it as `onSettled`.
 - **`transient`** marks scores caused by infrastructure failures such as rate limits or 5xx responses. Transient scores are not cached.
+
+```ts
+evaluate: async ({ batch, candidate, onRollout, signal }) => {
+  const scored = await mapWithConcurrency({
+    items: batch,
+    limit: 4,
+    signal,
+    onSettled: onRollout,
+    task: (datum) => runAndScore(candidate, datum),
+  });
+  // …
+};
+```
 
 ### Vercel AI SDK
 
@@ -167,3 +181,14 @@ const adapter = createPipelineAdapter<Ticket, string, "planner" | "writer">({
 ```
 
 Each module's output is threaded into the next, and the reflective dataset gives each component only its own step. The feedback is end-to-end and every module sees the same string: a metric scores the final output, so nothing in a score alone says which module lost the point. `score` is handed the whole trace for callers who can attribute better.
+
+**One module is the single-prompt case.** Optimizing one instruction is a `modules` array of length one, and everything above still holds — the trace has a single step and `score` reads the final output. Nothing else is needed for it.
+
+### Text a component can countermand
+
+A component is mutable text, and everything around it in the prompt is not. That asymmetry is easy to forget, and it costs a run quietly: an output contract written into the frozen text — "separate messages with `---`" — can be overridden by the very instruction the search is rewriting, because reflection is asked to fix failures and knows nothing about which of the words it is looking at are yours. A run that does this drifts to a candidate carrying `do not use dividers like ---`, the contract stops being met, and the component of the metric that scored it degenerates to a constant while the aggregate keeps improving.
+
+Two things prevent it, and they are worth doing together:
+
+- **Put the contract where the metric enforces it.** A format requirement that is scored is a requirement the search cannot drift away from — it costs points immediately. One that is only stated in the prompt is a suggestion the search is free to overrule. See [Building a metric](./metric-preflight.md).
+- **Watch the objective, not the aggregate.** Score the contract as its own entry in `objectiveScores` and read it off the `candidateAccepted` event. A channel collapsing to a constant while the total climbs is exactly what this failure looks like from the outside, and it is unreadable in the aggregate alone.

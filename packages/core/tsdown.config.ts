@@ -10,6 +10,7 @@ export default defineConfig({
     "src/simba/index.ts",
     "src/random-search/index.ts",
     "src/file-cache.ts",
+    "src/file-reporter.ts",
     "src/testing.ts",
   ],
   format: ["esm", "cjs"],

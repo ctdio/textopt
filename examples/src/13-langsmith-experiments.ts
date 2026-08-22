@@ -19,6 +19,7 @@
  *
  *   OPENAI_API_KEY=... LANGSMITH_API_KEY=... pnpm --filter textopt-examples langsmith
  */
+import { consoleReporter } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createLangChainAdapter } from "@textopt/langchain";
 import { createLangSmithReporter } from "@textopt/langsmith";
@@ -29,7 +30,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { openai } from "@ai-sdk/openai";
 import { Client } from "langsmith";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 import {
   TICKET_LABELS,
   TRAIN_TICKETS,
@@ -150,7 +151,7 @@ const result = await gepa.optimize({
   reflect,
   maxMetricCalls: 150,
   instanceId,
-  reporters: [{ onEvent: logEvent }, langsmith],
+  reporters: [consoleReporter(), langsmith],
 });
 
 printResult(result);

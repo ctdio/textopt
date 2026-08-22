@@ -52,6 +52,16 @@
         "default": "./dist/file-cache.cjs"
       }
     },
+    "./file-reporter": {
+      "import": {
+        "types": "./dist/file-reporter.d.mts",
+        "default": "./dist/file-reporter.mjs"
+      },
+      "require": {
+        "types": "./dist/file-reporter.d.cts",
+        "default": "./dist/file-reporter.cjs"
+      }
+    },
     "./gepa": {
       "import": {
         "types": "./dist/gepa/index.d.mts",

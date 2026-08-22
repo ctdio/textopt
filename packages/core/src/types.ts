@@ -87,6 +87,16 @@ export interface EvaluateArgs<Datum, K extends string = string> {
    * whose score moved.
    */
   run: EvaluationContext;
+  /**
+   * Call as each rollout settles. It is what turns a batch into progress: the
+   * optimizer emits a `rollout` event per call, which on a slow model is the
+   * only thing between `start` and the end of a validation sweep that says the
+   * run is moving rather than hung.
+   *
+   * Optional, and absent when nothing is listening. An adapter that never
+   * calls it simply reports no progress below the batch.
+   */
+  onRollout?: () => void;
   signal?: AbortSignal;
 }
 

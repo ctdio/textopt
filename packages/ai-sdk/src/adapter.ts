@@ -160,11 +160,13 @@ export function createAiSdkAdapter<Datum, Output = string>(
       candidate,
       captureTraces,
       run: context,
+      onRollout,
       signal,
     }) => {
       const results = await mapWithConcurrency({
         items: batch,
         limit: concurrency,
+        ...(onRollout === undefined ? {} : { onSettled: onRollout }),
         task: async (datum) => {
           const startedAt = Date.now();
           let result: AiSdkResultLike;

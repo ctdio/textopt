@@ -160,3 +160,45 @@ describe("mapWithConcurrency", () => {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+describe("onSettled", () => {
+  test("fires once per item, whatever order the tasks finish in", async () => {
+    let settled = 0;
+
+    await mapWithConcurrency({
+      items: [30, 0, 10],
+      limit: 3,
+      onSettled: () => {
+        settled += 1;
+      },
+      task: async (delayMs: number) => {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return delayMs;
+      },
+    });
+
+    expect(settled).toBe(3);
+  });
+
+  test("counts only the items that ran before a failure stopped the fan-out", async () => {
+    let settled = 0;
+
+    await expect(
+      mapWithConcurrency({
+        items: [1, 2, 3],
+        limit: 1,
+        onSettled: () => {
+          settled += 1;
+        },
+        task: async (item: number) => {
+          if (item === 2) {
+            throw new Error("rollout failed");
+          }
+          return item;
+        },
+      }),
+    ).rejects.toThrow("rollout failed");
+
+    expect(settled).toBe(1);
+  });
+});

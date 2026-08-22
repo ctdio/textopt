@@ -11,14 +11,28 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
+import type {
+  EvaluationEvent,
+  RolloutProgress,
+  ScoredBatch,
+} from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
-import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
-import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
+import {
+  createEmitter,
+  flushReporters,
+  instanceRow,
+  objectiveScoresOf,
+} from "../reporting.js";
+import type {
+  CandidateAccepted,
+  Reporter,
+  RunFinished,
+  RunStarted,
+} from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
@@ -191,9 +205,10 @@ export type OproStopReason =
   | "aborted";
 
 export type OproEvent<K extends string = string> =
-  | { type: "start"; components: K[]; validationSetSize: number }
+  | ({ type: "start" } & RunStarted<K>)
   | { type: "roundStart"; round: number; component: K; historySize: number }
   | ({ type: "evaluation" } & EvaluationEvent)
+  | ({ type: "rollout" } & RolloutProgress)
   | {
       type: "attempt";
       round: number;
@@ -204,6 +219,21 @@ export type OproEvent<K extends string = string> =
     }
   | ({ type: "candidateAccepted"; round: number } & CandidateAccepted<K>)
   | ({ type: "finish"; reason: OproStopReason } & RunFinished);
+
+/**
+ * Every name `OproEvent` carries, as data, so a reporter that says which events
+ * it reads can be told at once when it names one OPRO never emits — the
+ * failure that otherwise reads as a search with nothing to report.
+ */
+export const OPRO_EVENT_TYPES = [
+  "start",
+  "roundStart",
+  "evaluation",
+  "rollout",
+  "attempt",
+  "candidateAccepted",
+  "finish",
+] as const satisfies readonly OproEvent["type"][];
 
 export interface OproAttempt<K extends string = string> {
   round: number;
@@ -396,7 +426,10 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     trainingSet,
   });
 
-  const emit = createEmitter<OproEvent<K>>(reporters);
+  const emit = createEmitter<OproEvent<K>>({
+    reporters,
+    emits: OPRO_EVENT_TYPES,
+  });
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -456,6 +489,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
     ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+    onRollout: (event) => emit({ type: "rollout", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -587,6 +621,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       candidate: seedCandidate,
       aggregateScore: seedScore,
       instanceScores: instanceRow(seedEvaluation),
+      ...objectiveScoresOf(seedEvaluation),
       ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
     });
   }
@@ -646,6 +681,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       candidate: args.candidate,
       aggregateScore: args.score,
       instanceScores: instanceRow(args.evaluation),
+      ...objectiveScoresOf(args.evaluation),
       ...(trackBestOutputs ? { outputs: args.evaluation.outputs } : {}),
     });
   }

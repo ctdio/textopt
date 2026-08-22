@@ -39,18 +39,30 @@ export type {
   EvaluationEvent,
   Evaluator,
   RetryPolicy,
+  RolloutProgress,
   ScoredBatch,
 } from "./evaluation.js";
 export { buildJudgePrompt, createJudge } from "./judge.js";
 export type { Judge, JudgeCriterion, JudgePromptBuilder } from "./judge.js";
 export type { Optimizer, OptimizerResult, OptimizerTask } from "./optimizer.js";
-export { isCandidateAccepted, isRunFinished } from "./reporting.js";
+export {
+  consoleReporter,
+  createReporter,
+  isCandidateAccepted,
+  isEvaluation,
+  isRollout,
+  isRunFinished,
+  isRunStarted,
+} from "./reporting.js";
 export type {
   CandidateAccepted,
+  ConsoleReporterLevel,
+  EventHandlers,
   OptimizerEvent,
   Reporter,
   ReportableEvent,
   RunFinished,
+  RunStarted,
 } from "./reporting.js";
 export type { Rng } from "./rng.js";
 export type { BatchSampler } from "./sampling.js";

@@ -21,7 +21,12 @@ import type {
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
-import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
+import {
+  createEmitter,
+  flushReporters,
+  instanceRow,
+  meanObjectives,
+} from "../reporting.js";
 import type { Reporter } from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { createEpochShuffledSampler } from "../sampling.js";
@@ -50,6 +55,7 @@ import {
   paretoSelector,
   roundRobinComponentSelector,
 } from "./strategies.js";
+import { GEPA_EVENT_TYPES } from "./types.js";
 import type {
   AcceptancePolicy,
   CandidateRecord,
@@ -518,7 +524,10 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   let totalMergesTested = resumeFrom?.merge.tested ?? 0;
   let lastIterationAccepted = resumeFrom?.merge.lastIterationAccepted ?? false;
 
-  const emit = createEmitter<GepaEvent<K>>(reporters);
+  const emit = createEmitter<GepaEvent<K>>({
+    reporters,
+    emits: GEPA_EVENT_TYPES,
+  });
 
   /**
    * Everything an acceptance means, in one event: the text, the aggregate, and
@@ -538,6 +547,9 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
       source: record.source,
       candidate: record.candidate,
       instanceScores: record.instanceScores,
+      ...(record.objectiveScores === undefined
+        ? {}
+        : { objectiveScores: record.objectiveScores }),
       ...(outputs === undefined ? {} : { outputs }),
     });
   }
@@ -594,6 +606,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+    onRollout: (event) => emit({ type: "rollout", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -691,7 +704,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
   }): CandidateRecord<K> {
     const objectiveScores = meanObjectives({
       rows: args.evaluation.objectiveScores,
-      scores: args.evaluation.scores,
+      measured: args.evaluation.scores.map((score) => score !== undefined),
     });
     const record: CandidateRecord<K> = {
       id: records.length,
@@ -1687,35 +1700,6 @@ function keepCount(selection: "all" | "best" | { keep: number }): number {
  * objective on the frontier, and a mean over one instance is not the same
  * measurement as a mean over forty.
  */
-function meanObjectives(args: {
-  rows: readonly (Record<string, number> | undefined)[];
-  scores: readonly (number | undefined)[];
-}): Record<string, number> | undefined {
-  const { rows, scores } = args;
-
-  const measured = rows.filter((_, index) => scores[index] !== undefined);
-  const totals = new Map<string, { total: number; count: number }>();
-
-  for (const row of measured) {
-    for (const [objective, value] of Object.entries(row ?? {})) {
-      const running = totals.get(objective) ?? { total: 0, count: 0 };
-      running.total += value;
-      running.count += 1;
-      totals.set(objective, running);
-    }
-  }
-
-  const complete = [...totals].filter(
-    ([, { count }]) => count === measured.length,
-  );
-  if (complete.length === 0) {
-    return undefined;
-  }
-  return Object.fromEntries(
-    complete.map(([objective, { total, count }]) => [objective, total / count]),
-  );
-}
-
 function collectPerObjectiveBest(
   records: readonly CandidateRecord[],
 ): GepaResult["perObjectiveBest"] {

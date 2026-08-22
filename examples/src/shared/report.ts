@@ -1,6 +1,6 @@
 import { isCandidateAccepted } from "textopt";
 import type { OptimizerEvent, Reporter } from "textopt";
-import type { GepaEvent, GepaResult } from "textopt/gepa";
+import type { GepaResult } from "textopt/gepa";
 
 export interface AcceptanceRow {
   entrant: string;
@@ -62,58 +62,6 @@ export function createAcceptanceTally(): {
     }),
     rows: () => [...tallies.values()],
   };
-}
-
-/**
- * A live view of the search. `metricCalls` is the currency the optimizer
- * spends — every line that reports it is a line reporting cost.
- */
-export function logEvent(event: GepaEvent): void {
-  switch (event.type) {
-    case "start":
-      console.log(
-        `optimizing [${event.components.join(", ")}] over ${event.validationSetSize} validation instances`,
-      );
-      break;
-    case "evaluation":
-      console.log(
-        `  ${event.phase.padEnd(10)} mean=${event.meanScore.toFixed(3)}` +
-          `  calls=${event.metricCalls} cached=${event.cacheHits}`,
-      );
-      break;
-    case "proposal":
-      console.log(
-        `  proposed [${event.componentsToUpdate.join(", ")}] changed=${event.changed}`,
-      );
-      break;
-    case "candidateAccepted":
-      console.log(
-        `  ✓ accepted #${event.candidateId} (${event.source}, parents ${event.parentIds.join("+")})` +
-          ` score=${event.aggregateScore.toFixed(3)}`,
-      );
-      break;
-    case "candidateRejected":
-      console.log(
-        `  ✗ ${event.reason === "worse" ? "rejected" : "passed over"}` +
-          ` ${event.source} of #${event.parentId}:` +
-          ` ${event.childScore.toFixed(3)} vs ${event.parentScore.toFixed(3)}`,
-      );
-      break;
-    case "error":
-      console.log(`  ! iteration ${event.iteration} failed:`, event.err);
-      break;
-    case "finish":
-      console.log(
-        `finished: ${event.reason}, best #${event.bestCandidateId}, ${event.metricCalls} metric calls`,
-      );
-      break;
-    case "iterationStart":
-      console.log(
-        `\niteration ${event.iteration}` +
-          ` (parents ${event.parentIds.map((id) => `#${id}`).join(", ")})`,
-      );
-      break;
-  }
 }
 
 export function printResult(result: GepaResult): void {

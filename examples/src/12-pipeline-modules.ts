@@ -18,11 +18,12 @@
  *   ANTHROPIC_API_KEY=... pnpm --filter textopt-examples pipeline
  */
 import { anthropic } from "@ai-sdk/anthropic";
+import { consoleReporter } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createPipelineAdapter } from "textopt/gepa";
 import { generateText } from "ai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 import {
   TICKET_LABELS,
   TRAIN_TICKETS,
@@ -128,7 +129,7 @@ const result = await new GepaOptimizer({
   adapter,
   reflect,
   maxMetricCalls: 90,
-  reporters: [{ onEvent: logEvent }],
+  reporters: [consoleReporter()],
 });
 
 printResult(result);

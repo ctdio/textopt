@@ -12,7 +12,9 @@
  *
  *   pnpm --filter textopt-examples keyword
  */
+import { consoleReporter, createReporter } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
+import type { GepaEvent } from "textopt/gepa";
 import {
   KEYWORD_EXAMPLES,
   createKeywordAdapter,
@@ -35,20 +37,22 @@ const result = await gepa.optimize({
   reflect: createKeywordReflector(),
   maxMetricCalls: 120,
   reporters: [
-    {
-      onEvent: (event) => {
-        if (event.type === "candidateAccepted") {
+    // Prints the run as it happens, one line per event, for any optimizer.
+    consoleReporter({ level: "quiet" }),
+
+    // Your own reporter: one handler per event rather than one callback that
+    // switches on a tag. The keys are `GepaEvent`'s own tags, so a handler
+    // named after an event that does not exist is a compile error instead of
+    // a callback nothing ever calls.
+    createReporter<GepaEvent>({
+      on: {
+        candidateRejected: (event) =>
           console.log(
-            `  accepted #${event.candidateId} (${event.source}) score=${event.aggregateScore.toFixed(3)}`,
-          );
-        }
-        if (event.type === "candidateRejected") {
-          console.log(
-            `  rejected child of #${event.parentId}: ${event.childScore.toFixed(3)} <= ${event.parentScore.toFixed(3)}`,
-          );
-        }
+            `  rejected child of #${event.parentId}:` +
+              ` ${event.childScore.toFixed(3)} <= ${event.parentScore.toFixed(3)}`,
+          ),
       },
-    },
+    }),
   ],
 });
 

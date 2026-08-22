@@ -16,14 +16,28 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
+import type {
+  EvaluationEvent,
+  RolloutProgress,
+  ScoredBatch,
+} from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
-import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
-import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
+import {
+  createEmitter,
+  flushReporters,
+  instanceRow,
+  objectiveScoresOf,
+} from "../reporting.js";
+import type {
+  CandidateAccepted,
+  Reporter,
+  RunFinished,
+  RunStarted,
+} from "../reporting.js";
 import { createSeededRng } from "../rng.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, UsageTotals } from "../types.js";
@@ -160,8 +174,9 @@ export type BootstrapSearchStopReason =
   | "aborted";
 
 export type BootstrapSearchEvent<K extends string = string> =
-  | { type: "start"; components: K[]; validationSetSize: number }
+  | ({ type: "start" } & RunStarted<K>)
   | ({ type: "evaluation" } & EvaluationEvent)
+  | ({ type: "rollout" } & RolloutProgress)
   | {
       type: "candidate";
       index: number;
@@ -177,6 +192,20 @@ export type BootstrapSearchEvent<K extends string = string> =
       demos: number;
     } & CandidateAccepted<K>)
   | ({ type: "finish"; reason: BootstrapSearchStopReason } & RunFinished);
+
+/**
+ * Every name `BootstrapSearchEvent` carries, as data, so a reporter that says which events
+ * it reads can be told at once when it names one bootstrapped few-shot search never emits — the
+ * failure that otherwise reads as a search with nothing to report.
+ */
+export const BOOTSTRAP_SEARCH_EVENT_TYPES = [
+  "start",
+  "evaluation",
+  "rollout",
+  "candidate",
+  "candidateAccepted",
+  "finish",
+] as const satisfies readonly BootstrapSearchEvent["type"][];
 
 export interface BootstrapSearchResult<
   K extends string = string,
@@ -300,7 +329,10 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     trainingSet,
   });
 
-  const emit = createEmitter<BootstrapSearchEvent<K>>(reporters);
+  const emit = createEmitter<BootstrapSearchEvent<K>>({
+    reporters,
+    emits: BOOTSTRAP_SEARCH_EVENT_TYPES,
+  });
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -360,6 +392,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+    onRollout: (event) => emit({ type: "rollout", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -422,6 +455,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       candidate: seedCandidate,
       aggregateScore: seedScore,
       instanceScores: instanceRow(seedEvaluation),
+      ...objectiveScoresOf(seedEvaluation),
       ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
     });
   }
@@ -580,6 +614,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
           candidate: entry.candidate,
           aggregateScore: score,
           instanceScores: instanceRow(evaluation),
+          ...objectiveScoresOf(evaluation),
           ...(trackBestOutputs ? { outputs: evaluation.outputs } : {}),
         });
 

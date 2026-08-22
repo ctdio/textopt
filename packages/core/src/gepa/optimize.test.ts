@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createMemoryCache } from "../cache.js";
+import { consoleReporter } from "../reporting.js";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
   KEYWORD_EXAMPLES,
@@ -3442,5 +3443,107 @@ describe("optimize proposal strategies", () => {
           },
         }),
     ).toThrow(/buildPrompt|strategies/);
+  });
+});
+
+describe("progress and objectives on the event stream", () => {
+  test("reports every rollout of a batch as it settles", async () => {
+    const progress: string[] = [];
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 40,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "rollout") {
+              progress.push(`${event.phase} ${event.completed}/${event.total}`);
+            }
+          },
+        },
+      ],
+    });
+
+    // The seed sweep is the first thing a run buys, and it is where a slow
+    // provider spends the silence this event exists to fill.
+    expect(progress.slice(0, KEYWORD_EXAMPLES.length)).toEqual(
+      KEYWORD_EXAMPLES.map(
+        (_, index) => `seed ${index + 1}/${KEYWORD_EXAMPLES.length}`,
+      ),
+    );
+  });
+
+  test("reports each objective beside the aggregate an acceptance moved", async () => {
+    const reported = new Map<number, Readonly<Record<string, number>>>();
+
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createObjectiveAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 200,
+      reporters: [
+        {
+          onEvent: (event) => {
+            if (event.type === "candidateAccepted") {
+              reported.set(event.candidateId, event.objectiveScores ?? {});
+            }
+          },
+        },
+      ],
+    });
+
+    for (const record of result.candidates) {
+      expect(reported.get(record.id)).toEqual(record.objectiveScores);
+    }
+  });
+
+  test("prints a run through the reporter that ships with the package", async () => {
+    const lines: string[] = [];
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 40,
+      reporters: [consoleReporter({ log: (line) => lines.push(line) })],
+    });
+
+    const finish = lines.findIndex((line) =>
+      line.startsWith("[textopt] finish"),
+    );
+
+    expect(lines.at(0)).toMatch(
+      /^\[textopt\] start components=\[instruction\]/,
+    );
+    expect(lines[finish]).toMatch(/^\[textopt\] finish best=#\d+ score=/);
+    // A warning prints under the score it qualifies, which is the whole point
+    // of carrying it on the event rather than only on the result.
+    expect(lines[finish + 1]).toMatch(/^\[textopt\] warning \w+: /);
+    expect(lines.some((line) => line.includes("rollout"))).toBe(true);
+  });
+
+  test("warns at the start about a handler for an event it never emits", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await new GepaOptimizer({ minibatchSize: 2, seed: 1 }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 20,
+      reporters: [{ onEvent: () => undefined, handles: ["stepStarted"] }],
+    });
+
+    expect(warn.mock.calls.flat().join(" ")).toContain("stepStarted");
+
+    warn.mockRestore();
   });
 });

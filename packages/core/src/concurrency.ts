@@ -8,12 +8,18 @@ export async function mapWithConcurrency<Item, Result>(args: {
   limit: number;
   task: (item: Item, index: number) => Promise<Result>;
   /**
+   * Called as each item settles, which is how an adapter turns a batch into
+   * progress: the optimizer emits a `rollout` event per call, and that is the
+   * only signal that moves during a long sweep.
+   */
+  onSettled?: () => void;
+  /**
    * Checked before each dispatch. Aborting stops the fan-out rather than
    * letting the remaining batch items spend rollouts on a cancelled run.
    */
   signal?: AbortSignal;
 }): Promise<Result[]> {
-  const { items, limit, task, signal } = args;
+  const { items, limit, task, onSettled, signal } = args;
 
   if (items.length === 0) {
     return [];
@@ -39,6 +45,7 @@ export async function mapWithConcurrency<Item, Result>(args: {
       try {
         signal?.throwIfAborted();
         results[index] = await task(items[index] as Item, index);
+        onSettled?.();
       } catch (err) {
         failure ??= { err };
         return;

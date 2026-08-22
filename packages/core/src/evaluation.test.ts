@@ -342,3 +342,95 @@ describe("createEvaluator", () => {
     expect(evaluator.entries()).toHaveLength(2);
   });
 });
+
+describe("rollout progress", () => {
+  /** An adapter that reports each rollout as it settles, as adapters should. */
+  function reportingAdapter(): Adapter<string, unknown, string> {
+    return {
+      evaluate: ({ batch, onRollout }): EvaluationBatch<unknown, string> => {
+        for (const _datum of batch) {
+          onRollout?.();
+        }
+        return {
+          outputs: [...batch],
+          scores: batch.map(() => 1),
+        };
+      },
+    };
+  }
+
+  test("reports each rollout against the size of the batch buying it", async () => {
+    const progress: { completed: number; total: number }[] = [];
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: reportingAdapter(),
+      budget: createBudget({ maxMetricCalls: 10 }),
+      onRollout: (event) =>
+        progress.push({ completed: event.completed, total: event.total }),
+    });
+
+    await evaluator.evaluate({
+      candidate: { instruction: "text" },
+      batch: BATCH,
+      ids: IDS,
+      split: "val",
+      phase: "validation",
+      candidateId: 1,
+      iteration: 0,
+    });
+
+    expect(progress).toEqual([
+      { completed: 1, total: 3 },
+      { completed: 2, total: 3 },
+      { completed: 3, total: 3 },
+    ]);
+  });
+
+  test("counts only the instances the batch pays for", async () => {
+    const progress: { completed: number; total: number }[] = [];
+    const cache = createMemoryCache();
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: reportingAdapter(),
+      budget: createBudget({ maxMetricCalls: 10 }),
+      cache,
+      onRollout: (event) =>
+        progress.push({ completed: event.completed, total: event.total }),
+    });
+    const call = {
+      candidate: { instruction: "text" },
+      batch: BATCH,
+      ids: IDS,
+      split: "val" as const,
+      phase: "validation" as const,
+      candidateId: 1,
+      iteration: 0,
+    };
+
+    await evaluator.evaluate(call);
+    progress.length = 0;
+    await evaluator.evaluate(call);
+
+    expect(progress).toEqual([]);
+  });
+
+  test("names the evaluation each rollout belongs to", async () => {
+    const seen: string[] = [];
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: reportingAdapter(),
+      budget: createBudget({ maxMetricCalls: 10 }),
+      onRollout: (event) =>
+        seen.push(`${event.phase}/${event.split}#${String(event.candidateId)}`),
+    });
+
+    await evaluator.evaluate({
+      candidate: { instruction: "text" },
+      batch: ["a"],
+      ids: ["0"],
+      split: "train",
+      phase: "minibatch",
+      candidateId: null,
+      iteration: 4,
+    });
+
+    expect(seen).toEqual(["minibatch/train#null"]);
+  });
+});

@@ -16,6 +16,7 @@
  *
  *   OPENAI_API_KEY=... pnpm --filter textopt-examples langchain
  */
+import { consoleReporter } from "textopt";
 import { GepaOptimizer } from "textopt/gepa";
 import { createLangChainAdapter } from "@textopt/langchain";
 import { SystemMessage } from "@langchain/core/messages";
@@ -24,7 +25,7 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
 import { openai } from "@ai-sdk/openai";
 import { createReflector, requireApiKey } from "./shared/reflector.js";
-import { logEvent, printResult } from "./shared/report.js";
+import { printResult } from "./shared/report.js";
 import {
   TICKET_LABELS,
   TRAIN_TICKETS,
@@ -116,7 +117,7 @@ const result = await gepa.optimize({
   reflect,
   maxMetricCalls: 150,
   instanceId: ({ datum }) => datum.id,
-  reporters: [{ onEvent: logEvent }],
+  reporters: [consoleReporter()],
 });
 
 printResult(result);

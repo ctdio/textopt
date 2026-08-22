@@ -1,5 +1,10 @@
 import type { CachedScore } from "../cache.js";
-import type { CandidateAccepted, RunFinished } from "../reporting.js";
+import type { RolloutProgress } from "../evaluation.js";
+import type {
+  CandidateAccepted,
+  RunFinished,
+  RunStarted,
+} from "../reporting.js";
 import type { Rng } from "../rng.js";
 import type {
   Adapter,
@@ -225,7 +230,7 @@ export type GepaStopReason =
   | "maxIterations";
 
 export type GepaEvent<K extends string = string> =
-  | { type: "start"; components: K[]; validationSetSize: number }
+  | ({ type: "start" } & RunStarted<K>)
   | { type: "iterationStart"; iteration: number; parentIds: number[] }
   | {
       type: "evaluation";
@@ -237,6 +242,7 @@ export type GepaEvent<K extends string = string> =
       cacheHits: number;
       meanScore: number;
     }
+  | ({ type: "rollout" } & RolloutProgress)
   | {
       type: "proposal";
       iteration: number;
@@ -266,6 +272,27 @@ export type GepaEvent<K extends string = string> =
     }
   | { type: "error"; iteration: number; err: unknown }
   | ({ type: "finish"; reason: GepaStopReason } & RunFinished);
+
+/**
+ * Every name `GepaEvent` carries, as data. A reporter says which events it
+ * reads, and this is what that claim is checked against when the run starts —
+ * a handler named after an event GEPA does not emit is a run that prints
+ * nothing and reports no error.
+ *
+ * `gepaEventTypesAreExhaustive` in the type tests fails to compile if a new
+ * event is added to the union without being listed here.
+ */
+export const GEPA_EVENT_TYPES = [
+  "start",
+  "iterationStart",
+  "evaluation",
+  "rollout",
+  "proposal",
+  "candidateAccepted",
+  "candidateRejected",
+  "error",
+  "finish",
+] as const satisfies readonly GepaEvent["type"][];
 
 /**
  * Everything needed to continue a run: the candidate pool with its scores, the

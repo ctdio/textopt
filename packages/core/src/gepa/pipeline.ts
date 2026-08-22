@@ -80,10 +80,17 @@ export function createPipelineAdapter<
   }
 
   return {
-    evaluate: async ({ batch, candidate, captureTraces, signal }) => {
+    evaluate: async ({
+      batch,
+      candidate,
+      captureTraces,
+      onRollout,
+      signal,
+    }) => {
       const rollouts = await mapWithConcurrency({
         items: batch,
         limit: concurrency,
+        ...(onRollout === undefined ? {} : { onSettled: onRollout }),
         signal,
         task: async (datum) => {
           const trace = await runPipeline({

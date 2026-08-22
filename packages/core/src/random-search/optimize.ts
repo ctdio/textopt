@@ -11,14 +11,28 @@ import {
   measuredMean,
   requireMeasuredMean,
 } from "../evaluation.js";
-import type { EvaluationEvent, ScoredBatch } from "../evaluation.js";
+import type {
+  EvaluationEvent,
+  RolloutProgress,
+  ScoredBatch,
+} from "../evaluation.js";
 import type {
   Optimizer,
   OptimizerResult,
   OptimizerTask,
 } from "../optimizer.js";
-import { createEmitter, flushReporters, instanceRow } from "../reporting.js";
-import type { CandidateAccepted, Reporter, RunFinished } from "../reporting.js";
+import {
+  createEmitter,
+  flushReporters,
+  instanceRow,
+  objectiveScoresOf,
+} from "../reporting.js";
+import type {
+  CandidateAccepted,
+  Reporter,
+  RunFinished,
+  RunStarted,
+} from "../reporting.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
@@ -125,11 +139,26 @@ export type RandomSearchStopReason =
   | "aborted";
 
 export type RandomSearchEvent<K extends string = string> =
-  | { type: "start"; components: K[]; validationSetSize: number }
+  | ({ type: "start" } & RunStarted<K>)
   | { type: "roundStart"; round: number; component: K }
   | ({ type: "evaluation" } & EvaluationEvent)
+  | ({ type: "rollout" } & RolloutProgress)
   | ({ type: "candidateAccepted"; round: number } & CandidateAccepted<K>)
   | ({ type: "finish"; reason: RandomSearchStopReason } & RunFinished);
+
+/**
+ * Every name `RandomSearchEvent` carries, as data, so a reporter that says which events
+ * it reads can be told at once when it names one random search never emits — the
+ * failure that otherwise reads as a search with nothing to report.
+ */
+export const RANDOM_SEARCH_EVENT_TYPES = [
+  "start",
+  "roundStart",
+  "evaluation",
+  "rollout",
+  "candidateAccepted",
+  "finish",
+] as const satisfies readonly RandomSearchEvent["type"][];
 
 export interface RandomSearchResult<
   K extends string = string,
@@ -275,7 +304,10 @@ async function runRandomSearch<
     trainingSet,
   });
 
-  const emit = createEmitter<RandomSearchEvent<K>>(reporters);
+  const emit = createEmitter<RandomSearchEvent<K>>({
+    reporters,
+    emits: RANDOM_SEARCH_EVENT_TYPES,
+  });
 
   const deadline = createDeadline({ maxWallClockMs });
   const components = componentNames(seedCandidate);
@@ -333,6 +365,7 @@ async function runRandomSearch<
     ...(resumeFrom?.usage === undefined ? {} : { usage: resumeFrom.usage }),
     ...(signal === undefined ? {} : { signal }),
     onEvaluation: (event) => emit({ type: "evaluation", ...event }),
+    onRollout: (event) => emit({ type: "rollout", ...event }),
   });
 
   evaluator.restore(resumeFrom?.cache ?? []);
@@ -421,6 +454,7 @@ async function runRandomSearch<
       candidate: seedCandidate,
       aggregateScore: seedScore,
       instanceScores: instanceRow(seedEvaluation),
+      ...objectiveScoresOf(seedEvaluation),
       ...(trackBestOutputs ? { outputs: seedEvaluation.outputs } : {}),
     });
   }
@@ -569,6 +603,7 @@ async function runRandomSearch<
           candidate,
           aggregateScore: score,
           instanceScores: instanceRow(outcome.evaluation),
+          ...objectiveScoresOf(outcome.evaluation),
           ...(trackBestOutputs ? { outputs: outcome.evaluation.outputs } : {}),
         });
 
