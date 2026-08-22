@@ -159,6 +159,34 @@ describe("createEmitter event names", () => {
     warn.mockRestore();
   });
 
+  it("says nothing about a handler for an event another optimizer emits", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    createEmitter<TestEvent>({
+      reporters: [{ onEvent: () => undefined, handles: ["start", "error"] }],
+      emits: ["start", "finish"],
+    });
+
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it("warns when nothing a reporter handles is emitted by this run", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    createEmitter<TestEvent>({
+      reporters: [{ onEvent: () => undefined, handles: ["stepStart"] }],
+      emits: ["start", "finish"],
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.join(" ")).toContain("stepStart");
+    expect(warn.mock.calls[0]?.join(" ")).toContain("start, finish");
+
+    warn.mockRestore();
+  });
+
   it("says nothing about a reporter that never named what it handles", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 

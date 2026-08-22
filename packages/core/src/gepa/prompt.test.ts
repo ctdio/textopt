@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { createPromptAdapter } from "./prompt.js";
+import type { PipelineTrace } from "./pipeline.js";
+import type { Adapter } from "../types.js";
 
 interface Question {
   id: string;
@@ -115,6 +117,21 @@ describe("createPromptAdapter", () => {
     ).rejects.toThrow(/exactly one component/);
   });
 });
+
+/**
+ * The adapter is a `GepaAdapter`, and every other optimizer takes the base
+ * `Adapter` it extends. This assignment is what keeps the documented claim —
+ * write the adapter once, choose the optimizer later — from being prose. It is
+ * never called; the compiler is the assertion.
+ */
+export function promptAdapterFitsEveryOptimizer(): Adapter<
+  Question,
+  PipelineTrace,
+  string,
+  string
+> {
+  return buildAdapter();
+}
 
 function buildAdapter() {
   return createPromptAdapter<Question, string>({

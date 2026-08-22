@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { consoleReporter } from "./reporting.js";
+import { EVERY_EVENT_NAME, consoleReporter } from "./reporting.js";
 import type { Reporter } from "./reporting.js";
 import { BOOTSTRAP_SEARCH_EVENT_TYPES } from "./bootstrap-search/optimize.js";
 import type { BootstrapSearchEvent } from "./bootstrap-search/optimize.js";
@@ -49,6 +49,23 @@ test("every optimizer names its events once", () => {
   for (const [optimizer, names] of Object.entries(lists)) {
     expect([optimizer, new Set(names).size]).toEqual([optimizer, names.length]);
   }
+});
+
+test("the vocabulary a reporter is checked against is what the optimizers emit", () => {
+  // The emitter warns about a handler named for nothing in this vocabulary, so
+  // a name missing here turns a working cross-optimizer reporter into a
+  // warning, and a name left here after an optimizer drops the event turns a
+  // dead handler into silence.
+  const emitted = new Set([
+    ...GEPA_EVENT_TYPES,
+    ...SIMBA_EVENT_TYPES,
+    ...OPRO_EVENT_TYPES,
+    ...MIPRO_EVENT_TYPES,
+    ...BOOTSTRAP_SEARCH_EVENT_TYPES,
+    ...RANDOM_SEARCH_EVENT_TYPES,
+  ]);
+
+  expect(EVERY_EVENT_NAME.toSorted()).toEqual([...emitted].toSorted());
 });
 
 test("every optimizer emits the events a cross-optimizer reporter reads", () => {

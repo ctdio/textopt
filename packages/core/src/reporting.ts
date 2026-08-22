@@ -159,6 +159,38 @@ export type EventHandlers<Event extends OptimizerEvent> = {
 export type ConsoleReporterLevel = "quiet" | "normal" | "verbose";
 
 /**
+ * Every event name any optimizer in this library emits.
+ *
+ * It exists to keep the check below from punishing the thing this event
+ * substrate is for. A reporter written once and attached to several searches
+ * handles names a given run does not emit — `error` comes from GEPA and SIMBA
+ * and from none of the other four — and warning about that would train the
+ * reader to ignore the warning that matters. A name from nowhere in this list
+ * is a different thing: nothing will ever send it.
+ *
+ * `reporting.types.test.ts` asserts this is exactly the union of the six
+ * optimizers' own lists, so an optimizer that adds an event cannot leave it
+ * stale.
+ */
+export const EVERY_EVENT_NAME: readonly string[] = [
+  "attempt",
+  "candidate",
+  "candidateAccepted",
+  "candidateRejected",
+  "error",
+  "evaluation",
+  "finish",
+  "iterationStart",
+  "menu",
+  "proposal",
+  "rollout",
+  "roundStart",
+  "start",
+  "stepStart",
+  "trial",
+];
+
+/**
  * Narrows an event off any optimizer's union to an acceptance. The tag is
  * enough: every optimizer's `candidateAccepted` intersects `CandidateAccepted`,
  * so carrying the payload is a compile-time obligation rather than a hope.
@@ -273,12 +305,25 @@ export function createEmitter<Event extends OptimizerEvent>(args: {
   const { reporters, emits } = args;
 
   for (const reporter of reporters) {
-    for (const name of reporter.handles ?? []) {
-      if (!emits.includes(name as Event["type"])) {
-        console.warn(
-          `[textopt] a reporter handles "${name}", which this run never emits, so that handler will never fire. This run emits: ${emits.join(", ")}`,
-        );
-      }
+    const handles = reporter.handles ?? [];
+    const unnamed = handles.filter((name) => !EVERY_EVENT_NAME.includes(name));
+
+    for (const name of unnamed) {
+      console.warn(
+        `[textopt] a reporter handles "${name}", which no optimizer emits, so that handler will never fire. This run emits: ${emits.join(", ")}`,
+      );
+    }
+
+    // A reporter whose every handler misses is the failure worth naming even
+    // when each name is real: it is a run observed by nothing, which reads
+    // exactly like a search that had nothing to say. One warning covers it —
+    // a typo already warned about above is the same mistake, not a second one.
+    const fires = handles.some((name) => emits.includes(name as Event["type"]));
+
+    if (unnamed.length === 0 && handles.length > 0 && !fires) {
+      console.warn(
+        `[textopt] a reporter handles only events this run never emits (${handles.join(", ")}), so it will report nothing. This run emits: ${emits.join(", ")}`,
+      );
     }
   }
 

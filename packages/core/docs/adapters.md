@@ -22,7 +22,7 @@ interface GepaAdapter<Datum, Trajectory, Output, K extends string> {
 
 Methods may be synchronous or asynchronous; the example shows the asynchronous form.
 
-Most systems do not need this written by hand. [`createPromptAdapter`](#one-prompt) covers one prompt and one component, [`createPipelineAdapter`](#multi-module-pipelines) covers several modules in sequence, and the framework adapters below cover the AI SDK and LangChain. Implement the interface directly when none of them describes your system.
+Most systems do not need this written by hand. [`createPromptAdapter`](#one-prompt) covers one prompt and one component, [`createPipelineAdapter`](#multi-module-pipelines) covers several modules in sequence, and the framework adapters below cover the AI SDK and LangChain. Implement the interface directly when none of them describes your system. All of them return a `GepaAdapter`, which is the base `Adapter` every optimizer takes with reflection's evidence added, so the same adapter passes unchanged to SIMBA, OPRO, MIPRO and both searches — they read the scores and ignore the rest.
 
 `evaluate` returns one score per instance and may include textual feedback. GEPA uses that feedback during reflection.
 
@@ -173,6 +173,8 @@ const adapter = createPromptAdapter<Ticket, string>({
   concurrency: 4,
 });
 ```
+
+Despite the import path, this is not GEPA-only: the adapter it returns is the base `Adapter` the other five optimizers take, so the same one can be handed to SIMBA or MIPRO without a rewrite.
 
 `run` receives the candidate's text as `instruction`, and `input(datum)` is what the prompt receives — the datum itself by default. That default is worth overriding whenever a row carries fields the system never sees: reflection reads the record, and a record carrying the label teaches the reflection model to write rules about an answer key the task model was never given.
 
