@@ -88,7 +88,7 @@ jobs:
       # No dependency cache in either job that can write to this repository: a
       # cache one of them restores can be written by any other job here, and
       # what these two can push reaches the registry one merge later.
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile --ignore-scripts
@@ -150,7 +150,7 @@ jobs:
       # credential and get a 404 before OIDC could be tried. Fixed in pnpm
       # 11.1.3, but the registry it would configure is already the default, so
       # the setting only buys back a failure mode.
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       # Every dependency is public, so the install needs no credential, and
