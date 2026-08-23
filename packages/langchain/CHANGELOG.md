@@ -1,5 +1,28 @@
 # @textopt/langchain
 
+## 0.3.0
+
+### Patch Changes
+
+- a3354ac: The adapter marks a run or scoring failure it caught with `failed`, so the zero
+  it stands in for is never written to the evaluation cache. `isTransient` still
+  decides only what is worth retrying.
+- 0aa5911: Every optimizer emits a `rollout` event carrying `completed`/`total` alongside
+  the phase, split and candidate it belongs to, so a run reports progress between
+  batches instead of going quiet for the length of a validation sweep. An adapter
+  opts in by calling `args.onRollout` from its `evaluate` — the AI SDK and
+  LangChain adapters already do, passing it as `onSettled` to
+  `mapWithConcurrency`. A consumer switching exhaustively over an optimizer's
+  event union must handle the new member.
+- Updated dependencies [0aa5911]
+- Updated dependencies [a3354ac]
+- Updated dependencies [b62adf6]
+- Updated dependencies [0aa5911]
+- Updated dependencies [12789b5]
+- Updated dependencies [0aa5911]
+- Updated dependencies [0aa5911]
+  - textopt@0.3.0
+
 ## 0.2.0
 
 ### Patch Changes

@@ -1,5 +1,65 @@
 # textopt
 
+## 0.3.0
+
+### Minor Changes
+
+- a3354ac: A score an adapter synthesized after catching an error is never written to the
+  evaluation cache. Adapters say so with `failed` on `ScoreResult`, which takes no
+  judgement about the provider; `transient` still decides what is retried and kept
+  out of a candidate's mean, and still classifies nothing by default. A run that
+  finished with failures nothing classified reports how many under the new
+  `unclassifiedFailures` warning code.
+
+  A repeat run over a warm `file-cache` that hit failures now re-runs those
+  instances rather than reading their zeros back, so it can spend more rollouts
+  and reach a different winner than the run before it.
+
+- 12789b5: A `reflect` call that throws is retried under the run's existing `retry`
+  policy, rather than ending the run. Nothing is classified on the way past: a
+  proposal model is a pure request, so the attempt after a transport failure is
+  free to succeed and a genuine bug fails `attempts` more times and surfaces
+  unchanged. Every attempt counts against the optimizer's reflection ceiling —
+  GEPA's `reflection.maxCalls`, OPRO's and SIMBA's `maxReflectionCalls` — which a
+  round can now overrun by up to `attempts`. Set `retry: { attempts: 0 }` to keep
+  the old behaviour. `withRetries(model, policy)` is exported for applying the
+  same policy to any other `TextModel`.
+- 0aa5911: Every optimizer emits a `rollout` event carrying `completed`/`total` alongside
+  the phase, split and candidate it belongs to, so a run reports progress between
+  batches instead of going quiet for the length of a validation sweep. An adapter
+  opts in by calling `args.onRollout` from its `evaluate` — the AI SDK and
+  LangChain adapters already do, passing it as `onSettled` to
+  `mapWithConcurrency`. A consumer switching exhaustively over an optimizer's
+  event union must handle the new member.
+
+### Patch Changes
+
+- 0aa5911: `candidateAccepted` carries `objectiveScores`, the per-objective mean over the
+  instances the candidate was measured on. A single objective collapsing while the
+  aggregate holds is how a degenerate metric channel announces itself, and it was
+  previously visible only in the result.
+- b62adf6: `createPromptAdapter({ run, score })` from `textopt/gepa` is the single-prompt
+  case named: `run` receives the candidate's text as `instruction` and `score`
+  grades the output. It reads which component to run off the candidate and throws
+  when there is more than one, because a component no module runs is text the
+  search rewrites every iteration for no effect — that system wants
+  `createPipelineAdapter`. Neither helper is GEPA-only, and the docs now say so:
+  a `GepaAdapter` is the base `Adapter` with reflection's evidence added, so the
+  same adapter passes unchanged to SIMBA, OPRO, MIPRO and both searches.
+- 0aa5911: `createReporter({ on })` takes a handler map whose keys are checked against the
+  optimizer's event union, so a misspelled event name is a compile error rather
+  than a reporter that runs to completion having seen nothing. A reporter built
+  this way also declares what it handles, and a run warns at start about a
+  handler named for an event no optimizer emits, or about a reporter whose
+  handlers all miss the run it is attached to. A handler for an event some other
+  optimizer emits is not warned about: one reporter written for several searches
+  is what the shared events are for.
+- 0aa5911: Two reporters ship with the library: `consoleReporter({ level })` prints one
+  line per event — `quiet` for acceptances and the finish, `verbose` for
+  everything — and `jsonlReporter({ path })` from `textopt/file-reporter` appends
+  each event as a JSON line, leaving structured data structured instead of
+  flattening it into log prose.
+
 ## 0.2.0
 
 ### Minor Changes
