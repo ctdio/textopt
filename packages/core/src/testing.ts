@@ -162,6 +162,27 @@ export function createHillClimbingReflector(
   };
 }
 
+/**
+ * A reflection model that throws for its first `failures` calls and then defers
+ * to `model`. Stands in for the rate limit that arrives mid-run, once the
+ * rollouts an iteration is built on have already been paid for.
+ */
+export function createFailingReflector(args: {
+  model: TextModel;
+  failures: number;
+}): TextModel {
+  const { model } = args;
+  let remaining = args.failures;
+
+  return async (call) => {
+    if (remaining > 0) {
+      remaining -= 1;
+      throw new Error("429 rate limit exceeded");
+    }
+    return model(call);
+  };
+}
+
 /** A reflection model that always proposes something strictly worse. */
 export function createDegradingReflector(): TextModel {
   return async () => "```\nno useful information\n```";

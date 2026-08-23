@@ -10,6 +10,7 @@ import {
   createEvaluator,
   measuredMean,
   requireMeasuredMean,
+  withRetries,
 } from "../evaluation.js";
 import type {
   EvaluationEvent,
@@ -374,6 +375,16 @@ async function runRandomSearch<
   let variantsEvaluated = resumeFrom?.variantsEvaluated ?? 0;
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: RandomSearchStopReason = "maxRounds";
+
+  // Counted inside the retry loop, so a retried attempt costs the reflection
+  // budget what it cost the provider.
+  const retryingReflect = withRetries(
+    (call) => {
+      reflectionCalls += 1;
+      return reflect(call);
+    },
+    { ...retry, ...(signal === undefined ? {} : { signal }) },
+  );
   /**
    * Consecutive rounds that neither spent a rollout nor improved on the
    * incumbent. A proposer stuck on texts that are already cached costs
@@ -505,8 +516,7 @@ async function runRandomSearch<
       limit: concurrency,
       signal,
       task: async (attempt) => {
-        reflectionCalls += 1;
-        const response = await reflect({
+        const response = await retryingReflect({
           prompt: buildPrompt({
             componentName: component,
             currentText,

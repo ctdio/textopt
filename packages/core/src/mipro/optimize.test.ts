@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
-import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
+import {
+  KEYWORD_EXAMPLES,
+  createFailingReflector,
+  createKeywordAdapter,
+} from "../testing.js";
 import type { Adapter, TextModel } from "../types.js";
 import { MiproOptimizer } from "./optimize.js";
 import type { MiproSnapshot, MiproStopReason } from "./optimize.js";
@@ -1381,5 +1385,30 @@ describe("MiproOptimizer failure reporting", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain(
       "unclassifiedFailures",
     );
+  });
+});
+
+describe("reflection failures", () => {
+  test("survives a reflection call that failed once", async () => {
+    const result = await new MiproOptimizer({
+      maxTrials: 2,
+      minibatchSize: 2,
+      instructionsPerComponent: 1,
+      demoSets: 3,
+      seed: 5,
+    }).optimize({
+      seedCandidate: { instruction: "Answer.", demos: "" },
+      trainingSet: DEMO_TRAINSET,
+      adapter: demoAdapter(),
+      reflect: createFailingReflector({
+        model: async () => "```\nproposal\n```",
+        failures: 1,
+      }),
+      demoComponents: ["demos"],
+      retry: { attempts: 2, delayMs: 0 },
+      maxMetricCalls: 400,
+    });
+
+    expect(result.stopReason).toBeDefined();
   });
 });

@@ -15,6 +15,7 @@ import {
   costExhausted,
   createEvaluator,
   measuredMean,
+  withRetries,
 } from "../evaluation.js";
 import type {
   EvaluationEvent,
@@ -485,6 +486,19 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   let step = resumeFrom?.step ?? 0;
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: SimbaStopReason = "maxSteps";
+
+  // Counted inside the retry loop, so a retried attempt costs the reflection
+  // budget what it cost the provider.
+  const retryingReflect =
+    reflect === undefined
+      ? undefined
+      : withRetries(
+          (call) => {
+            reflectionCalls += 1;
+            return reflect(call);
+          },
+          { ...retry, ...(signal === undefined ? {} : { signal }) },
+        );
 
   emit({
     type: "start",
@@ -1040,7 +1054,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   }): Promise<Candidate<K> | null> {
     const { candidate, bucket, low, high } = args;
 
-    if (reflect === undefined) {
+    if (retryingReflect === undefined) {
       throw new Error("the appendRule strategy requires a reflect model");
     }
 
@@ -1060,7 +1074,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       return null;
     }
 
-    const response = await reflect({
+    const response = await retryingReflect({
       prompt: buildPrompt({
         components: ruleComponents,
         current: Object.fromEntries(
@@ -1072,7 +1086,6 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
       }),
       ...(signal === undefined ? {} : { signal }),
     });
-    reflectionCalls += 1;
 
     const advice = parseAdvice(response);
     const next = { ...candidate };

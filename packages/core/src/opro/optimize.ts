@@ -10,6 +10,7 @@ import {
   createEvaluator,
   measuredMean,
   requireMeasuredMean,
+  withRetries,
 } from "../evaluation.js";
 import type {
   EvaluationEvent,
@@ -551,6 +552,18 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
   let stopReason: OproStopReason = "maxRounds";
 
+  // Counted here rather than reserved per round, so a retried attempt costs
+  // the reflection budget what it cost the provider. A round can therefore
+  // overrun `maxReflectionCalls` by up to `attempts` per proposal, the way the
+  // cost and deadline ceilings are overrun by whatever was already in flight.
+  const retryingReflect = withRetries(
+    (call) => {
+      reflectionCalls += 1;
+      return reflect(call);
+    },
+    { ...retry, ...(signal === undefined ? {} : { signal }) },
+  );
+
   emit({
     type: "start",
     components,
@@ -812,7 +825,6 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       exemplars: drawExemplars(),
     });
 
-    reflectionCalls += affordableProposals;
     const drawn = await mapWithConcurrency({
       items: Array.from({ length: affordableProposals }, (_, index) => index),
       limit: concurrency,
@@ -822,7 +834,7 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
       // changes what the next one is asked.
       task: async () =>
         parseProposedText(
-          await reflect({
+          await retryingReflect({
             prompt,
             ...(signal === undefined ? {} : { signal }),
           }),

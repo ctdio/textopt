@@ -12,6 +12,7 @@ import {
   createEvaluator,
   measuredMean,
   requireMeasuredMean,
+  withRetries,
 } from "../evaluation.js";
 import type { EvaluationEvent, RolloutProgress } from "../evaluation.js";
 import { mean } from "../math.js";
@@ -609,6 +610,16 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     .map(renderDatum);
 
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
+
+  // Counted inside the retry loop, so a retried attempt costs the reflection
+  // budget what it cost the provider.
+  const retryingReflect = withRetries(
+    (call) => {
+      reflectionCalls += 1;
+      return reflect(call);
+    },
+    { ...retry, ...(signal === undefined ? {} : { signal }) },
+  );
   const menu = {} as Record<K, string[]>;
 
   const demoNames = new Set<K>(demoComponents ?? []);
@@ -625,9 +636,8 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
     proposing &&
     trainingSet.length > 0
   ) {
-    reflectionCalls += 1;
     summary = parseProposedText(
-      await reflect({
+      await retryingReflect({
         prompt: buildDatasetSummaryPrompt(
           rng
             .sample(trainingSet, Math.min(summaryExamples, trainingSet.length))
@@ -777,10 +787,9 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
       ),
       limit: concurrency,
       signal,
-      task: async (index) => {
-        reflectionCalls += 1;
-        return parseProposedText(
-          await reflect({
+      task: async (index) =>
+        parseProposedText(
+          await retryingReflect({
             prompt: buildPrompt({
               componentName: name,
               seedText: seedCandidate[name],
@@ -797,8 +806,7 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
             }),
             ...(signal === undefined ? {} : { signal }),
           }),
-        );
-      },
+        ),
     });
 
     menu[name] = [

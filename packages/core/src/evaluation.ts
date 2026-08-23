@@ -8,6 +8,7 @@ import type {
   EvaluationPhase,
   EvaluationSplit,
   RolloutUsage,
+  TextModel,
   UsageTotals,
 } from "./types.js";
 
@@ -161,6 +162,45 @@ export interface RetryPolicy {
 }
 
 const DEFAULT_RETRY: Required<RetryPolicy> = { attempts: 2, delayMs: 500 };
+
+/**
+ * The same retry policy the rollouts get, around a text model.
+ *
+ * A proposal model is one call standing between a run and its next candidate,
+ * and every search here treats a throw from it as the iteration failing — so a
+ * rate limit on the reflection call ends a run that has already paid for its
+ * rollouts. Nothing is classified on the way past: a text model is a pure
+ * request, so the attempt after a transport failure is free to succeed, and a
+ * genuine bug simply fails `attempts` more times with the same error and
+ * surfaces unchanged. Aborting is the exception, being the run ending on
+ * request rather than a call worth making again.
+ *
+ * These attempts cost the provider what any call costs. No metric budget
+ * covers reflection, so what bounds them is `attempts` and whatever ceiling
+ * the caller keeps on reflection calls.
+ */
+export function withRetries(
+  model: TextModel,
+  policy: RetryPolicy & { signal?: AbortSignal } = {},
+): TextModel {
+  const { attempts, delayMs } = { ...DEFAULT_RETRY, ...policy };
+  const { signal } = policy;
+
+  return async (args) => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await model(args);
+      } catch (err) {
+        signal?.throwIfAborted();
+        if (attempt >= attempts) {
+          throw err;
+        }
+        await delay(delayMs * 2 ** attempt);
+        signal?.throwIfAborted();
+      }
+    }
+  };
+}
 
 /**
  * Raised when a reservation cannot be met mid-flight. A concurrent evaluation

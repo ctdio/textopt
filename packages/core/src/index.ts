@@ -32,6 +32,7 @@ export {
   createEvaluator,
   measuredMean,
   requireMeasuredMean,
+  withRetries,
 } from "./evaluation.js";
 export type {
   EvaluateBatchArgs,

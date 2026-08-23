@@ -3,6 +3,7 @@ import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
   KEYWORD_EXAMPLES,
   createKeywordAdapter,
+  createFailingReflector,
   createSamplingReflector,
 } from "../testing.js";
 import type { Adapter } from "../types.js";
@@ -869,5 +870,23 @@ describe("RandomSearchOptimizer failure reporting", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain(
       "unclassifiedFailures",
     );
+  });
+});
+
+describe("reflection failures", () => {
+  test("survives a reflection call that failed once", async () => {
+    const result = await new RandomSearchOptimizer({
+      variants: 1,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      reflect: createFailingReflector({
+        model: createSamplingReflector(),
+        failures: 1,
+      }),
+      retry: { attempts: 2, delayMs: 0 },
+    });
+
+    expect(result.stopReason).toBeDefined();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { createBudget } from "./budget.js";
 import { createMemoryCache } from "./cache.js";
-import { createEvaluator } from "./evaluation.js";
+import { createEvaluator, withRetries } from "./evaluation.js";
 import type { Adapter, EvaluationBatch } from "./types.js";
 
 const BATCH = ["a", "b", "c"];
@@ -551,5 +551,68 @@ describe("rollout progress", () => {
     });
 
     expect(seen).toEqual(["minibatch/train#null"]);
+  });
+});
+
+describe("withRetries", () => {
+  test("returns what the attempt after a failure produced", async () => {
+    let calls = 0;
+    const model = withRetries(
+      async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("429 rate limited");
+        }
+        return "proposed text";
+      },
+      { attempts: 2, delayMs: 0 },
+    );
+
+    expect(await model({ prompt: "x" })).toBe("proposed text");
+    expect(calls).toBe(2);
+  });
+
+  test("rethrows once the attempts are spent", async () => {
+    let calls = 0;
+    const model = withRetries(
+      async () => {
+        calls += 1;
+        throw new Error("429 rate limited");
+      },
+      { attempts: 2, delayMs: 0 },
+    );
+
+    await expect(model({ prompt: "x" })).rejects.toThrow("429 rate limited");
+    expect(calls).toBe(3);
+  });
+
+  test("calls once when retrying is disabled", async () => {
+    let calls = 0;
+    const model = withRetries(
+      async () => {
+        calls += 1;
+        throw new Error("429 rate limited");
+      },
+      { attempts: 0, delayMs: 0 },
+    );
+
+    await expect(model({ prompt: "x" })).rejects.toThrow("429 rate limited");
+    expect(calls).toBe(1);
+  });
+
+  test("stops retrying once the run is aborted", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const model = withRetries(
+      async () => {
+        calls += 1;
+        controller.abort();
+        throw new Error("429 rate limited");
+      },
+      { attempts: 2, delayMs: 0, signal: controller.signal },
+    );
+
+    await expect(model({ prompt: "x" })).rejects.toThrow();
+    expect(calls).toBe(1);
   });
 });

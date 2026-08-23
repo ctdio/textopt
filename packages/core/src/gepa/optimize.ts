@@ -13,6 +13,7 @@ import {
   costExhausted,
   createEvaluator,
   measuredMean,
+  withRetries,
 } from "../evaluation.js";
 import type { ScoredBatch } from "../evaluation.js";
 import { mean, sum } from "../math.js";
@@ -489,10 +490,24 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
 
   let reflectionCalls = resumeFrom?.reflectionCalls ?? 0;
 
+  // Counted inside the retry loop, so a retried attempt costs the reflection
+  // budget what it cost the provider. The ceiling can therefore be overrun by
+  // up to `attempts`, the way the cost and deadline ceilings are overrun by
+  // whatever was already in flight when they were hit.
+  const retryingReflect = withRetries(
+    (call) => {
+      reflectionCalls += 1;
+      return reflect(call);
+    },
+    { ...retry, ...(signal === undefined ? {} : { signal }) },
+  );
+
   /**
    * The reflection budget is enforced at the call, not at the proposal: an
    * adapter's own proposer may make any number of calls, and a cap that only
-   * counted proposals would not bound it.
+   * counted proposals would not bound it. It sits outside the retry so a run
+   * that has spent its reflection budget stops instead of retrying its way
+   * through the remainder.
    */
   const countedReflect: TextModel = async (args) => {
     if (
@@ -501,8 +516,7 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
     ) {
       throw new ReflectionBudgetExhausted();
     }
-    reflectionCalls += 1;
-    return reflect(args);
+    return retryingReflect(args);
   };
 
   // Copied on the way in as well as on the way out: the caller owns the object

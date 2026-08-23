@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { createMemoryCache, stableHash } from "../cache.js";
-import { KEYWORD_EXAMPLES, createKeywordAdapter } from "../testing.js";
+import {
+  KEYWORD_EXAMPLES,
+  createFailingReflector,
+  createKeywordAdapter,
+} from "../testing.js";
 import type { Adapter, TextModel } from "../types.js";
 import { SimbaOptimizer } from "./optimize.js";
 import type { SimbaEvent, SimbaSnapshot } from "./optimize.js";
@@ -790,5 +794,25 @@ describe("SimbaOptimizer failure reporting", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain(
       "unclassifiedFailures",
     );
+  });
+});
+
+describe("reflection failures", () => {
+  test("does not lose a mutation to a reflection call that failed once", async () => {
+    // SIMBA already tolerates a failed mutation by skipping it, so the cost of
+    // a rate limit here is silent: a step that proposed nothing.
+    const events: SimbaEvent[] = [];
+
+    await optimizer().optimize({
+      ...ruleTask(),
+      reflect: createFailingReflector({
+        model: createAdviceReflector(),
+        failures: 1,
+      }),
+      retry: { attempts: 2, delayMs: 0 },
+      reporters: [{ onEvent: (event) => events.push(event) }],
+    });
+
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import {
   KEYWORD_EXAMPLES,
   createDegradingReflector,
   createKeywordAdapter,
+  createFailingReflector,
   createKeywordReflector,
 } from "../testing.js";
 import type { KeywordTrajectory } from "../testing.js";
@@ -2542,11 +2543,14 @@ describe("optimize proposals", () => {
       });
     };
 
+    // The delay is counted in microtasks and only has to outlast however many
+    // sit between a reflection call and the screen it feeds, so it is set well
+    // clear of that rather than at the smallest value that works today.
     const firstSiblingLast = await run((prompt) =>
-      prompt.includes("+1-3") ? 3 : 0,
+      prompt.includes("+1-3") ? 20 : 0,
     );
     const firstSiblingFirst = await run((prompt) =>
-      prompt.includes("+1-3") ? 0 : 3,
+      prompt.includes("+1-3") ? 0 : 20,
     );
 
     expect(lineageOf(firstSiblingLast)).toEqual(lineageOf(firstSiblingFirst));
@@ -3586,5 +3590,72 @@ describe("GepaOptimizer failure reporting", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain(
       "unclassifiedFailures",
     );
+  });
+});
+
+describe("reflection failures", () => {
+  test("survives a reflection call that failed once", async () => {
+    // The rollouts this iteration reflects on are already paid for. Ending the
+    // run over one rate limit throws them away and leaves the caller a
+    // rejected promise where a result should be.
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createFailingReflector({
+        model: createKeywordReflector(),
+        failures: 1,
+      }),
+      retry: { attempts: 2, delayMs: 0 },
+      maxMetricCalls: 60,
+    });
+
+    expect(result.stopReason).toBeDefined();
+  });
+
+  test("counts a retried attempt against the reflection ceiling", async () => {
+    // The attempt cost the provider a call, and `maxCalls` is what bounds
+    // reflection spend. A retry it cannot see is spend it does not bound.
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: createKeywordAdapter(),
+      reflect: createFailingReflector({
+        model: createKeywordReflector(),
+        failures: 1,
+      }),
+      retry: { attempts: 2, delayMs: 0 },
+      maxMetricCalls: 60,
+    });
+
+    expect(result.reflectionCalls).toBe(2);
+  });
+
+  test("still fails a run whose reflection never recovers", async () => {
+    await expect(
+      new GepaOptimizer({
+        minibatchSize: 2,
+        maxIterations: 1,
+        seed: 1,
+      }).optimize({
+        seedCandidate: SEED,
+        trainingSet: KEYWORD_EXAMPLES,
+        adapter: createKeywordAdapter(),
+        reflect: createFailingReflector({
+          model: createKeywordReflector(),
+          failures: 99,
+        }),
+        retry: { attempts: 2, delayMs: 0 },
+        maxMetricCalls: 60,
+      }),
+    ).rejects.toThrow("429");
   });
 });

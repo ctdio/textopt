@@ -105,7 +105,7 @@ evaluate(args: EvaluateArgs<Datum, K>): Promise<EvaluationBatch<Trajectory, Outp
 
 **`cacheNamespace`** scopes every cache key to the system the rollouts were measured under — model id, decoding settings, scorer version. Change it whenever anything outside the candidate text changes.
 
-**`retry`** is a `RetryPolicy` of `{ attempts = 2, delayMs = 500 }`. Instances the adapter marked `transient` are re-run, with the delay doubling per attempt. Retries are charged like any other rollout and never overdraw the budget.
+**`retry`** is a `RetryPolicy` of `{ attempts = 2, delayMs = 500 }`, with the delay doubling per attempt. Instances the adapter marked `transient` are re-run; those retries are charged like any other rollout and never overdraw the budget. A `reflect` call that throws is re-run too, without classification, so one rate limit does not end a run that has already paid for its rollouts — each attempt counts against the optimizer's reflection ceiling, which is the only thing bounding what they cost. `withRetries(model, policy)` applies the same policy to any other `TextModel`, a judge included.
 
 **`UsageTotals`** (`inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `rollouts`) is summed from the `RolloutUsage` entries an adapter reports. Zero throughout when the adapter reports none.
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Optimizer, OptimizerResult } from "../optimizer.js";
 import {
   KEYWORD_EXAMPLES,
+  createFailingReflector,
   createHillClimbingReflector,
   createKeywordAdapter,
 } from "../testing.js";
@@ -1274,5 +1275,23 @@ describe("OproOptimizer failure reporting", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain(
       "unclassifiedFailures",
     );
+  });
+});
+
+describe("reflection failures", () => {
+  test("survives a reflection call that failed once", async () => {
+    const result = await new OproOptimizer({
+      proposalsPerRound: 1,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      reflect: createFailingReflector({
+        model: createHillClimbingReflector(),
+        failures: 1,
+      }),
+      retry: { attempts: 2, delayMs: 0 },
+    });
+
+    expect(result.stopReason).toBeDefined();
   });
 });
