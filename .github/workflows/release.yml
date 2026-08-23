@@ -11,26 +11,29 @@ jobs:
   # environment, docs-only ones included. An environment gate stops a job
   # before its first step, so the release job could not work out that it had
   # nothing to do without first asking to be approved. This job answers that
-  # question with no environment and no write permission, so the approval is
-  # only ever requested for a push that will actually do something.
+  # question with no environment and no write permission, so neither of the
+  # jobs below starts on a push it has nothing to do for.
   preflight:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
-      pending: ${{ steps.pending.outputs.pending }}
+      changesets: ${{ steps.state.outputs.changesets }}
+      unpublished: ${{ steps.state.outputs.unpublished }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - id: pending
+      - id: state
         run: |
-          # A changeset waiting in the tree means the version pull request has
-          # to be opened or refreshed. Everything else is a question for the
-          # registry, because `changeset publish` decides what to publish by
-          # asking npm which versions exist, not by reading the git history.
+          # Two independent questions. A changeset waiting in the tree means
+          # the version pull request has to be opened or refreshed. Whether
+          # anything needs publishing is a question for the registry, because
+          # `changeset publish` decides what to publish by asking npm which
+          # versions exist, not by reading the git history.
           if [ -n "$(find .changeset -name '*.md' ! -name 'README.md')" ]; then
             echo "a changeset is waiting: the version pull request needs a run"
-            echo "pending=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "changesets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changesets=false" >> "$GITHUB_OUTPUT"
           fi
 
           for manifest in packages/*/package.json; do
@@ -47,40 +50,34 @@ jobs:
             if [ "$status" != 200 ]; then
               # 404 is a version this repository has not published yet. Any
               # other answer, including the 000 curl reports for a network
-              # failure, is unknown — and the safe unknown asks the human
+              # failure, is unknown — and the safe unknown runs the publish
               # rather than silently skipping a release.
               echo "$name@$version is not on the registry (HTTP $status)"
-              echo "pending=true" >> "$GITHUB_OUTPUT"
+              echo "unpublished=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
 
-          echo "no changeset waiting, every version published: nothing to do"
-          echo "pending=false" >> "$GITHUB_OUTPUT"
+          echo "every version is published"
+          echo "unpublished=false" >> "$GITHUB_OUTPUT"
 
-  release:
+  # Opening the version pull request is not a release: it publishes nothing,
+  # touches no registry, and holds no npm identity. Splitting it out of the
+  # publish below is what keeps a release down to one human decision — merging
+  # the pull request this job opens.
+  version:
     needs: preflight
-    if: needs.preflight.outputs.pending == 'true'
+    if: needs.preflight.outputs.changesets == 'true'
     runs-on: ubuntu-latest
-    # Two releases must never publish at once, and cancelling one mid-publish
-    # would leave the registry and the git tags disagreeing. This sits on the
-    # job rather than the workflow so that a push with nothing to release is
-    # not held in the queue behind a run waiting on its approval — and then
-    # cancelled by the push after it.
+    # Shared with the publish job. Both push commits and both push to main, so
+    # a version run raised by one push must not overlap a publish run raised by
+    # the one before it.
     concurrency:
       group: release
       cancel-in-progress: false
-    # The environment name is half of what npm authenticates. A trusted
-    # publisher names the repository, the workflow file and the environment, so
-    # renaming any of the three stops the publish rather than weakening it. The
-    # required reviewers on it are the human gate; `prevent self-review` cannot
-    # be set while one person is the only reviewer, since the merge that
-    # triggers the run also disqualifies them from approving it.
-    environment: npm
     permissions:
-      contents: write # push the version commit, the tags, and the releases
+      contents: write # push the version branch
       pull-requests: write # open and update the version pull request
-      id-token: write # mint the OIDC token npm publishes against
     steps:
       # Third-party actions are pinned by commit. A tag or branch reference is
       # mutable; `changesets/action@v2` is a branch, not a tag.
@@ -88,8 +85,66 @@ jobs:
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      # No dependency cache here on purpose: a cache this job restores can be
-      # written by any other job in the repository, and this job publishes.
+      # No dependency cache in either job that can write to this repository: a
+      # cache one of them restores can be written by any other job here, and
+      # what these two can push reaches the registry one merge later.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # No test, build or lint: this job ships nothing. ci.yml covers the push
+      # that triggered it, and the checks that gate the release proper run in
+      # the publish job below, against the tree that is actually published.
+      - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
+        with:
+          # One package.json script, not a chain: the action execs this without
+          # a shell, so an `&&` written here is passed to the first command as
+          # an argument rather than chaining the second. --lockfile-only
+          # rewrites the lockfile for the bumped versions without linking
+          # node_modules or running anything from a dependency.
+          version-script: pnpm version-packages
+          # Read here only for one sentence of the pull request body — "the
+          # packages will be published to npm automatically" rather than an
+          # invitation to publish by hand. The action runs it when it finds no
+          # changeset, and this job runs only when preflight found one at the
+          # same commit. If that were ever wrong the publish would still fail:
+          # no `id-token` here, so there is no OIDC token to authenticate with.
+          publish-script: pnpm release
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+
+  # The release proper. Reached by merging the version pull request, which is
+  # the human gate: that merge is a deliberate act on the exact changelog and
+  # versions being shipped, which is more than a deployment approval on the
+  # same commit can tell you.
+  publish:
+    needs: preflight
+    # A changeset waiting alongside an unpublished version means a change
+    # landed while the last release was mid-flight. Version first; the merge of
+    # that pull request brings the push this job wants.
+    if: needs.preflight.outputs.changesets == 'false' && needs.preflight.outputs.unpublished == 'true'
+    runs-on: ubuntu-latest
+    # Two releases must never publish at once, and cancelling one mid-publish
+    # would leave the registry and the git tags disagreeing.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    # The environment name is half of what npm authenticates. A trusted
+    # publisher names the repository, the workflow file and the environment, so
+    # renaming any of the three stops the publish rather than weakening it. Its
+    # branch policy is what keeps the publish on main; it carries no required
+    # reviewer, because the only person who could approve one is the person who
+    # merged the pull request that got here.
+    environment: npm
+    permissions:
+      contents: write # push the version commit, the tags, and the releases
+      id-token: write # mint the OIDC token npm publishes against
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       # No `registry-url`: it writes an .npmrc holding `${NODE_AUTH_TOKEN}`,
       # and with no such token set pnpm used to send that placeholder as the
       # credential and get a 404 before OIDC could be tried. Fixed in pnpm
@@ -114,15 +169,7 @@ jobs:
 
       - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          # One package.json script, not a chain: the action execs this without
-          # a shell, so an `&&` written here is passed to the first command as
-          # an argument rather than chaining the second. --lockfile-only
-          # rewrites the lockfile for the bumped versions without linking
-          # node_modules or running anything from a dependency.
-          version-script: pnpm version-packages
           publish-script: pnpm release
-          commit-message: "chore: version packages"
-          pr-title: "chore: version packages"
         # No npm credential of any kind: the publish authenticates as this
         # workflow through OIDC, against the trusted publisher configured on
         # each package. Provenance needs no flag either — npm attests a trusted

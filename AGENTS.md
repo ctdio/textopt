@@ -86,18 +86,35 @@ It needs a build, so it runs after `pnpm build`.
 Changesets owns versions. Add a changeset with the change that needs one; never
 edit a `version` field or write a release commit by hand.
 
-A release is two merges. Pushing to `main` runs the release workflow, which
-opens a `chore: version packages` pull request applying every pending changeset.
-Merging that pull request runs the workflow again, and the second run publishes.
-Both runs stop at the `npm` environment for a human approval, including the one
-that only refreshes the version pull request and publishes nothing.
+A release is two merges, and only the second one is a decision. Pushing to
+`main` runs the release workflow, whose `version` job opens a `chore: version
+packages` pull request applying every pending changeset — no gate on it, because
+it publishes nothing. That pull request sits on `main` collecting changesets for
+as long as you leave it there, and merging it is the release: the push runs the
+workflow again, and this time the `publish` job ships what you just read.
+
+Splitting the two apart is what makes that merge the only release act. The two
+jobs are mutually exclusive by construction — `publish` runs only when nothing
+is waiting to be versioned, so a changeset landing mid-release refreshes the
+pull request rather than racing the publish — and they share a `concurrency`
+group, because both push to `main`.
 
 A push with neither a changeset waiting nor an unpublished version — a docs
-commit, say — never gets that far. An environment gate stops a job before its
-first step, so the release job cannot find out it has nothing to do without
-first asking to be approved; a `preflight` job holding no environment answers
-that question instead, and the approval is only requested for a push that will
-act on it.
+commit, say — runs neither job. An environment gate stops a job before its first
+step, so `publish` cannot find out it has nothing to do without first entering
+the environment; a `preflight` job holding no environment answers that question
+for both jobs instead.
+
+The `npm` environment carries no required reviewer. It kept one until the two
+jobs were split, which meant approving a deployment twice per release, once for
+a run that only opened a pull request. The remaining approval was worth no more:
+the person who could grant it is the person who merged the pull request that
+asked for it — `prevent self review` cannot be set while one person is the only
+reviewer — so it re-confirmed a decision made seconds earlier, against a
+deployment page showing less than the pull request diff did. What guards the
+publish is the environment's branch policy, the trusted publisher below, and the
+fact that reaching it takes a human merge. Add reviewers back the moment a
+second maintainer exists and self-review can be prevented.
 
 Both published packages are on 0.x, where `^0.1.0` does not cross a minor. So
 `minor` is the breaking lever and `patch` covers additions and fixes. A changed
