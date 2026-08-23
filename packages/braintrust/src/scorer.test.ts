@@ -173,6 +173,49 @@ describe("createBraintrustScorer", () => {
     expect(result.transient).toBeUndefined();
   });
 
+  test("reports a scorer failure as a failure whether or not it was classified", async () => {
+    // Unclassified means "not worth retrying", not "worth remembering": the
+    // zero below is a stand-in for a score nothing measured.
+    const score = createBraintrustScorer({
+      scorers: [
+        () => {
+          throw new Error("the output could not be parsed");
+        },
+      ],
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.failed).toBe(true);
+    expect(result.transient).toBeUndefined();
+  });
+
+  test("reports a partly failed composite as a failure", async () => {
+    const score = createBraintrustScorer({
+      scorers: [
+        () => ({ name: "a", score: 1 }),
+        () => {
+          throw new Error("the output could not be parsed");
+        },
+      ],
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.score).toBe(1);
+    expect(result.failed).toBe(true);
+  });
+
+  test("leaves failed unset when every scorer produced a score", async () => {
+    const score = createBraintrustScorer({
+      scorers: [() => ({ name: "a", score: 1 })],
+    });
+
+    const result = await score({ output: "x" });
+
+    expect(result.failed).toBeUndefined();
+  });
+
   test("rejects a negative weight", () => {
     expect(() =>
       createBraintrustScorer({

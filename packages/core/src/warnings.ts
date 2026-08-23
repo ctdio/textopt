@@ -13,7 +13,10 @@ export interface RunWarning {
 }
 
 export type RunWarningCode =
-  "validationSetReusesTraining" | "seedScoreSaturated" | "seedScoreFloored";
+  | "validationSetReusesTraining"
+  | "seedScoreSaturated"
+  | "seedScoreFloored"
+  | "unclassifiedFailures";
 
 /**
  * The validation set a run will actually select against, and whatever the
@@ -95,4 +98,30 @@ export function seedScoreWarnings(args: {
   }
 
   return [];
+}
+
+/**
+ * What a run's failed rollouts cost it, when nothing said they were the
+ * provider's fault rather than the candidate's.
+ *
+ * Whether a rate limit is worth retrying depends on the provider, the budget
+ * and how much a hole in the coverage costs — so the engine does not guess,
+ * and an adapter that classifies nothing gets the conservative reading: the
+ * failure counts against whichever candidate happened to hit it. That is a
+ * defensible default and an indefensible surprise, so a run that leaned on it
+ * says how often, and where the decision lives.
+ */
+export function failureWarnings(args: { unclassified: number }): RunWarning[] {
+  const { unclassified } = args;
+
+  if (unclassified === 0) {
+    return [];
+  }
+
+  return [
+    {
+      code: "unclassifiedFailures",
+      message: `${unclassified} of this run's rollouts failed and scored zero against the candidate being measured. Nothing classified the failures as infrastructure, so they were neither retried nor kept out of that candidate's mean. Set isTransient on the adapter to tell a rate limit or a 5xx from a candidate the provider rejected.`,
+    },
+  ];
 }

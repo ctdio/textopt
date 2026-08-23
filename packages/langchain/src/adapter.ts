@@ -171,6 +171,7 @@ export function createLangChainAdapter<Datum, Output>(
               scored: {
                 score: 0,
                 feedback: `Run failed: ${failure}`,
+                failed: true,
                 transient,
               },
             };
@@ -193,6 +194,7 @@ export function createLangChainAdapter<Datum, Output>(
               scored: {
                 score: 0,
                 feedback: `Scoring failed: ${message}`,
+                failed: true,
                 transient: isTransient(err),
               },
             };
@@ -232,6 +234,11 @@ export function createLangChainAdapter<Datum, Output>(
       if (results.some((result) => result.scored.transient === true)) {
         evaluation.transient = results.map(
           (result) => result.scored.transient === true,
+        );
+      }
+      if (results.some((result) => result.scored.failed === true)) {
+        evaluation.failed = results.map(
+          (result) => result.scored.failed === true,
         );
       }
 

@@ -186,14 +186,15 @@ export function createAiSdkAdapter<Datum, Output = string>(
             const scored: ScoreResult = {
               score: 0,
               feedback: `Run failed: ${message}`,
+              failed: true,
               transient: isTransient(err),
             };
-            const failed: AiSdkTrace = {
+            const failedTrace: AiSdkTrace = {
               steps: [],
               durationMs: Date.now() - startedAt,
               error: message,
             };
-            return { output: null, result: null, trace: failed, scored };
+            return { output: null, result: null, trace: failedTrace, scored };
           }
 
           const output = extractOutput(result);
@@ -211,6 +212,7 @@ export function createAiSdkAdapter<Datum, Output = string>(
             const scored: ScoreResult = {
               score: 0,
               feedback: `Scoring failed: ${message}`,
+              failed: true,
               transient: isTransient(err),
             };
             return { output, result, trace, scored };
@@ -252,6 +254,11 @@ export function createAiSdkAdapter<Datum, Output = string>(
       if (results.some((result) => result.scored.transient === true)) {
         evaluation.transient = results.map(
           (result) => result.scored.transient === true,
+        );
+      }
+      if (results.some((result) => result.scored.failed === true)) {
+        evaluation.failed = results.map(
+          (result) => result.scored.failed === true,
         );
       }
 

@@ -635,6 +635,65 @@ describe("createLangChainAdapter", () => {
     expect(result.transient).toBeUndefined();
   });
 
+  test("reports a run failure as a failure whether or not it was classified", async () => {
+    // Unclassified means "not worth retrying", not "worth remembering": the
+    // zero below is a stand-in for a rollout that never produced a score.
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () =>
+        RunnableLambda.from(() => {
+          throw new Error("the chain broke");
+        }),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toEqual([true, true]);
+    expect(result.transient).toBeUndefined();
+  });
+
+  test("reports a scoring failure as a failure too", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => RunnableLambda.from(() => "answer"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => {
+        throw new Error("the judge could not parse the output");
+      },
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toEqual([true, true]);
+  });
+
+  test("leaves failed unset when every rollout produced a score", async () => {
+    const adapter = createLangChainAdapter<Ticket, string>({
+      buildRunnable: () => RunnableLambda.from(() => "answer"),
+      toInput: (datum) => ({ text: datum.text }),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: TICKETS,
+      candidate: { instruction: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toBeUndefined();
+  });
+
   test("marks a step that never completed rather than leaving it look empty", async () => {
     const adapter = createLangChainAdapter<Ticket, string>({
       buildRunnable: () => buildRunnableWithOrphanedToolSpan(),

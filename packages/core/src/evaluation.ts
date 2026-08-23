@@ -117,6 +117,13 @@ export interface Evaluator<Datum, Trajectory, Output, K extends string> {
   }): number;
   /** Instances served from the cache, which no budget was charged for. */
   cacheHits(): number;
+  /**
+   * Rollouts that came back as failures the adapter caught but nothing
+   * classified as infrastructure. They scored zero against the candidate that
+   * hit them and were neither retried nor kept out of its mean, so a run
+   * reports the count rather than leaving those zeros unexplained.
+   */
+  unclassifiedFailures(): number;
   /** Rollouts made with `charge: false`, tracked apart from the budget. */
   unchargedCalls(): number;
   /**
@@ -222,6 +229,7 @@ export function createEvaluator<
 
   let cacheHits = initialCacheHits;
   let unchargedCalls = 0;
+  let unclassifiedFailures = 0;
   const usage: UsageTotals = {
     inputTokens: 0,
     outputTokens: 0,
@@ -250,6 +258,26 @@ export function createEvaluator<
     totals.rollouts += args.rollouts;
     for (const rollout of args.evaluation.usage ?? []) {
       addUsage({ totals, rollout });
+    }
+  }
+
+  /**
+   * Counts the failures nobody classified, where every adapter call funnels.
+   * A classified failure is retried, so counting it here would count it again
+   * on each attempt; an unclassified one is never retried and is seen once.
+   */
+  function countUnclassifiedFailures(
+    evaluation: EvaluationBatch<Trajectory, Output>,
+  ): void {
+    const { failed, transient } = evaluation;
+    if (failed === undefined) {
+      return;
+    }
+
+    for (let index = 0; index < failed.length; index += 1) {
+      if (failed[index] === true && transient?.[index] !== true) {
+        unclassifiedFailures += 1;
+      }
     }
   }
 
@@ -332,6 +360,7 @@ export function createEvaluator<
         signal,
       });
       assertEvaluation({ evaluation, expected: rows.length });
+      countUnclassifiedFailures(evaluation);
       recordUsage({ evaluation, rollouts: rows.length, charge });
       return evaluation;
     } catch (err) {
@@ -503,6 +532,13 @@ export function createEvaluator<
             transient[batchIndex] = true;
             return;
           }
+          // A failure the adapter caught is a stand-in for a measurement that
+          // never happened. It still counts against the candidate — nothing
+          // here can tell a broken prompt from a broken provider — but it is
+          // not a reading worth keeping, and a cache is forever.
+          if (evaluation.failed?.[resultIndex] === true) {
+            return;
+          }
           cache?.set(
             evaluationCacheKey({
               hash,
@@ -533,6 +569,7 @@ export function createEvaluator<
     },
 
     cacheHits: () => cacheHits,
+    unclassifiedFailures: () => unclassifiedFailures,
     unchargedCalls: () => unchargedCalls,
     usage: () => ({ ...usage }),
     unchargedUsage: () => ({ ...unchargedUsage }),
@@ -575,6 +612,7 @@ function assertEvaluation(args: {
     ["objectiveScores", evaluation.objectiveScores],
     ["usage", evaluation.usage],
     ["transient", evaluation.transient],
+    ["failed", evaluation.failed],
   ];
   for (const [name, values] of aligned) {
     if (values !== undefined && values.length !== expected) {

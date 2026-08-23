@@ -59,6 +59,7 @@ export function createBraintrustScorer<Output = string>(
         try {
           return {
             score: normalizeScore({ value: await scorer(args), index }),
+            failed: false,
             transient: false,
           };
         } catch (err) {
@@ -70,6 +71,7 @@ export function createBraintrustScorer<Output = string>(
                 error: err instanceof Error ? err.message : String(err),
               },
             } satisfies BraintrustScoreLike,
+            failed: true,
             transient: isTransient(err),
           };
         }
@@ -77,9 +79,12 @@ export function createBraintrustScorer<Output = string>(
     );
 
     const settled = outcomes.map((outcome) => outcome.score);
-    // One infrastructure failure degrades the whole composite, not just its
-    // own objective: what survives is a blend over a different set of scorers
-    // than the one the candidate is supposed to be measured on.
+    // One failure degrades the whole composite, not just its own objective:
+    // what survives is a blend over a different set of scorers than the one the
+    // candidate is supposed to be measured on. That is true however the failure
+    // is classified, so the blend is never cached; classifying it transient
+    // additionally retries it and keeps it off the candidate's record.
+    const caught = outcomes.some((outcome) => outcome.failed);
     const degraded = outcomes.some((outcome) => outcome.transient);
     const usable = settled.filter((score) => score.score !== null);
     assertDistinctNames(usable);
@@ -103,6 +108,7 @@ export function createBraintrustScorer<Output = string>(
         score: 0,
         feedback: buildFeedback(settled),
         objectiveScores,
+        ...(caught ? { failed: true } : {}),
         ...(degraded ? { transient: true } : {}),
       };
     }
@@ -118,6 +124,7 @@ export function createBraintrustScorer<Output = string>(
       score: weightedTotal / weightSum,
       feedback: buildFeedback(settled),
       objectiveScores,
+      ...(caught ? { failed: true } : {}),
       ...(degraded ? { transient: true } : {}),
     };
   };

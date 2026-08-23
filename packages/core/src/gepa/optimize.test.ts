@@ -8,6 +8,7 @@ import {
   createKeywordAdapter,
   createKeywordReflector,
 } from "../testing.js";
+import type { KeywordTrajectory } from "../testing.js";
 import type { Candidate, EvaluationContext, TextModel } from "../types.js";
 import { GepaOptimizer } from "./optimize.js";
 import type { GepaResult } from "./optimize.js";
@@ -3545,5 +3546,45 @@ describe("progress and objectives on the event stream", () => {
     expect(warn.mock.calls.flat().join(" ")).toContain("stepStarted");
 
     warn.mockRestore();
+  });
+});
+
+/** The keyword adapter, reporting every rollout as a failure it caught. */
+function failingAdapter(): GepaAdapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  KeywordTrajectory,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    ...keyword,
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      scores: args.batch.map(() => 0),
+      failed: args.batch.map(() => true),
+    }),
+  };
+}
+
+describe("GepaOptimizer failure reporting", () => {
+  test("reports the failures nothing classified as infrastructure", async () => {
+    // Every optimizer shares one evaluator, and every one of them has to carry
+    // what it saw onto the result. A search that drops the count reports a
+    // run of zeros with nothing to say where they came from.
+    const result = await new GepaOptimizer({
+      minibatchSize: 2,
+      maxIterations: 1,
+      seed: 1,
+    }).optimize({
+      seedCandidate: SEED,
+      trainingSet: KEYWORD_EXAMPLES,
+      adapter: failingAdapter(),
+      reflect: createKeywordReflector(),
+      maxMetricCalls: 60,
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "unclassifiedFailures",
+    );
   });
 });

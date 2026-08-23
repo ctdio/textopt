@@ -38,7 +38,7 @@ import type { BatchSampler } from "../sampling.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
-import { resolveValidationSet } from "../warnings.js";
+import { failureWarnings, resolveValidationSet } from "../warnings.js";
 import { proposeConfiguration } from "./tpe.js";
 import type { Observation } from "./tpe.js";
 
@@ -1162,6 +1162,13 @@ async function runMipro<Datum, Trajectory, Output, K extends string>(args: {
           charge: false,
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
+
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({ unclassified: evaluator.unclassifiedFailures() }),
+  );
 
   emit({
     type: "finish",

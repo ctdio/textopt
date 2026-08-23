@@ -55,6 +55,12 @@ export interface EvaluationBatch<Trajectory = unknown, Output = unknown> {
    * to the evaluation cache.
    */
   transient?: boolean[];
+  /**
+   * Per-instance: true when the score is a stand-in the adapter synthesized
+   * from a caught error rather than a number it measured. Failed scores are
+   * never written to the evaluation cache.
+   */
+  failed?: boolean[];
 }
 
 /**
@@ -74,6 +80,14 @@ export interface ScoreResult {
    * permanently against the candidate.
    */
   transient?: boolean;
+  /**
+   * Marks a score the caller synthesized after catching an error, rather than
+   * one it measured. Whether such a failure is worth retrying is a judgement
+   * about the provider that only the caller can make — `transient` is where
+   * that judgement goes. Whether it is worth remembering is not a judgement at
+   * all: a stand-in for a number nobody measured is never cached.
+   */
+  failed?: boolean;
 }
 
 export interface EvaluateArgs<Datum, K extends string = string> {

@@ -25,6 +25,12 @@ export interface HarvestResult<Datum, Output> {
   usage: UsageTotals;
   /** Instances run, including the ones the metric did not reward. */
   attempted: number;
+  /**
+   * Rollouts that came back as failures nothing classified as infrastructure.
+   * On its own evaluator for the same reason `usage` is: a caller that reports
+   * what its run could not measure has to fold these in too.
+   */
+  unclassifiedFailures: number;
 }
 
 /**
@@ -159,5 +165,6 @@ export async function harvestRollouts<
     metricCalls: budget.spent(),
     usage: evaluator.usage(),
     attempted,
+    unclassifiedFailures: evaluator.unclassifiedFailures(),
   };
 }

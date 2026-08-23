@@ -55,7 +55,7 @@ const result = await new GepaOptimizer().optimize({
 | `concurrency`       | `8`                       | In-flight rollouts.                                                                        |
 | `includeChainSteps` | `false`                   | Includes per-runnable chain spans in traces.                                               |
 | `componentRunNames` | none                      | Maps component names to run names and filters each component's evidence to matching steps. |
-| `isTransient`       | `false` for all errors    | Identifies infrastructure errors whose fallback scores must not be cached.                 |
+| `isTransient`       | `false` for all errors    | Identifies errors worth retrying. A caught error is never cached either way.               |
 | `buildRecord`       | default reflective record | Builds a custom reflective record.                                                         |
 
 ## Tracing

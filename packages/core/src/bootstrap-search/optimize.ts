@@ -41,7 +41,7 @@ import type {
 import { createSeededRng } from "../rng.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, UsageTotals } from "../types.js";
-import { resolveValidationSet } from "../warnings.js";
+import { failureWarnings, resolveValidationSet } from "../warnings.js";
 
 /**
  * Where a candidate's demo block came from. `zeroShot` holds no demos at all,
@@ -405,6 +405,7 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
   ];
   let drawn = resumeFrom?.drawn ?? 0;
   let bootstrapMetricCalls = resumeFrom?.bootstrapMetricCalls ?? 0;
+  let harvestFailures = 0;
   let stopReason: BootstrapSearchStopReason = "candidatesExhausted";
 
   emit({
@@ -664,6 +665,15 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
 
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({
+      unclassified: evaluator.unclassifiedFailures() + harvestFailures,
+    }),
+  );
+
   emit({
     type: "finish",
     reason: stopReason,
@@ -751,8 +761,10 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
     bootstrapMetricCalls += harvest.metricCalls;
     budget.reserve(harvest.metricCalls);
     // Harvesting runs on its own evaluator: without this its tokens are
-    // absent from `result.usage` and invisible to `maxCostUsd`.
+    // absent from `result.usage` and invisible to `maxCostUsd`, and the
+    // failures it hit are absent from what the run says it could not measure.
     evaluator.absorbUsage(harvest.usage);
+    harvestFailures += harvest.unclassifiedFailures;
 
     return harvest.block;
   }

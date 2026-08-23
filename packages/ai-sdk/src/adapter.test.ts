@@ -346,6 +346,61 @@ describe("createAiSdkAdapter", () => {
     expect(result.transient).toBeUndefined();
   });
 
+  test("reports a run failure as a failure whether or not it was classified", async () => {
+    // Unclassified means "not worth retrying", not "worth remembering": the
+    // zero below is a stand-in for a rollout that never produced a score.
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async () => {
+        throw new Error("the model refused");
+      },
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toEqual([true, true]);
+    expect(result.transient).toBeUndefined();
+  });
+
+  test("reports a scoring failure as a failure too", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async () => resultFor("answer"),
+      score: () => {
+        throw new Error("the judge could not parse the output");
+      },
+    });
+
+    const result = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toEqual([true, true]);
+  });
+
+  test("leaves failed unset when every rollout produced a score", async () => {
+    const adapter = createAiSdkAdapter<Question, string>({
+      run: async () => resultFor("answer"),
+      score: () => ({ score: 1 }),
+    });
+
+    const result = await adapter.evaluate({
+      batch: QUESTIONS,
+      candidate: { system: "x" },
+      captureTraces: false,
+      run: RUN,
+    });
+
+    expect(result.failed).toBeUndefined();
+  });
+
   test("propagates an abort instead of scoring it as a failed run", async () => {
     const controller = new AbortController();
     const adapter = createAiSdkAdapter<Question, string>({

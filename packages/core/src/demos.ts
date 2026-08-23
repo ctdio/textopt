@@ -29,6 +29,8 @@ export interface BootstrapResult<Datum, Output> {
   /** Tokens and dollars this cost, for a caller that bounds spend. */
   usage: UsageTotals;
   attempted: number;
+  /** Rollouts nothing classified, for a caller that reports what it missed. */
+  unclassifiedFailures: number;
 }
 
 const DEMO_OPEN = "<demo>";
@@ -131,6 +133,7 @@ export async function harvestFewShotExamples<
     metricCalls: harvest.metricCalls,
     usage: harvest.usage,
     attempted: harvest.attempted,
+    unclassifiedFailures: harvest.unclassifiedFailures,
   };
 }
 

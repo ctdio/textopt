@@ -836,3 +836,38 @@ describe("RandomSearchOptimizer reporting", () => {
     expect(flushed).toEqual(["first"]);
   });
 });
+
+/** The base adapter, reporting every rollout as a failure it caught. */
+function failingAdapter(): Adapter<
+  (typeof KEYWORD_EXAMPLES)[number],
+  unknown,
+  string
+> {
+  const keyword = createKeywordAdapter();
+  return {
+    evaluate: (args) => ({
+      ...keyword.evaluate(args),
+      scores: args.batch.map(() => 0),
+      failed: args.batch.map(() => true),
+    }),
+  };
+}
+
+describe("RandomSearchOptimizer failure reporting", () => {
+  test("reports the failures nothing classified as infrastructure", async () => {
+    // Every optimizer shares one evaluator, and every one of them has to carry
+    // what it saw onto the result. A search that drops the count reports a
+    // run of zeros with nothing to say where they came from.
+    const result = await new RandomSearchOptimizer({
+      variants: 1,
+      maxRounds: 2,
+    }).optimize({
+      ...task(),
+      adapter: failingAdapter(),
+    });
+
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "unclassifiedFailures",
+    );
+  });
+});

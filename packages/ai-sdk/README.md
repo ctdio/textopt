@@ -44,14 +44,14 @@ const result = await new GepaOptimizer().optimize({
 
 ## Options
 
-| Option        | Default                            | Effect                                                                      |
-| ------------- | ---------------------------------- | --------------------------------------------------------------------------- |
-| `run`         | required                           | Runs the system for one dataset row. Return the AI SDK result directly.     |
-| `score`       | required                           | Scores one rollout, given the `datum`, `output`, raw `result`, and `trace`. |
-| `toOutput`    | `result.text`, or `""` when absent | Extracts the output. Required when optimizing structured output.            |
-| `concurrency` | `8`                                | In-flight rollouts.                                                         |
-| `isTransient` | `false` for all errors             | Identifies infrastructure errors whose fallback scores must not be cached.  |
-| `buildRecord` | default reflective record          | Builds a custom reflective record, including its `evidence` field.          |
+| Option        | Default                            | Effect                                                                       |
+| ------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| `run`         | required                           | Runs the system for one dataset row. Return the AI SDK result directly.      |
+| `score`       | required                           | Scores one rollout, given the `datum`, `output`, raw `result`, and `trace`.  |
+| `toOutput`    | `result.text`, or `""` when absent | Extracts the output. Required when optimizing structured output.             |
+| `concurrency` | `8`                                | In-flight rollouts.                                                          |
+| `isTransient` | `false` for all errors             | Identifies errors worth retrying. A caught error is never cached either way. |
+| `buildRecord` | default reflective record          | Builds a custom reflective record, including its `evidence` field.           |
 
 `run` also receives an `EvaluationContext` containing `iteration`, `phase`, `split`, and `candidateId`. Forward these fields to your tracing system to identify each rollout.
 

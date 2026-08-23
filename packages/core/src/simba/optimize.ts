@@ -43,7 +43,7 @@ import { createEpochShuffledSampler } from "../sampling.js";
 import type { BatchSampler } from "../sampling.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
-import { resolveValidationSet } from "../warnings.js";
+import { failureWarnings, resolveValidationSet } from "../warnings.js";
 import { buildAdvicePrompt, parseAdvice } from "./advice.js";
 import type { AdvicePromptBuilder } from "./advice.js";
 import {
@@ -852,6 +852,13 @@ async function run<Datum, Trajectory, Output, K extends string>(args: {
           charge: false,
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
+
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({ unclassified: evaluator.unclassifiedFailures() }),
+  );
 
   emit({
     type: "finish",

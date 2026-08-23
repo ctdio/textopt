@@ -33,9 +33,9 @@ The aggregate score is a weighted mean. Scorer metadata, such as judge rationale
 | `scorers`       | required               | The scorers to run. Each may return a `Score` object or a bare number. |
 | `weights`       | `1` per scorer         | Relative weight by scorer name. Must be finite and non-negative.       |
 | `buildFeedback` | one line per scorer    | Overrides how scorer output becomes reflection feedback.               |
-| `isTransient`   | `false` for all errors | Identifies infrastructure-related scorer failures.                     |
+| `isTransient`   | `false` for all errors | Identifies scorer failures worth retrying.                             |
 
-Duplicate scorer names throw because `objectiveScores` can store only one value per name. If `isTransient` classifies a scorer failure as infrastructure-related, the aggregate uses the remaining scorers and is marked `transient`, preventing it from being cached.
+Duplicate scorer names throw because `objectiveScores` can store only one value per name. A scorer that threw leaves the aggregate computed from the remaining scorers, which marks the result `failed` and keeps it out of the cache whatever `isTransient` says. Classifying it transient additionally retries it and keeps it out of the candidate's mean.
 
 ## Logging
 

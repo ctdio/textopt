@@ -28,7 +28,8 @@ Most systems do not need this written by hand. [`createPromptAdapter`](#one-prom
 
 - **`args.run`** identifies the rollout's `iteration`, `phase`, `split`, and `candidateId`. Forward it to your tracing system.
 - **`args.onRollout`** is what turns a batch into progress. Call it as each rollout settles and the optimizer emits a `rollout` event per call; skip it and the run reports nothing between the start of a validation sweep and its end, which against a slow provider is minutes of silence indistinguishable from a hung process. The adapters below already call it, and so does anything built on `mapWithConcurrency` — pass it as `onSettled`.
-- **`transient`** marks scores caused by infrastructure failures such as rate limits or 5xx responses. Transient scores are not cached.
+- **`failed`** marks a score the adapter synthesized after catching an error, rather than one it measured. Failed scores are never cached — a stand-in for a number nobody measured is not a reading worth keeping, and a cache is forever. Set it in every catch block; it takes no judgement about the provider.
+- **`transient`** marks a failure worth retrying: a rate limit, a 5xx, a network blip. That one does take judgement about the provider, so nothing is classified for you. A transient score is retried, kept out of the candidate's mean, and not cached; a failed score that nothing classified counts against the candidate that hit it, and the run reports how many there were.
 
 ```ts
 evaluate: async ({ batch, candidate, onRollout, signal }) => {

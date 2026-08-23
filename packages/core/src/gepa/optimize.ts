@@ -38,7 +38,11 @@ import type {
   EvaluationSplit,
   TextModel,
 } from "../types.js";
-import { resolveValidationSet, seedScoreWarnings } from "../warnings.js";
+import {
+  failureWarnings,
+  resolveValidationSet,
+  seedScoreWarnings,
+} from "../warnings.js";
 import { proposeMerge, selectMergeSubsample } from "./merge.js";
 import {
   buildInstanceFronts,
@@ -1444,6 +1448,13 @@ async function runGepa<Datum, Trajectory, Output, K extends string>(args: {
           charge: false,
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
+
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({ unclassified: evaluator.unclassifiedFailures() }),
+  );
 
   emit({
     type: "finish",

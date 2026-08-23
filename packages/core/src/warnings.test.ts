@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { resolveValidationSet, seedScoreWarnings } from "./warnings.js";
+import {
+  failureWarnings,
+  resolveValidationSet,
+  seedScoreWarnings,
+} from "./warnings.js";
 
 const TRAINING = [{ id: "a" }, { id: "b" }];
 
@@ -86,5 +90,20 @@ describe("seedScoreWarnings", () => {
     });
 
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("failureWarnings", () => {
+  test("warns when failures were scored against the candidate unclassified", () => {
+    const warnings = failureWarnings({ unclassified: 14 });
+
+    expect(warnings.map((warning) => warning.code)).toEqual([
+      "unclassifiedFailures",
+    ]);
+    expect(warnings[0]?.message).toContain("14");
+  });
+
+  test("stays quiet when nothing failed", () => {
+    expect(failureWarnings({ unclassified: 0 })).toEqual([]);
   });
 });

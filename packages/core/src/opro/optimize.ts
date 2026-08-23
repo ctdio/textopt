@@ -37,7 +37,7 @@ import { createSeededRng } from "../rng.js";
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
-import { resolveValidationSet } from "../warnings.js";
+import { failureWarnings, resolveValidationSet } from "../warnings.js";
 
 /** One instruction that was tried, and what it scored. */
 /** A history entry plus the system state its score was measured in. */
@@ -1001,6 +1001,13 @@ async function runOpro<Datum, Trajectory, Output, K extends string>(args: {
           charge: false,
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
+
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({ unclassified: evaluator.unclassifiedFailures() }),
+  );
 
   emit({
     type: "finish",

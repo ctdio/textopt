@@ -36,6 +36,28 @@ function flakyAdapter(failures: number): Adapter<string, unknown, string> & {
   };
 }
 
+/**
+ * An adapter whose second instance comes back as a caught failure rather than
+ * a measurement, for the first `failures` batches it sees. Nothing marks it
+ * transient, which is what an adapter reports when no classifier was given.
+ */
+function failingAdapter(failures: number): Adapter<string, unknown, string> {
+  let remaining = failures;
+
+  return {
+    evaluate: ({ batch }): EvaluationBatch<unknown, string> => {
+      const failing = remaining > 0;
+      remaining -= 1;
+
+      return {
+        outputs: [...batch],
+        scores: batch.map((datum) => (datum === "b" && failing ? 0 : 1)),
+        failed: batch.map((datum) => datum === "b" && failing),
+      };
+    },
+  };
+}
+
 function evaluate(args: {
   adapter: Adapter<string, unknown, string>;
   budget: ReturnType<typeof createBudget>;
@@ -340,6 +362,103 @@ describe("createEvaluator", () => {
     });
 
     expect(evaluator.entries()).toHaveLength(2);
+  });
+});
+
+describe("failures the adapter caught rather than measured", () => {
+  const CALL = {
+    candidate: { instruction: "text" },
+    batch: BATCH,
+    ids: IDS,
+    split: "val",
+    phase: "validation",
+    candidateId: 1,
+    iteration: 0,
+  } as const;
+
+  test("re-runs a failed instance rather than serving its cached zero", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: failingAdapter(1),
+      budget: createBudget({ maxMetricCalls: 100 }),
+      cache: createMemoryCache(),
+    });
+
+    const first = await evaluator.evaluate(CALL);
+    const second = await evaluator.evaluate(CALL);
+
+    expect(first.scores).toEqual([1, 0, 1]);
+    expect(second.scores).toEqual([1, 1, 1]);
+  });
+
+  test("keeps caching the instances the same batch did measure", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: failingAdapter(1),
+      budget: createBudget({ maxMetricCalls: 100 }),
+      cache: createMemoryCache(),
+    });
+
+    await evaluator.evaluate(CALL);
+
+    expect(evaluator.entries()).toHaveLength(2);
+  });
+
+  test("counts a failure nothing classified as infrastructure", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: failingAdapter(1),
+      budget: createBudget({ maxMetricCalls: 100 }),
+    });
+
+    await evaluator.evaluate(CALL);
+
+    expect(evaluator.unclassifiedFailures()).toBe(1);
+  });
+
+  test("counts a failure reported through a traced evaluation too", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: failingAdapter(1),
+      budget: createBudget({ maxMetricCalls: 100 }),
+    });
+
+    await evaluator.evaluateTraced({
+      candidate: { instruction: "text" },
+      batch: BATCH,
+      split: "train",
+      phase: "minibatch",
+      candidateId: null,
+      iteration: 0,
+    });
+
+    expect(evaluator.unclassifiedFailures()).toBe(1);
+  });
+
+  test("leaves a classified failure out of the count", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: {
+        evaluate: ({ batch }): EvaluationBatch<unknown, string> => ({
+          outputs: [...batch],
+          scores: batch.map(() => 0),
+          failed: batch.map(() => true),
+          transient: batch.map(() => true),
+        }),
+      },
+      budget: createBudget({ maxMetricCalls: 100 }),
+      retry: { attempts: 0 },
+    });
+
+    await evaluator.evaluate(CALL);
+
+    expect(evaluator.unclassifiedFailures()).toBe(0);
+  });
+
+  test("counts nothing when every rollout measured the candidate", async () => {
+    const evaluator = createEvaluator<string, unknown, string, "instruction">({
+      adapter: failingAdapter(0),
+      budget: createBudget({ maxMetricCalls: 100 }),
+    });
+
+    await evaluator.evaluate(CALL);
+
+    expect(evaluator.unclassifiedFailures()).toBe(0);
   });
 });
 

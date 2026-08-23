@@ -36,7 +36,7 @@ import type {
 import { parseProposedText } from "../text.js";
 import { componentNames } from "../types.js";
 import type { Adapter, Candidate, TextModel, UsageTotals } from "../types.js";
-import { resolveValidationSet } from "../warnings.js";
+import { failureWarnings, resolveValidationSet } from "../warnings.js";
 
 /** Builds the prompt one variant is drawn from. */
 export type ParaphrasePromptBuilder = (args: {
@@ -649,6 +649,13 @@ async function runRandomSearch<
           charge: false,
         });
   const testScore = heldOut === undefined ? undefined : measuredMean(heldOut);
+
+  // Read once at the end: the count covers every rollout the run made, the
+  // held-out sweep included, and the finish event and the result read the
+  // same array.
+  warnings.push(
+    ...failureWarnings({ unclassified: evaluator.unclassifiedFailures() }),
+  );
 
   emit({
     type: "finish",
