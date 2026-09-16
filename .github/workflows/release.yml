@@ -96,7 +96,7 @@ jobs:
       # No test, build or lint: this job ships nothing. ci.yml covers the push
       # that triggered it, and the checks that gate the release proper run in
       # the publish job below, against the tree that is actually published.
-      - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
+      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           # One package.json script, not a chain: the action execs this without
           # a shell, so an `&&` written here is passed to the first command as
@@ -167,7 +167,7 @@ jobs:
       - run: pnpm build
       - run: pnpm lint:packages
 
-      - uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
+      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           publish-script: pnpm release
         # No npm credential of any kind: the publish authenticates as this
